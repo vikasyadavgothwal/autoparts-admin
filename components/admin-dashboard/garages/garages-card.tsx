@@ -1,0 +1,34 @@
+
+import { Card, CardContent } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
+import type { GaragesCardProps } from "@/types/admin-dashboard/garages/garages-card"
+
+const GARAGE_ICON_WRAPPER: Record<string, string> = {
+  primary: "border-dashboard-accent/20 bg-dashboard-accent/10 text-dashboard-accent",
+  success: "border-dashboard-success/20 bg-dashboard-success/10 text-dashboard-success",
+  warning: "border-dashboard-warning/20 bg-dashboard-warning/10 text-dashboard-warning",
+  info: "border-dashboard-info/20 bg-dashboard-info/10 text-dashboard-info",
+  danger: "border-dashboard-danger/20 bg-dashboard-danger/10 text-dashboard-danger",
+  neutral: "border-dashboard-muted/20 bg-dashboard-muted/10 text-dashboard-muted",
+}
+
+export function GaragesCard({
+  title,
+  value,
+  icon: Icon,
+  iconTone,
+}: GaragesCardProps) {
+  return (
+    <Card className="border-dashboard-panel-border bg-dashboard-panel-bg">
+      <CardContent className="space-y-3 p-6">
+      <div className="mb-2 flex items-center gap-3">
+        <span className={cn("rounded-lg p-2", GARAGE_ICON_WRAPPER[iconTone])}>
+            <Icon className="h-5 w-5" />
+          </span>
+          <div className="text-sm text-dashboard-muted">{title}</div>
+        </div>
+        <div className="text-3xl font-bold text-dashboard-text">{value}</div>
+      </CardContent>
+    </Card>
+  )
+}

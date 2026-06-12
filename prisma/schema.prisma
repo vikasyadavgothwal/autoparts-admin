@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model MainWebsiteContent {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  content   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@map("main_website_contents")
+}
+
+model admin {
+  id               String       @id @default(cuid())
+  email            String       @unique
+  name             String?
+  passwordHash     String
+  isActive         Boolean      @default(true)
+  failedLoginCount Int          @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  sessions         adminSession[]
+  roles            adminRole[]
+}
+
+model role {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions rolePermission[]
+  admins      adminRole[]
+}
+
+model permission {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+
+  roles       rolePermission[]
+}
+
+model adminRole {
+  adminId    String
+  roleId     String
+  assignedAt DateTime @default(now())
+  assignedBy String?
+
+  admin admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  role  role  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([adminId, roleId])
+  @@map("admin_roles")
+}
+
+model rolePermission {
+  roleId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  role       role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model adminSession {
+  id               String   @id @default(cuid())
+  adminId          String
+  refreshTokenHash  String   @unique
+  accessJti        String
+  deviceHash       String
+  ipHash           String
+  userAgent        String?
+  familyTokenId    String
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  replacedBy       String?
+  lastUsedAt       DateTime @default(now())
+  rotationCount    Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  admin admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([expiresAt])
+  @@map("admin_sessions")
+}
