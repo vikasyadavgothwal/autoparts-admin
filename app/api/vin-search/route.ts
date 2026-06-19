@@ -76,7 +76,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       { username, password },
       getVinSearchApiBaseUrl(),
     )
-
+    // console.log("vin-search API route result", vinSearchResult)
+    // console.log("vin-search API route result data", vinSearchResult.data.data)
     if (!vinSearchResult.ok) {
       return NextResponse.json(vinSearchResult.data, {
         status: vinSearchResult.status,
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const normalized = normalizeVinSearchResult(vinSearchResult.data)
-
+    // console.log("vin-search API route normalized result", normalized)
     if (!normalized.ok) {
       return NextResponse.json({ error: normalized.error }, {
         status: normalized.status,
