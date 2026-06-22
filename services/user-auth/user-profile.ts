@@ -3,6 +3,7 @@ import type { UserProfile } from "@/types/user-auth/user-auth"
 
 type UserProfileRecord = {
   id: string
+  firebaseUid: string | null
   email: string | null
   phone: string | null
   googleId: string | null

@@ -16,6 +16,7 @@ enum UserRole {
 
 model User {
   id              String        @id @default(cuid())
+  firebaseUid     String?       @unique
   email           String?       @unique
   phone           String?       @unique
   googleId        String?       @unique
@@ -24,6 +25,12 @@ model User {
   lastName        String?
   avatarUrl       String?
   companyName     String?
+  addressLine1    String?
+  addressLine2    String?
+  city            String?
+  state           String?
+  postalCode      String?
+  country         String?
   roles           UserRole[]    @default([User])
   activeRole      UserRole      @default(User)
   isActive        Boolean       @default(true)

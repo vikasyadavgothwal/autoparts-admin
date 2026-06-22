@@ -1,8 +1,10 @@
 allowBuilds:
+  '@firebase/util': false
   '@prisma/engines': false
   '@scarf/scarf': false
   msw: false
   prisma: false
+  protobufjs: false
   sharp: false
   unrs-resolver: false
 minimumReleaseAgeExclude:

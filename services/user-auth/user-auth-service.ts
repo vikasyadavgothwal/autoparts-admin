@@ -1,10 +1,11 @@
 import { db } from "@/lib/database/prisma"
-import { UserRole } from "@/lib/generated/prisma/client"
+import { Prisma, UserRole } from "@/lib/generated/prisma/client"
 import { hashPassword, verifyPassword } from "@/lib/auth/password"
 import { createUserSession } from "@/services/user-auth/user-session-service"
 import { mapUserProfile } from "@/services/user-auth/user-profile"
 import type {
   CreateUserInput,
+  FirebaseUserIdentity,
   IssuedUserSession,
   LoginUserInput,
   UserProfile,
@@ -14,6 +15,26 @@ import type {
 const normalizeText = (value: string | null | undefined): string | null => {
   const normalized = value?.trim().replace(/\s+/g, " ") ?? ""
   return normalized || null
+}
+
+const normalizeEmail = (value: string | null | undefined): string | null => {
+  const normalized = value?.trim().toLowerCase() ?? ""
+  return normalized || null
+}
+
+const getNameParts = (
+  value: string | null,
+): { firstName: string | null; lastName: string | null } => {
+  const normalized = normalizeText(value)
+  if (!normalized) {
+    return { firstName: null, lastName: null }
+  }
+
+  const [firstName, ...remainingNames] = normalized.split(" ")
+  return {
+    firstName: firstName || null,
+    lastName: remainingNames.join(" ") || null,
+  }
 }
 
 export async function createUser(input: CreateUserInput): Promise<UserProfile> {
@@ -105,4 +126,83 @@ export async function loginUser(
     user: mapUserProfile(updatedUser),
     issued,
   }
+}
+
+export async function loginUserWithFirebase(
+  identity: FirebaseUserIdentity,
+  context: UserSessionRequestContext,
+): Promise<{
+  user: UserProfile
+  issued: IssuedUserSession
+}> {
+  const firebaseUid = identity.uid.trim()
+  const email = normalizeEmail(identity.email)
+  const phone = normalizeText(identity.phone)
+  const avatarUrl = normalizeText(identity.picture)
+  const { firstName, lastName } = getNameParts(identity.name)
+
+  if (!firebaseUid) {
+    throw new Error("Invalid Firebase ID token")
+  }
+
+  if (
+    email &&
+    identity.signInProvider === "password" &&
+    !identity.emailVerified
+  ) {
+    throw new Error("Email address is not verified")
+  }
+
+  const identityFilters: Prisma.UserWhereInput[] = [{ firebaseUid }]
+  if (email) identityFilters.push({ email })
+  if (phone) identityFilters.push({ phone })
+
+  const matchingUsers = await db.user.findMany({
+    where: { OR: identityFilters },
+  })
+
+  if (matchingUsers.length > 1) {
+    throw new Error("Firebase identity conflicts with existing user accounts")
+  }
+
+  const existingUser = matchingUsers[0]
+  if (existingUser?.firebaseUid && existingUser.firebaseUid !== firebaseUid) {
+    throw new Error("Firebase identity conflicts with an existing user account")
+  }
+
+  if (existingUser && !existingUser.isActive) {
+    throw new Error("User account is inactive")
+  }
+
+  const loggedInAt = new Date()
+  const verifiedAt = identity.emailVerified && email ? loggedInAt : null
+  const user = existingUser
+    ? await db.user.update({
+        where: { id: existingUser.id },
+        data: {
+          firebaseUid: existingUser.firebaseUid ?? firebaseUid,
+          email: existingUser.email ?? email,
+          phone: existingUser.phone ?? phone,
+          firstName: existingUser.firstName ?? firstName,
+          lastName: existingUser.lastName ?? lastName,
+          avatarUrl: existingUser.avatarUrl ?? avatarUrl,
+          emailVerifiedAt: existingUser.emailVerifiedAt ?? verifiedAt,
+          lastLoginAt: loggedInAt,
+        },
+      })
+    : await db.user.create({
+        data: {
+          firebaseUid,
+          email,
+          phone,
+          firstName,
+          lastName,
+          avatarUrl,
+          emailVerifiedAt: verifiedAt,
+          lastLoginAt: loggedInAt,
+        },
+      })
+
+  const issued = await createUserSession(user, context)
+  return { user: mapUserProfile(user), issued }
 }

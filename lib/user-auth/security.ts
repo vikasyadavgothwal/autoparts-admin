@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { NextRequest } from "next/server"
+import type { NextRequest, NextResponse } from "next/server"
 
 import type { UserSessionRequestContext } from "@/types/user-auth/user-auth"
 
@@ -67,10 +67,40 @@ export function isAllowedUserAuthOrigin(request: NextRequest): boolean {
 
   try {
     const requestOrigin = new URL(request.url).origin
-    return origin === requestOrigin || configuredOrigins.includes(origin)
+    if (origin === requestOrigin || configuredOrigins.includes(origin)) {
+      return true
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+      const originUrl = new URL(origin)
+      const requestUrl = new URL(request.url)
+      const localHosts = new Set(["localhost", "127.0.0.1", "::1"])
+      return (
+        localHosts.has(originUrl.hostname) &&
+        localHosts.has(requestUrl.hostname)
+      )
+    }
+
+    return false
   } catch {
     return false
   }
+}
+
+export function setUserAuthCorsHeaders(
+  request: NextRequest,
+  response: NextResponse,
+): void {
+  const origin = request.headers.get("origin")
+  if (!origin || !isAllowedUserAuthOrigin(request)) {
+    return
+  }
+
+  response.headers.set("Access-Control-Allow-Origin", origin)
+  response.headers.set("Access-Control-Allow-Credentials", "true")
+  response.headers.set("Access-Control-Allow-Headers", "Content-Type")
+  response.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS")
+  response.headers.append("Vary", "Origin")
 }
 
 export function consumeUserAuthRateLimit(

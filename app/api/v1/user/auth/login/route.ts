@@ -24,22 +24,41 @@ import {
   getClientIp,
   getUserRequestContext,
   isAllowedUserAuthOrigin,
+  setUserAuthCorsHeaders,
 } from "@/lib/user-auth/security"
 import type {
   LoginUserApiBody,
-  UserAuthApiResponse,
 } from "@/types/user-auth/user-auth"
 
 export const dynamic = "force-dynamic"
 
-export async function POST(
+const withCors = <T extends NextResponse>(
   request: NextRequest,
-): Promise<NextResponse<UserAuthApiResponse>> {
+  response: T,
+): T => {
+  setUserAuthCorsHeaders(request, response)
+  return response
+}
+
+export async function OPTIONS(request: NextRequest): Promise<NextResponse> {
   if (!isAllowedUserAuthOrigin(request)) {
     return NextResponse.json(
       { ok: false, success: false, message: "Origin is not allowed" },
       { status: 403 },
     )
+  }
+
+  return withCors(request, new NextResponse(null, { status: 204 }))
+}
+
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse> {
+  if (!isAllowedUserAuthOrigin(request)) {
+    return withCors(request, NextResponse.json(
+      { ok: false, success: false, message: "Origin is not allowed" },
+      { status: 403 },
+    ))
   }
 
   const rateLimit = consumeUserAuthRateLimit(
@@ -48,13 +67,13 @@ export async function POST(
     15 * 60 * 1_000,
   )
   if (!rateLimit.allowed) {
-    return NextResponse.json(
+    return withCors(request, NextResponse.json(
       { ok: false, success: false, message: "Too many login attempts" },
       {
         status: 429,
         headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
       },
-    )
+    ))
   }
 
   let body: LoginUserApiBody
@@ -62,31 +81,39 @@ export async function POST(
   try {
     body = await request.json() as LoginUserApiBody
   } catch {
-    return NextResponse.json(
+    return withCors(request, NextResponse.json(
       { ok: false, success: false, message: "Invalid JSON body" },
       { status: 400 },
-    )
+    ))
   }
 
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json(
+    return withCors(request, NextResponse.json(
       { ok: false, success: false, message: "Invalid request body" },
       { status: 400 },
-    )
+    ))
   }
 
+  const installationId =
+    typeof body.installationId === "string"
+      ? body.installationId.trim().slice(0, 200)
+      : ""
   const deviceName =
-    typeof body.deviceName === "string" ? body.deviceName : null
+    typeof body.deviceName === "string" && body.deviceName.trim()
+      ? body.deviceName
+      : installationId
+        ? `Device ${installationId.slice(0, 12)}`
+        : null
   const result = await loginUserViaApi(
     body,
     getUserRequestContext(request, deviceName),
   )
 
   if (!result.ok) {
-    return NextResponse.json(
+    return withCors(request, NextResponse.json(
       { ok: false, success: false, message: result.message },
       { status: result.statusCode },
-    )
+    ))
   }
 
   if (
@@ -95,14 +122,14 @@ export async function POST(
     !result.expiresAt ||
     !result.refreshExpiresAt
   ) {
-    return NextResponse.json(
+    return withCors(request, NextResponse.json(
       {
         ok: false,
         success: false,
         message: "Login token could not be issued",
       },
       { status: 500 },
-    )
+    ))
   }
 
   const response = NextResponse.json(
@@ -121,6 +148,7 @@ export async function POST(
     accessExpiresAt: new Date(result.expiresAt),
     refreshExpiresAt: new Date(result.refreshExpiresAt),
   })
+  setUserAuthCorsHeaders(request, response)
 
   return response
 }

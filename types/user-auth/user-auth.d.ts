@@ -2,6 +2,7 @@ import type { UserRole } from "@/lib/generated/prisma/client"
 
 export type UserProfile = {
   id: string
+  firebaseUid: string | null
   email: string | null
   phone: string | null
   googleId: string | null
@@ -46,6 +47,16 @@ export type LoginUserInput = {
   email: string
   password: string
   deviceName?: string | null
+}
+
+export type FirebaseUserIdentity = {
+  uid: string
+  email: string | null
+  phone: string | null
+  name: string | null
+  picture: string | null
+  emailVerified: boolean
+  signInProvider: string | null
 }
 
 export type UserAccessClaims = {
@@ -139,6 +150,8 @@ export type LoginUserApiBody = {
   email?: unknown
   password?: unknown
   deviceName?: unknown
+  firebaseIdToken?: unknown
+  installationId?: unknown
 }
 
 export type UpdateActiveRoleApiBody = {

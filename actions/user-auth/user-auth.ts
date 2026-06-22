@@ -2,8 +2,10 @@ import { UserRole } from "@/lib/generated/prisma/client"
 import {
   createUser,
   loginUser,
+  loginUserWithFirebase,
   updateUserActiveRole,
 } from "@/services/user-auth/user-auth-service"
+import { verifyFirebaseIdToken } from "@/lib/firebase/admin"
 import {
   authenticateUserAccessToken,
   listUserSessions,
@@ -80,6 +82,18 @@ const mapError = (error: unknown): UserAuthActionResult => {
 
   if (message === "Invalid email or password") {
     return { ok: false, success: false, message, statusCode: 401 }
+  }
+
+  if (message === "Invalid Firebase ID token") {
+    return { ok: false, success: false, message, statusCode: 401 }
+  }
+
+  if (message === "Email address is not verified") {
+    return { ok: false, success: false, message, statusCode: 403 }
+  }
+
+  if (message.includes("Firebase identity conflicts")) {
+    return { ok: false, success: false, message, statusCode: 409 }
   }
 
   if (message === "User account is inactive") {
@@ -223,6 +237,46 @@ export async function loginUserViaApi(
   body: LoginUserApiBody,
   context: UserSessionRequestContext,
 ): Promise<UserAuthActionResult> {
+  const hasFirebaseToken = body.firebaseIdToken !== undefined
+  const firebaseIdToken = readString(body.firebaseIdToken)
+
+  if (hasFirebaseToken) {
+    if (!firebaseIdToken || firebaseIdToken.length > 20_000) {
+      return invalid("Firebase ID token is required")
+    }
+
+    try {
+      const decodedToken = await verifyFirebaseIdToken(firebaseIdToken)
+      const result = await loginUserWithFirebase(
+        {
+          uid: decodedToken.uid,
+          email: readOptionalString(decodedToken.email)?.toLowerCase() ?? null,
+          phone: readOptionalString(decodedToken.phone_number),
+          name: readOptionalString(decodedToken.name),
+          picture: readOptionalString(decodedToken.picture),
+          emailVerified: decodedToken.email_verified === true,
+          signInProvider: readOptionalString(
+            decodedToken.firebase?.sign_in_provider,
+          ),
+        },
+        context,
+      )
+
+      return {
+        ok: true,
+        success: true,
+        user: result.user,
+        accessToken: result.issued.accessToken,
+        refreshToken: result.issued.refreshToken,
+        expiresAt: result.issued.accessExpiresAt.toISOString(),
+        refreshExpiresAt: result.issued.refreshExpiresAt.toISOString(),
+        statusCode: 200,
+      }
+    } catch (error) {
+      return mapError(error)
+    }
+  }
+
   const email = readString(body.email).toLowerCase()
   const password = typeof body.password === "string" ? body.password : ""
 
