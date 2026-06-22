@@ -7,41 +7,84 @@ datasource db {
   provider = "postgresql"
 }
 
-model MainWebsiteContent {
-  id        String   @id @default(cuid())
-  slug      String   @unique
-  content   Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@map("main_website_contents")
+enum UserRole {
+  Fleet
+  User
+  Garage
+  Supplier
+}
+
+model User {
+  id              String        @id @default(cuid())
+  email           String?       @unique
+  phone           String?       @unique
+  googleId        String?       @unique
+  passwordHash    String?
+  firstName       String?
+  lastName        String?
+  avatarUrl       String?
+  companyName     String?
+  roles           UserRole[]    @default([User])
+  activeRole      UserRole      @default(User)
+  isActive        Boolean       @default(true)
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+  authVersion     Int           @default(1)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  sessions        UserSession[]
+
+  @@index([roles], type: Gin)
+  @@index([activeRole])
+  @@index([isActive])
+  @@map("users")
+}
+
+model UserSession {
+  id               String    @id @default(cuid())
+  userId           String
+  refreshTokenHash String    @unique
+  accessJti        String
+  deviceName       String?
+  userAgent        String?
+  ipHash           String?
+  lastUsedAt       DateTime?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("user_sessions")
 }
 
 model admin {
-  id               String       @id @default(cuid())
-  email            String       @unique
+  id               String    @id @default(cuid())
+  email            String    @unique
   name             String?
   passwordHash     String
-  isActive         Boolean      @default(true)
-  failedLoginCount Int          @default(0)
+  roleIds          String[]  @default([])
+  isActive         Boolean   @default(true)
+  failedLoginCount Int       @default(0)
   lockedUntil      DateTime?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  sessions         adminSession[]
-  roles            adminRole[]
+  sessions adminSession[]
 }
 
 model role {
-  id          String   @id @default(cuid())
-  code        String   @unique
-  name        String
-  description String?
-  isSystem    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  permissions rolePermission[]
-  admins      adminRole[]
+  id            String   @id @default(cuid())
+  code          String   @unique
+  name          String
+  description   String?
+  permissionIds String[] @default([])
+  isSystem      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model permission {
@@ -50,39 +93,12 @@ model permission {
   name        String
   description String?
   createdAt   DateTime @default(now())
-
-  roles       rolePermission[]
-}
-
-model adminRole {
-  adminId    String
-  roleId     String
-  assignedAt DateTime @default(now())
-  assignedBy String?
-
-  admin admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  role  role  @relation(fields: [roleId], references: [id], onDelete: Cascade)
-
-  @@id([adminId, roleId])
-  @@map("admin_roles")
-}
-
-model rolePermission {
-  roleId       String
-  permissionId String
-  createdAt    DateTime @default(now())
-
-  role       role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-
-  @@id([roleId, permissionId])
-  @@map("role_permissions")
 }
 
 model adminSession {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   adminId          String
-  refreshTokenHash  String   @unique
+  refreshTokenHash String    @unique
   accessJti        String
   deviceHash       String
   ipHash           String
@@ -91,13 +107,59 @@ model adminSession {
   expiresAt        DateTime
   revokedAt        DateTime?
   replacedBy       String?
-  lastUsedAt       DateTime @default(now())
-  rotationCount    Int      @default(0)
-  createdAt        DateTime @default(now())
+  lastUsedAt       DateTime  @default(now())
+  rotationCount    Int       @default(0)
+  createdAt        DateTime  @default(now())
 
   admin admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
   @@index([adminId])
   @@index([expiresAt])
   @@map("admin_sessions")
+}
+
+
+model MainWebsiteContent {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  content   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("main_website_contents")
+}
+
+model Vehicle {
+  id           String   @id @default(cuid())
+  brand        String
+  brandKey     String
+  carName      String
+  carNameKey   String
+  variant      String?
+  variantKey   String   @default("")
+  modelYear    Int?
+  modelYearKey Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  parts Part[]
+
+  @@unique([brandKey, carNameKey, variantKey, modelYearKey])
+  @@index([brand])
+  @@index([carName])
+  @@map("vehicles")
+}
+
+model Part {
+  id         String   @id @default(cuid())
+  vehicleId  String
+  name       String
+  partNumber String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@map("parts")
 }

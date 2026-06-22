@@ -29,6 +29,7 @@ export const appRoutes = {
   business: "/business",
   rfqs: "/rfqs",
   orders: "/orders",
+  vehicles: "/vehicles",
   suppliers: "/pages/suppliers-page",
   supplier: "/suppliers",
   reports: "/reports",

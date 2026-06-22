@@ -15,6 +15,7 @@ import {
   Wrench,
   FileText,
   Building2,
+  CarFront,
   ChartColumn,
   Settings,
 } from "lucide-react"
@@ -38,6 +39,7 @@ import type { AppSidebarNavItem } from "@/types/app-sidebar"
 const items: readonly AppSidebarNavItem[] = [
   { title: "Overview", url: "/", icon: House },
   { title: "Users", url: "/users", icon: Users },
+  { title: "All Cars", url: appRoutes.vehicles, icon: CarFront },
   { title: "Suppliers", url: appRoutes.supplier, icon: Building2 },
   { title: "Garages", url: "/garages", icon: Wrench },
   { title: "RFQs", url: "/rfqs", icon: FileText },

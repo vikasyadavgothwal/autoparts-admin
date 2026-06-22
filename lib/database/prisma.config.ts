@@ -1,13 +1,15 @@
 
-const databaseUrl = process.env.DATABASE_URL ?? ""
-const prismaConfig = {
+import "dotenv/config"
+import { defineConfig } from "prisma/config"
+
+const prismaConfig = defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
   },
   datasource: {
-    url: databaseUrl,
+    url: process.env.DATABASE_URL,
   },
-}
+})
 
 export default prismaConfig
