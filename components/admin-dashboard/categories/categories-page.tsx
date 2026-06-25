@@ -1,26 +1,17 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react"
+import { useCallback, useEffect, useState, useTransition } from "react"
 import { usePathname, useRouter } from "next/navigation"
-import {
-  ChevronLeft,
-  ChevronRight,
-  Download,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  Upload,
-} from "lucide-react"
+import { ChevronLeft, ChevronRight, Pencil, Plus, Search, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import {
-  createVehicleAction,
-  deleteVehicleAction,
-  importVehiclesAction,
-  updateVehicleAction,
-} from "@/actions/admin-dashboard/vehicles/vehicles"
+  createCategoryAction,
+  deleteCategoryAction,
+  updateCategoryAction,
+} from "@/actions/admin-dashboard/categories/categories"
 import { PageHeading } from "@/components/admin-dashboard/shared/page-heading"
+import { StatusBadge } from "@/components/admin-dashboard/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
@@ -34,6 +25,13 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Table,
   TableBody,
   TableCell,
@@ -41,26 +39,25 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { useVehicleSheet } from "@/hooks/admin-dashboard/vehicles/use-vehicle-sheet"
 import type {
-  VehicleFormMode,
-  VehicleInput,
-  VehiclePageResult,
-  VehicleRecord,
-} from "@/types/admin-dashboard/vehicles/vehicles"
+  CategoryFormMode,
+  CategoryInput,
+  CategoryPageResult,
+  CategoryRecord,
+  CategoryStatus,
+} from "@/types/admin-dashboard/categories/categories"
 
-type VehiclesPageProps = {
-  result: VehiclePageResult
+type CategoriesPageProps = {
+  result: CategoryPageResult
 }
 
-const EMPTY_FORM: VehicleInput = {
-  brand: "",
-  carName: "",
-  variant: "",
-  modelYear: null,
+const EMPTY_FORM: CategoryInput = {
+  name: "",
+  status: "ACTIVE",
 }
 
-const MAX_MODEL_YEAR = new Date().getFullYear() + 2
+const getStatusTone = (status: CategoryStatus) =>
+  status === "ACTIVE" ? "success" : "neutral"
 
 const getVisiblePages = (page: number, totalPages: number): number[] => {
   const start = Math.max(1, Math.min(page - 2, totalPages - 4))
@@ -69,21 +66,17 @@ const getVisiblePages = (page: number, totalPages: number): number[] => {
   return Array.from({ length: end - start + 1 }, (_, index) => start + index)
 }
 
-export function VehiclesPage({ result }: VehiclesPageProps) {
+export function CategoriesPage({ result }: CategoriesPageProps) {
   const router = useRouter()
   const pathname = usePathname()
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [isPending, startTransition] = useTransition()
   const [isNavigating, startNavigation] = useTransition()
   const [query, setQuery] = useState(result.query)
-  const [formMode, setFormMode] = useState<VehicleFormMode>("create")
+  const [formMode, setFormMode] = useState<CategoryFormMode>("create")
   const [formOpen, setFormOpen] = useState(false)
-  const [importOpen, setImportOpen] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<VehicleRecord | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<CategoryRecord | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState<VehicleInput>(EMPTY_FORM)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const { isParsing, parseFile, downloadDummyCsv } = useVehicleSheet()
+  const [form, setForm] = useState<CategoryInput>(EMPTY_FORM)
 
   const navigateToPage = useCallback(
     (page: number, searchQuery = result.query) => {
@@ -123,24 +116,22 @@ export function VehiclesPage({ result }: VehiclesPageProps) {
     setFormOpen(true)
   }
 
-  const openEdit = (vehicle: VehicleRecord) => {
+  const openEdit = (category: CategoryRecord) => {
     setFormMode("edit")
-    setEditingId(vehicle.id)
+    setEditingId(category.id)
     setForm({
-      brand: vehicle.brand,
-      carName: vehicle.carName,
-      variant: vehicle.variant ?? "",
-      modelYear: vehicle.modelYear,
+      name: category.name,
+      status: category.status,
     })
     setFormOpen(true)
   }
 
-  const submitVehicle = () => {
+  const submitCategory = () => {
     startTransition(async () => {
       const actionResult =
         formMode === "create"
-          ? await createVehicleAction(form)
-          : await updateVehicleAction(editingId ?? "", form)
+          ? await createCategoryAction(form)
+          : await updateCategoryAction(editingId ?? "", form)
 
       if (!actionResult.ok) {
         toast.error(actionResult.message)
@@ -159,7 +150,7 @@ export function VehiclesPage({ result }: VehiclesPageProps) {
     }
 
     startTransition(async () => {
-      const actionResult = await deleteVehicleAction(deleteTarget.id)
+      const actionResult = await deleteCategoryAction(deleteTarget.id)
 
       if (!actionResult.ok) {
         toast.error(actionResult.message)
@@ -172,41 +163,6 @@ export function VehiclesPage({ result }: VehiclesPageProps) {
     })
   }
 
-  const submitImport = () => {
-    if (!selectedFile) {
-      toast.error("Choose a CSV or XLSX file")
-      return
-    }
-
-    startTransition(async () => {
-      const parsed = await parseFile(selectedFile)
-
-      if (parsed.errors.length > 0) {
-        toast.error(parsed.errors.slice(0, 3).join(". "))
-        return
-      }
-
-      const actionResult = await importVehiclesAction(parsed.rows)
-
-      if (!actionResult.ok) {
-        toast.error(actionResult.message)
-        return
-      }
-
-      toast.success(
-        actionResult.skipped
-          ? `${actionResult.message}; ${actionResult.skipped} duplicate rows skipped`
-          : actionResult.message,
-      )
-      setSelectedFile(null)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ""
-      }
-      setImportOpen(false)
-      router.refresh()
-    })
-  }
-
   const { page, pageSize, totalItems, totalPages } = result.pagination
   const firstVisibleItem = totalItems === 0 ? 0 : (page - 1) * pageSize + 1
   const lastVisibleItem = Math.min(page * pageSize, totalItems)
@@ -215,34 +171,29 @@ export function VehiclesPage({ result }: VehiclesPageProps) {
   return (
     <div className="space-y-6">
       <PageHeading
-        title="All Cars"
-        subtitle="Manage brands, cars, optional variants, model years, and their linked parts."
+        title="Categories"
+        subtitle="Create and manage part categories, status, and linked part assignments."
         action={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={downloadDummyCsv}>
-              <Download />
-              Download dummy CSV
-            </Button>
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
-              <Upload />
-              Bulk import
-            </Button>
-            <Button onClick={openCreate}>
-              <Plus />
-              Add car
-            </Button>
-          </div>
+          <Button onClick={openCreate}>
+            <Plus />
+            Add Category
+          </Button>
         }
       />
+
       <Card className="border border-dashboard-panel-border">
         <CardHeader className="border-b border-dashboard-panel-border sm:flex sm:flex-row sm:items-center sm:justify-between">
-          <div />
+          <div>
+            <p className="text-sm text-dashboard-muted">
+              {result.categories.length} categor{result.categories.length === 1 ? "y" : "ies"}
+            </p>
+          </div>
           <div className="relative mt-3 w-full sm:mt-0 sm:max-w-xs">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-dashboard-muted" />
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search brand, car, variant, year"
+              placeholder="Search categories"
               className="h-9 pl-9"
             />
             {isNavigating && (
@@ -256,52 +207,52 @@ export function VehiclesPage({ result }: VehiclesPageProps) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="px-4">Brand</TableHead>
-                <TableHead>Car name</TableHead>
-                <TableHead>Variant</TableHead>
-                <TableHead>Model year</TableHead>
-                <TableHead>Parts</TableHead>
+                <TableHead className="px-4">Name</TableHead>
+                <TableHead>Slug</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Linked Parts</TableHead>
                 <TableHead className="px-4 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {result.vehicles.length === 0 ? (
+              {result.categories.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={5}
                     className="h-32 text-center text-dashboard-muted"
                   >
                     {result.query
-                      ? `No vehicles found for "${result.query}".`
-                      : "No vehicles found."}
+                      ? `No categories found for "${result.query}".`
+                      : "No categories found."}
                   </TableCell>
                 </TableRow>
               ) : (
-                result.vehicles.map((vehicle) => (
-                  <TableRow key={vehicle.id}>
-                    <TableCell className="px-4 font-medium">
-                      {vehicle.brand}
+                result.categories.map((category) => (
+                  <TableRow key={category.id}>
+                    <TableCell className="px-4 font-medium">{category.name}</TableCell>
+                    <TableCell>{category.slug}</TableCell>
+                    <TableCell>
+                      <StatusBadge
+                        label={category.status === "ACTIVE" ? "Active" : "Inactive"}
+                        tone={getStatusTone(category.status)}
+                      />
                     </TableCell>
-                    <TableCell>{vehicle.carName}</TableCell>
-                    <TableCell>{vehicle.variant || "—"}</TableCell>
-                    <TableCell>{vehicle.modelYear ?? "—"}</TableCell>
-                    <TableCell>{vehicle.partCount}</TableCell>
-
+                    <TableCell>{category.linkedPartsCount}</TableCell>
                     <TableCell className="px-4">
                       <div className="flex justify-end gap-2">
                         <Button
                           size="icon-sm"
                           variant="outline"
-                          aria-label={`Edit ${vehicle.carName}`}
-                          onClick={() => openEdit(vehicle)}
+                          aria-label={`Edit ${category.name}`}
+                          onClick={() => openEdit(category)}
                         >
                           <Pencil />
                         </Button>
                         <Button
                           size="icon-sm"
                           variant="destructive"
-                          aria-label={`Delete ${vehicle.carName}`}
-                          onClick={() => setDeleteTarget(vehicle)}
+                          aria-label={`Delete ${category.name}`}
+                          onClick={() => setDeleteTarget(category)}
                         >
                           <Trash2 />
                         </Button>
@@ -354,75 +305,43 @@ export function VehiclesPage({ result }: VehiclesPageProps) {
       </Card>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {formMode === "create" ? "Add car" : "Edit car"}
+              {formMode === "create" ? "Add category" : "Edit category"}
             </DialogTitle>
             <DialogDescription>
-              Variant and model year are optional. Add one row for each distinct
-              combination.
+              Slug is generated automatically from the category name.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="vehicle-brand">Brand</Label>
+              <Label htmlFor="category-name">Name</Label>
               <Input
-                id="vehicle-brand"
-                value={form.brand}
+                id="category-name"
+                value={form.name}
                 onChange={(event) =>
-                  setForm((value) => ({ ...value, brand: event.target.value }))
+                  setForm((current) => ({ ...current, name: event.target.value }))
                 }
-                placeholder="Toyota"
+                placeholder="Brake System"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="vehicle-name">Car name</Label>
-              <Input
-                id="vehicle-name"
-                value={form.carName}
-                onChange={(event) =>
-                  setForm((value) => ({
-                    ...value,
-                    carName: event.target.value,
-                  }))
+              <Label htmlFor="category-status">Status</Label>
+              <Select
+                value={form.status}
+                onValueChange={(value: CategoryStatus) =>
+                  setForm((current) => ({ ...current, status: value }))
                 }
-                placeholder="Corolla"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="vehicle-variant">Variant (optional)</Label>
-              <Input
-                id="vehicle-variant"
-                value={form.variant ?? ""}
-                onChange={(event) =>
-                  setForm((value) => ({
-                    ...value,
-                    variant: event.target.value,
-                  }))
-                }
-                placeholder="GLI"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="vehicle-model-year">Model year (optional)</Label>
-              <Input
-                id="vehicle-model-year"
-                type="number"
-                min={1886}
-                max={MAX_MODEL_YEAR}
-                step={1}
-                value={form.modelYear ?? ""}
-                onChange={(event) =>
-                  setForm((value) => ({
-                    ...value,
-                    modelYear: event.target.value
-                      ? Number(event.target.value)
-                      : null,
-                  }))
-                }
-                placeholder="2025"
-              />
+              >
+                <SelectTrigger id="category-status" className="w-full">
+                  <SelectValue placeholder="Choose a status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ACTIVE">Active</SelectItem>
+                  <SelectItem value="INACTIVE">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>
@@ -433,47 +352,12 @@ export function VehiclesPage({ result }: VehiclesPageProps) {
             >
               Cancel
             </Button>
-            <Button onClick={submitVehicle} disabled={isPending}>
+            <Button onClick={submitCategory} disabled={isPending}>
               {isPending
                 ? "Saving..."
                 : formMode === "create"
                   ? "Create"
                   : "Save changes"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={importOpen} onOpenChange={setImportOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Bulk import cars</DialogTitle>
-            <DialogDescription>
-              Upload CSV, XLS, or XLSX with columns: brand, carName, variant,
-              modelYear. Variant and modelYear may be empty.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xls,.xlsx"
-              onChange={(event) =>
-                setSelectedFile(event.target.files?.[0] ?? null)
-              }
-              className="h-auto py-2"
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setImportOpen(false)}
-              disabled={isPending}
-            >
-              Cancel
-            </Button>
-            <Button onClick={submitImport} disabled={isPending || isParsing}>
-              {isPending || isParsing ? "Importing..." : "Import sheet"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -485,11 +369,11 @@ export function VehiclesPage({ result }: VehiclesPageProps) {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete vehicle?</DialogTitle>
+            <DialogTitle>Delete category?</DialogTitle>
             <DialogDescription>
-              This removes {deleteTarget?.brand} {deleteTarget?.carName}
-              {deleteTarget?.variant ? ` ${deleteTarget.variant}` : ""} and all
-              linked parts.
+              {deleteTarget?.linkedPartsCount
+                ? `${deleteTarget.name} still has ${deleteTarget.linkedPartsCount} linked part${deleteTarget.linkedPartsCount === 1 ? "" : "s"}. Reassign them before deleting this category.`
+                : `Delete ${deleteTarget?.name}? This action cannot be undone.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -503,7 +387,7 @@ export function VehiclesPage({ result }: VehiclesPageProps) {
             <Button
               variant="destructive"
               onClick={confirmDelete}
-              disabled={isPending}
+              disabled={isPending || Boolean(deleteTarget?.linkedPartsCount)}
             >
               {isPending ? "Deleting..." : "Delete"}
             </Button>

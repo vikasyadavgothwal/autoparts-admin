@@ -1,7 +1,6 @@
 import { db } from "@/lib/database/prisma"
 import type { Prisma } from "@/lib/generated/prisma/client"
 import type {
-  PartInput,
   VehicleBulkRow,
   VehicleInput,
   VehiclePageResult,
@@ -229,22 +228,4 @@ export async function importVehicles(
     imported: uniqueRows.size,
     skipped: rows.length - uniqueRows.size,
   }
-}
-
-export async function createPart(input: PartInput): Promise<void> {
-  const vehicleId = input.vehicleId.trim()
-  const name = normalizeText(input.name ?? "")
-  const partNumber = normalizeText(input.partNumber ?? "") || null
-
-  if (!vehicleId || !name) {
-    throw new Error("Vehicle and part name are required")
-  }
-
-  await db.part.create({
-    data: {
-      vehicleId,
-      name,
-      partNumber,
-    },
-  })
 }

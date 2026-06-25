@@ -1,8 +1,10 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
+import { redirect } from "next/navigation"
 
 import { getCurrentAdminSession } from "@/actions/admin-auth/me"
+import { appRoutes } from "@/lib/routes"
 import {
   createVehicle,
   deleteVehicle,
@@ -20,10 +22,14 @@ import type {
 
 const VEHICLES_PATH = "/vehicles"
 
-const requireActiveAdmin = async () => {
+const requireActiveAdmin = async (options?: { redirectOnFail?: boolean }) => {
   const session = await getCurrentAdminSession()
 
   if (!session.ok || !session.admin.isActive) {
+    if (options?.redirectOnFail) {
+      redirect(appRoutes.login)
+    }
+
     throw new Error("Unauthorized")
   }
 }
@@ -31,11 +37,19 @@ const requireActiveAdmin = async () => {
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
     if (error.message.includes("Unique constraint")) {
+      if (error.message.includes("sku")) {
+        return "This SKU already exists"
+      }
+
       return "This brand, car, variant, and model year already exists"
     }
 
     if (error.message.includes("Record to update not found")) {
-      return "Vehicle not found"
+      return "Record not found"
+    }
+
+    if (error.message.includes("Record to delete does not exist")) {
+      return "Record not found"
     }
 
     return error.message
@@ -47,7 +61,7 @@ const getErrorMessage = (error: unknown): string => {
 export async function fetchVehicles(
   input: VehicleSearchInput = {},
 ): Promise<VehiclePageResult> {
-  await requireActiveAdmin()
+  await requireActiveAdmin({ redirectOnFail: true })
   return getVehicleCatalog(input)
 }
 

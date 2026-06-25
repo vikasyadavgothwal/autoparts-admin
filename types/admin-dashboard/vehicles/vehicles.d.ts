@@ -53,9 +53,3 @@ export type ParsedVehicleSheet = {
   rows: VehicleBulkRow[]
   errors: string[]
 }
-
-export type PartInput = {
-  vehicleId: string
-  name: string
-  partNumber?: string | null
-}
