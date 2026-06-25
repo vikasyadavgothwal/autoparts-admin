@@ -40,6 +40,7 @@ model User {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   sessions        UserSession[]
+  quantities      Quantity[]
 
   @@index([roles], type: Gin)
   @@index([activeRole])
@@ -158,15 +159,37 @@ model Vehicle {
 }
 
 model Part {
-  id         String   @id @default(cuid())
-  vehicleId  String
-  name       String
-  partNumber String?
+  id          String   @id @default(cuid())
+  vehicleId   String
+  name        String
+  partNumber  String?
+  oemNumber   String?  
+  sku         String   @unique
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  quantities Quantity[]
 
   @@index([vehicleId])
   @@map("parts")
+}
+
+model Quantity {
+  id          String   @id @default(cuid())
+  price      Int
+  currency   String
+  stock      Int
+  partId     String
+  userId     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  part Part @relation(fields: [partId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([partId])
+  @@index([userId])
+  @@map("quantities")
 }
