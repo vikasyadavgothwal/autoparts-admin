@@ -15,10 +15,8 @@ import {
   Wrench,
   FileText,
   Building2,
-  CarFront,
   ChartColumn,
   Settings,
-  Tags,
 } from "lucide-react"
 import {
   Sidebar,
@@ -47,11 +45,6 @@ const items: readonly AppSidebarNavItem[] = [
   { title: "Reports", url: "/reports", icon: ChartColumn },
 ]
 
-const catalogLinks = [
-  { title: "All Cars", url: appRoutes.vehicles, icon: CarFront },
-  { title: "Categories", url: appRoutes.categories, icon: Tags },
-] as const
-
 const pageIconByKey: Record<AppPageLinkKey, (typeof House)> = {
   home: House,
   req: FileTextIcon,
@@ -78,9 +71,7 @@ export function AppSidebar() {
   }
 
   const [isPagesOpen, setIsPagesOpen] = useState(false)
-  const [isCatalogOpen, setIsCatalogOpen] = useState(false)
   const isPagesActive = appPageLinks.some((item) => isLinkActive(item.url))
-  const isCatalogActive = catalogLinks.some((item) => isLinkActive(item.url))
 
   useEffect(() => {
     if (isPagesActive) {
@@ -88,13 +79,6 @@ export function AppSidebar() {
       setIsPagesOpen(true)
     }
   }, [isPagesActive])
-
-  useEffect(() => {
-    if (isCatalogActive) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setIsCatalogOpen(true)
-    }
-  }, [isCatalogActive])
 
   return (
     <Sidebar className="border-sidebar-border bg-[#1A1A1A] text-white">
@@ -130,60 +114,6 @@ export function AppSidebar() {
               </SidebarMenuItem>
             )
           })}
-
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              isActive={isCatalogActive}
-              className={`h-auto px-4 py-3 rounded-lg transition-all ${
-                isCatalogActive
-                  ? "bg-[#DC2626] text-white hover:bg-[#DC2626]"
-                  : "text-[#9CA3AF] hover:bg-[#2A2A2A] hover:text-white"
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => setIsCatalogOpen((value) => !value)}
-                className="flex w-full items-center gap-3"
-              >
-                <CarFront className="h-5 w-5" />
-                <span className="font-medium">Catalog</span>
-                <ChevronDown
-                  className={`ml-auto h-4 w-4 transition-transform ${
-                    isCatalogOpen ? "rotate-180" : ""
-                  }`}
-                />
-              </button>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-
-          {isCatalogOpen && (
-            <SidebarMenuSub>
-              {catalogLinks.map((catalogItem) => {
-                const Icon = catalogItem.icon
-                const isActive = isLinkActive(catalogItem.url)
-
-                return (
-                  <SidebarMenuSubItem key={catalogItem.title}>
-                    <SidebarMenuSubButton
-                      asChild
-                      isActive={isActive}
-                      className={`${
-                        isActive
-                          ? "bg-[#DC2626] text-white hover:bg-[#DC2626]"
-                          : "text-[#9CA3AF] hover:bg-[#2A2A2A] hover:text-white"
-                      }`}
-                    >
-                      <Link href={catalogItem.url} className="flex items-center gap-3">
-                        <Icon className="h-4 w-4" />
-                        <span>{catalogItem.title}</span>
-                      </Link>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
-                )
-              })}
-            </SidebarMenuSub>
-          )}
 
           <SidebarMenuItem>
             <SidebarMenuButton

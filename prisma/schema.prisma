@@ -14,11 +14,6 @@ enum UserRole {
   Supplier
 }
 
-enum CategoryStatus {
-  ACTIVE
-  INACTIVE
-}
-
 model User {
   id              String        @id @default(cuid())
   firebaseUid     String?       @unique
@@ -45,7 +40,6 @@ model User {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   sessions        UserSession[]
-  quantities      Quantity[]
 
   @@index([roles], type: Gin)
   @@index([activeRole])
@@ -140,78 +134,4 @@ model MainWebsiteContent {
   updatedAt DateTime @updatedAt
 
   @@map("main_website_contents")
-}
-
-model Vehicle {
-  id           String   @id @default(cuid())
-  brand        String
-  brandKey     String
-  carName      String
-  carNameKey   String
-  variant      String?
-  variantKey   String   @default("")
-  modelYear    Int?
-  modelYearKey Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  parts Part[]
-
-  @@unique([brandKey, carNameKey, variantKey, modelYearKey])
-  @@index([brand])
-  @@index([carName])
-  @@map("vehicles")
-}
-
-model Category {
-  id        String         @id @default(cuid())
-  name      String
-  slug      String         @unique
-  status    CategoryStatus @default(ACTIVE)
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-
-  parts Part[]
-
-  @@index([status])
-  @@map("categories")
-}
-
-model Part {
-  id          String  @id @default(cuid())
-  vehicleId   String
-  categoryId  String?
-  name        String
-  partNumber  String?
-  oemNumber   String?
-  sku         String  @unique
-
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  category Category? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  quantities Quantity[]
-
-  @@index([vehicleId])
-  @@index([categoryId])
-  @@map("parts")
-}
-
-model Quantity {
-  id          String   @id @default(cuid())
-  price      Int
-  currency   String
-  stock      Int
-  partId     String
-  userId     String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  part Part @relation(fields: [partId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([partId])
-  @@index([userId])
-  @@map("quantities")
 }
