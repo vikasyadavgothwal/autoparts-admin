@@ -152,6 +152,9 @@ export type LoginUserApiBody = {
   deviceName?: unknown
   firebaseIdToken?: unknown
   installationId?: unknown
+  requestedRole?: unknown
+  requestedRoleUid?: unknown
+  requestedDisplayName?: unknown
 }
 
 export type UpdateActiveRoleApiBody = {

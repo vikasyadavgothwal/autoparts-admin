@@ -14,6 +14,27 @@ enum UserRole {
   Supplier
 }
 
+enum SupplierPartMappingStatus {
+  uploaded
+  processing
+  mapped
+  pending_review
+  failed
+}
+
+enum SupplierPartMappingSource {
+  local_db
+  vin17 @map("17vin")
+  manual
+}
+
+enum PartNumberType {
+  mpn
+  oem
+  brand_part_number
+  unknown
+}
+
 model User {
   id              String        @id @default(cuid())
   firebaseUid     String?       @unique
@@ -40,6 +61,7 @@ model User {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   sessions        UserSession[]
+  supplierParts   SupplierPart[]
 
   @@index([roles], type: Gin)
   @@index([activeRole])
@@ -134,4 +156,135 @@ model MainWebsiteContent {
   updatedAt DateTime @updatedAt
 
   @@map("main_website_contents")
+}
+
+model SupplierPart {
+  id                  String                    @id @default(cuid())
+  supplierId          String
+  partUid             String?
+  originalPartName    String
+  originalBrand       String?
+  originalMpn         String?
+  originalOemNumber   String?
+  normalizedMpn       String?
+  normalizedOemNumber String?
+  price               Int
+  stock               Int
+  currency            String?
+  category            String?
+  mappingStatus       SupplierPartMappingStatus @default(uploaded)
+  mappingSource       SupplierPartMappingSource?
+  mappingError        String?
+  rawUploadData       Json?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+
+  supplier User        @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  part     PartMaster? @relation(fields: [partUid], references: [partUid], onDelete: SetNull)
+
+  @@index([supplierId])
+  @@index([partUid])
+  @@index([mappingStatus])
+  @@index([normalizedMpn])
+  @@index([normalizedOemNumber])
+  @@map("supplier_parts")
+}
+
+model PartMaster {
+  id                    String   @id @default(cuid())
+  partUid               String   @unique
+  source                String
+  sourcePartId          String?
+  partNumber            String?
+  normalizedPartNumber  String?
+  partNumberOriginal    String?
+  brandName             String?
+  partName              String?
+  category              String?
+  groupId               String?
+  groupName             String?
+  imageUrl              String?
+  imageUrls             String[] @default([])
+  imageKeys             String[] @default([])
+  badgeText             String?
+  heading               String?
+  description           String?
+  keyFeatures           String[] @default([])
+  raw17VinPartInfo      Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  supplierParts SupplierPart[]
+  numbers       PartNumberIndex[]
+  fitments      MasterFitment[]
+
+  @@index([normalizedPartNumber])
+  @@index([normalizedPartNumber, groupId])
+  @@index([groupId])
+  @@map("part_master")
+}
+
+model PartNumberIndex {
+  id               String         @id @default(cuid())
+  partUid          String
+  numberOriginal   String
+  numberNormalized String
+  numberType       PartNumberType
+  brand            String?
+  source           String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  part PartMaster @relation(fields: [partUid], references: [partUid], onDelete: Cascade)
+  @@unique([partUid, numberNormalized, numberType])
+  @@index([numberNormalized])
+  @@index([numberNormalized, brand])
+  @@index([partUid])
+  @@map("part_number_index")
+}
+
+model MasterFitment {
+  id              String   @id @default(cuid())
+  partUid         String
+  source          String
+  vin17ModelId    String?
+  brand           String?
+  make            String?
+  model           String?
+  series          String?
+  modelYear       Int?
+  yearFrom        Int?
+  yearTo          Int?
+  engine          String?
+  engineNo        String?
+  cc              String?
+  fuelType        String?
+  transmission    String?
+  bodyType        String?
+  dateBegin       String?
+  dateEnd         String?
+  raw17VinVehicle Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  part PartMaster @relation(fields: [partUid], references: [partUid], onDelete: Cascade)
+
+  @@unique([partUid, vin17ModelId])
+  @@index([partUid])
+  @@index([make, model, modelYear])
+  @@index([brand, model, modelYear])
+  @@index([engineNo])
+  @@map("master_fitment")
+}
+
+model UnmatchedPartSearchLog {
+  id               String   @id @default(cuid())
+  searchedNumber   String
+  normalizedNumber String
+  userId           String?
+  resultStatus     String
+  createdAt        DateTime @default(now())
+
+  @@index([normalizedNumber])
+  @@index([userId])
+  @@map("unmatched_part_search_logs")
 }

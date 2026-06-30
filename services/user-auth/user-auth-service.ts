@@ -131,6 +131,8 @@ export async function loginUser(
 export async function loginUserWithFirebase(
   identity: FirebaseUserIdentity,
   context: UserSessionRequestContext,
+  requestedRole: UserRole | null = null,
+  requestedDisplayName: string | null = null,
 ): Promise<{
   user: UserProfile
   issued: IssuedUserSession
@@ -140,6 +142,8 @@ export async function loginUserWithFirebase(
   const phone = normalizeText(identity.phone)
   const avatarUrl = normalizeText(identity.picture)
   const { firstName, lastName } = getNameParts(identity.name)
+  const registrationName = normalizeText(requestedDisplayName)
+  const registrationNameParts = getNameParts(registrationName)
 
   if (!firebaseUid) {
     throw new Error("Invalid Firebase ID token")
@@ -195,9 +199,15 @@ export async function loginUserWithFirebase(
           firebaseUid,
           email,
           phone,
-          firstName,
-          lastName,
+          firstName: registrationNameParts.firstName ?? firstName,
+          lastName: registrationNameParts.lastName ?? lastName,
           avatarUrl,
+          companyName:
+            requestedRole && requestedRole !== UserRole.User
+              ? registrationName ?? normalizeText(identity.name)
+              : null,
+          roles: [requestedRole ?? UserRole.User],
+          activeRole: requestedRole ?? UserRole.User,
           emailVerifiedAt: verifiedAt,
           lastLoginAt: loggedInAt,
         },

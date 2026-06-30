@@ -239,14 +239,32 @@ export async function loginUserViaApi(
 ): Promise<UserAuthActionResult> {
   const hasFirebaseToken = body.firebaseIdToken !== undefined
   const firebaseIdToken = readString(body.firebaseIdToken)
+  const requestedRoleValue = readString(body.requestedRole)
+  const requestedRole = requestedRoleValue
+    ? (requestedRoleValue as UserRole)
+    : null
+  const requestedRoleUid = readString(body.requestedRoleUid)
+  const requestedDisplayName = readOptionalString(body.requestedDisplayName)
 
   if (hasFirebaseToken) {
     if (!firebaseIdToken || firebaseIdToken.length > 20_000) {
       return invalid("Firebase ID token is required")
     }
+    if (requestedRole && !VALID_ROLES.has(requestedRole)) {
+      return invalid("Requested role must be Fleet, User, Garage, or Supplier")
+    }
+    if (requestedDisplayName && requestedDisplayName.length > 120) {
+      return invalid("Requested display name must not exceed 120 characters")
+    }
+    if (requestedDisplayName && !requestedRole) {
+      return invalid("Requested display name requires an account role")
+    }
 
     try {
       const decodedToken = await verifyFirebaseIdToken(firebaseIdToken)
+      if (requestedRole && requestedRoleUid !== decodedToken.uid) {
+        return invalid("Requested role does not match the authenticated user")
+      }
       const result = await loginUserWithFirebase(
         {
           uid: decodedToken.uid,
@@ -260,6 +278,8 @@ export async function loginUserViaApi(
           ),
         },
         context,
+        requestedRole,
+        requestedDisplayName,
       )
 
       return {

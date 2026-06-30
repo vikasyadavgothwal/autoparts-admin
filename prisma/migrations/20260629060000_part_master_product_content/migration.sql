@@ -1,0 +1,7 @@
+ALTER TABLE "part_master"
+ADD COLUMN "imageUrls" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+ADD COLUMN "imageKeys" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+ADD COLUMN "badgeText" TEXT,
+ADD COLUMN "heading" TEXT,
+ADD COLUMN "description" TEXT,
+ADD COLUMN "keyFeatures" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
