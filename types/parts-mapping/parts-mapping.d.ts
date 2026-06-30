@@ -60,7 +60,8 @@ export type SupplierBulkProductRow = {
 export type SupplierBulkImageRow = {
   rowNumber: number
   vendorSku: string
-  imageUrls: string[]
+  primaryImageUrl: string
+  galleryImageUrls: string[]
 }
 
 export type SupplierPartRecord = {

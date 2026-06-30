@@ -1117,8 +1117,11 @@ export async function updateSupplierPartImagesBulk(
   for (const row of rows) {
     const vendorSku = normalizeVendorSku(row.vendorSku)
     const supplierPart = vendorSku
-      ? await db.supplierPart.findUnique({
-          where: { supplierId_vendorSku: { supplierId, vendorSku } },
+      ? await db.supplierPart.findFirst({
+          where: {
+            supplierId,
+            vendorSku: { equals: vendorSku, mode: "insensitive" },
+          },
         })
       : null
 
@@ -1134,7 +1137,12 @@ export async function updateSupplierPartImagesBulk(
 
     await db.supplierPart.update({
       where: { id: supplierPart.id },
-      data: { supplierImageUrls: row.imageUrls },
+      data: {
+        supplierImageUrls: [
+          row.primaryImageUrl,
+          ...row.galleryImageUrls,
+        ],
+      },
     })
     results.push({
       ok: true as const,

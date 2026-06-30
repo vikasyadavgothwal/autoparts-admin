@@ -44,6 +44,23 @@ const splitValues = (value: string) =>
     ),
   )
 
+const normalizeImageUrl = (value: string) => {
+  const trimmedValue = value.trim()
+  const markdownLink = trimmedValue.match(/^\[[^\]]*\]\((https?:\/\/[^)]+)\)$/i)
+  if (markdownLink?.[1]) {
+    return markdownLink[1].trim()
+  }
+
+  const excelHyperlink = trimmedValue.match(
+    /^=?HYPERLINK\(\s*"(https?:\/\/[^"]+)"/i,
+  )
+  if (excelHyperlink?.[1]) {
+    return excelHyperlink[1].trim()
+  }
+
+  return trimmedValue
+}
+
 const parseSpreadsheet = async (file: File) => {
   if (file.size === 0) {
     throw new Error(`${file.name || "Upload file"} is empty`)
@@ -82,27 +99,57 @@ const parseSpreadsheet = async (file: File) => {
 const parseImageRows = async (file: File): Promise<SupplierBulkImageRow[]> => {
   const rows = await parseSpreadsheet(file)
   const headers = Object.keys(rows[0]).map(normalizeHeader)
-  if (!headers.some((header) => ["sku", "vendorsku", "vendorskunumber"].includes(header))) {
-    throw new Error("The image file must contain an SKU column")
+  const hasNumberedGalleryColumns = headers.some((header) =>
+    /^galleryimage[1-5](url)?$/.test(header),
+  )
+  if (
+    !headers.some((header) =>
+      ["sku", "vendorsku", "vendorskunumber"].includes(header),
+    ) ||
+    !headers.includes("primaryimageurl") ||
+    (!headers.includes("galleryimageurls") && !hasNumberedGalleryColumns)
+  ) {
+    throw new Error(
+      "The image file must contain SKU, Primary Image URL, and either Gallery Image URLs or Gallery Image 1-5 columns",
+    )
   }
   return rows.map((row, index) => {
     const vendorSku = readCell(row, ["SKU", "Vendor SKU", "Vendor SKU Number"])
-    const imageUrls = [
+    const primaryImageUrl = normalizeImageUrl(
       readCell(row, ["Primary Image URL", "Primary Image"]),
-      ...Array.from({ length: 5 }, (_, imageIndex) =>
-        readCell(row, [
-          `Gallery Image ${imageIndex + 1}`,
-          `Gallery Image ${imageIndex + 1} URL`,
-        ]),
+    )
+    const galleryImageUrls = Array.from(
+      new Set(
+        [
+          ...splitValues(
+            readCell(row, ["Gallery Image URLs", "Gallery Images"]),
+          ),
+          ...Array.from({ length: 5 }, (_, imageIndex) =>
+            readCell(row, [
+              `Gallery Image ${imageIndex + 1}`,
+              `Gallery Image ${imageIndex + 1} URL`,
+            ]),
+          ),
+        ]
+          .map(normalizeImageUrl)
+          .filter(Boolean),
       ),
-    ].filter(Boolean)
+    )
 
     if (!vendorSku) {
       throw new Error(`Image row ${index + 2}: SKU is required`)
     }
-    if (imageUrls.length === 0) {
-      throw new Error(`Image row ${index + 2}: provide at least one image URL`)
+    if (!primaryImageUrl) {
+      throw new Error(`Image row ${index + 2}: Primary Image URL is required`)
     }
+    if (galleryImageUrls.length > 5) {
+      throw new Error(
+        `Image row ${index + 2}: a maximum of 5 gallery images is allowed`,
+      )
+    }
+    const imageUrls = Array.from(
+      new Set([primaryImageUrl, ...galleryImageUrls]),
+    )
     for (const imageUrl of imageUrls) {
       let parsedUrl: URL
       try {
@@ -115,7 +162,12 @@ const parseImageRows = async (file: File): Promise<SupplierBulkImageRow[]> => {
       }
     }
 
-    return { rowNumber: index + 2, vendorSku, imageUrls }
+    return {
+      rowNumber: index + 2,
+      vendorSku,
+      primaryImageUrl,
+      galleryImageUrls: imageUrls.slice(1),
+    }
   })
 }
 
@@ -139,7 +191,10 @@ const parseProductRows = async (
     )
   }
   const imagesBySku = new Map(
-    imageRows.map((row) => [row.vendorSku.trim().toUpperCase(), row.imageUrls]),
+    imageRows.map((row) => [
+      row.vendorSku.trim().toUpperCase(),
+      [row.primaryImageUrl, ...row.galleryImageUrls],
+    ]),
   )
 
   return rows.map((row, index) => {
