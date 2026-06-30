@@ -41,10 +41,33 @@ export type SupplierPartCreateInput = SupplierPartLookupInput & {
 
 export type SupplierPartBulkRow = SupplierPartCreateInput
 
+export type SupplierBulkProductRow = {
+  rowNumber: number
+  vendorSku: string
+  oemNumber: string
+  mpn?: string | null
+  brand?: string | null
+  price?: number | string | null
+  stock?: number | string | null
+  oemSupersessionNumbers?: string[]
+  competitorPartNumber?: string | null
+  competitorBrandName?: string | null
+  hsCode?: string | null
+  imageUrls?: string[]
+  rawUploadData?: unknown
+}
+
+export type SupplierBulkImageRow = {
+  rowNumber: number
+  vendorSku: string
+  imageUrls: string[]
+}
+
 export type SupplierPartRecord = {
   id: string
   supplierId: string
   supplierName: string | null
+  vendorSku: string | null
   partUid: string | null
   originalPartName: string
   originalBrand: string | null
@@ -56,6 +79,11 @@ export type SupplierPartRecord = {
   stock: number
   currency: string | null
   category: string | null
+  oemSupersessionNumbers: string[]
+  competitorPartNumber: string | null
+  competitorBrandName: string | null
+  hsCode: string | null
+  supplierImageUrls: string[]
   mappingStatus: SupplierPartMappingStatus
   mappingSource: SupplierPartMappingSource | null
   mappingError: string | null

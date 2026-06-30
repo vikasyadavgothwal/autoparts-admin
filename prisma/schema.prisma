@@ -24,7 +24,7 @@ enum SupplierPartMappingStatus {
 
 enum SupplierPartMappingSource {
   local_db
-  vin17 @map("17vin")
+  vin17    @map("17vin")
   manual
 }
 
@@ -36,11 +36,11 @@ enum PartNumberType {
 }
 
 model User {
-  id              String        @id @default(cuid())
-  firebaseUid     String?       @unique
-  email           String?       @unique
-  phone           String?       @unique
-  googleId        String?       @unique
+  id              String         @id @default(cuid())
+  firebaseUid     String?        @unique
+  email           String?        @unique
+  phone           String?        @unique
+  googleId        String?        @unique
   passwordHash    String?
   firstName       String?
   lastName        String?
@@ -52,14 +52,14 @@ model User {
   state           String?
   postalCode      String?
   country         String?
-  roles           UserRole[]    @default([User])
-  activeRole      UserRole      @default(User)
-  isActive        Boolean       @default(true)
+  roles           UserRole[]     @default([User])
+  activeRole      UserRole       @default(User)
+  isActive        Boolean        @default(true)
   emailVerifiedAt DateTime?
   lastLoginAt     DateTime?
-  authVersion     Int           @default(1)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  authVersion     Int            @default(1)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
   sessions        UserSession[]
   supplierParts   SupplierPart[]
 
@@ -147,7 +147,6 @@ model adminSession {
   @@map("admin_sessions")
 }
 
-
 model MainWebsiteContent {
   id        String   @id @default(cuid())
   slug      String   @unique
@@ -159,29 +158,36 @@ model MainWebsiteContent {
 }
 
 model SupplierPart {
-  id                  String                    @id @default(cuid())
-  supplierId          String
-  partUid             String?
-  originalPartName    String
-  originalBrand       String?
-  originalMpn         String?
-  originalOemNumber   String?
-  normalizedMpn       String?
-  normalizedOemNumber String?
-  price               Int
-  stock               Int
-  currency            String?
-  category            String?
-  mappingStatus       SupplierPartMappingStatus @default(uploaded)
-  mappingSource       SupplierPartMappingSource?
-  mappingError        String?
-  rawUploadData       Json?
-  createdAt           DateTime                  @default(now())
-  updatedAt           DateTime                  @updatedAt
+  id                     String                     @id @default(cuid())
+  supplierId             String
+  vendorSku              String?
+  partUid                String?
+  originalPartName       String
+  originalBrand          String?
+  originalMpn            String?
+  originalOemNumber      String?
+  normalizedMpn          String?
+  normalizedOemNumber    String?
+  price                  Int
+  stock                  Int
+  currency               String?
+  category               String?
+  oemSupersessionNumbers String[]                   @default([])
+  competitorPartNumber   String?
+  competitorBrandName    String?
+  hsCode                 String?
+  supplierImageUrls      String[]                   @default([])
+  mappingStatus          SupplierPartMappingStatus  @default(uploaded)
+  mappingSource          SupplierPartMappingSource?
+  mappingError           String?
+  rawUploadData          Json?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
 
   supplier User        @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   part     PartMaster? @relation(fields: [partUid], references: [partUid], onDelete: SetNull)
 
+  @@unique([supplierId, vendorSku])
   @@index([supplierId])
   @@index([partUid])
   @@index([mappingStatus])
@@ -191,28 +197,28 @@ model SupplierPart {
 }
 
 model PartMaster {
-  id                    String   @id @default(cuid())
-  partUid               String   @unique
-  source                String
-  sourcePartId          String?
-  partNumber            String?
-  normalizedPartNumber  String?
-  partNumberOriginal    String?
-  brandName             String?
-  partName              String?
-  category              String?
-  groupId               String?
-  groupName             String?
-  imageUrl              String?
-  imageUrls             String[] @default([])
-  imageKeys             String[] @default([])
-  badgeText             String?
-  heading               String?
-  description           String?
-  keyFeatures           String[] @default([])
-  raw17VinPartInfo      Json?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  partUid              String   @unique
+  source               String
+  sourcePartId         String?
+  partNumber           String?
+  normalizedPartNumber String?
+  partNumberOriginal   String?
+  brandName            String?
+  partName             String?
+  category             String?
+  groupId              String?
+  groupName            String?
+  imageUrl             String?
+  imageUrls            String[] @default([])
+  imageKeys            String[] @default([])
+  badgeText            String?
+  heading              String?
+  description          String?
+  keyFeatures          String[] @default([])
+  raw17VinPartInfo     Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   supplierParts SupplierPart[]
   numbers       PartNumberIndex[]
@@ -234,7 +240,8 @@ model PartNumberIndex {
   source           String
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
-  part PartMaster @relation(fields: [partUid], references: [partUid], onDelete: Cascade)
+  part             PartMaster     @relation(fields: [partUid], references: [partUid], onDelete: Cascade)
+
   @@unique([partUid, numberNormalized, numberType])
   @@index([numberNormalized])
   @@index([numberNormalized, brand])

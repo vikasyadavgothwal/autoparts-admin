@@ -103,6 +103,7 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
 
     return [
       part.originalPartName,
+      part.vendorSku ?? "",
       part.originalBrand ?? "",
       part.originalMpn ?? "",
       part.originalOemNumber ?? "",
@@ -392,6 +393,7 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
                       <div className="space-y-1 text-sm">
                         <p>OEM: {part.originalOemNumber ?? "-"}</p>
                         <p>MPN: {part.originalMpn ?? "-"}</p>
+                        <p>SKU: {part.vendorSku ?? "-"}</p>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -474,7 +476,7 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
       >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Review first-vendor product</DialogTitle>
+            <DialogTitle>Supplier product details</DialogTitle>
             <DialogDescription>
               Verify the submitted catalog content before publishing this part.
             </DialogDescription>
@@ -488,7 +490,22 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
                 <p><strong>Category:</strong> {partToReview.category ?? "-"}</p>
                 <p><strong>OEM:</strong> {partToReview.originalOemNumber ?? "-"}</p>
                 <p><strong>MPN:</strong> {partToReview.originalMpn ?? "-"}</p>
+                <p><strong>Vendor SKU:</strong> {partToReview.vendorSku ?? "-"}</p>
+                <p><strong>HS code:</strong> {partToReview.hsCode ?? "-"}</p>
                 <p><strong>Offer:</strong> AED {partToReview.price.toFixed(2)} · {partToReview.stock}</p>
+              </div>
+
+              <div className="grid gap-3 rounded-lg border p-4 text-sm sm:grid-cols-2">
+                <p>
+                  <strong>OEM supersessions:</strong>{" "}
+                  {partToReview.oemSupersessionNumbers.join(", ") || "-"}
+                </p>
+                <p>
+                  <strong>Competitor:</strong>{" "}
+                  {[partToReview.competitorBrandName, partToReview.competitorPartNumber]
+                    .filter(Boolean)
+                    .join(" · ") || "-"}
+                </p>
               </div>
 
               <div
@@ -502,6 +519,23 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
                   ? "17VIN verified this OEM/MPN and brand combination."
                   : "No verified match was found in 17VIN. Research the OEM, MPN, brand, fitment, and submitted content independently before approving."}
               </div>
+
+              {[...partToReview.supplierImageUrls, ...(partToReview.part?.imageKeys.length ? [] : (partToReview.part?.imageUrls ?? []))].length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Catalog images</p>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {[...partToReview.supplierImageUrls, ...(partToReview.part?.imageKeys.length ? [] : (partToReview.part?.imageUrls ?? []))].map((imageUrl) => (
+                      <div
+                        key={imageUrl}
+                        role="img"
+                        aria-label={partToReview.originalPartName}
+                        className="aspect-square rounded-lg border bg-cover bg-center"
+                        style={{ backgroundImage: `url(${imageUrl})` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <form
                 key={partToReview.id}
