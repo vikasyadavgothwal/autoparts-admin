@@ -33,6 +33,35 @@ export async function requireSupplierFromRequest(request: NextRequest) {
   return { ok: true as const, user: auth.user }
 }
 
+export async function getOptionalUserFromRequest(request: NextRequest) {
+  const accessToken =
+    request.cookies.get(USER_AUTH.accessCookieName)?.value ?? null
+  return accessToken ? requireUserAuth(accessToken) : null
+}
+
+export async function requireFleetFromRequest(request: NextRequest) {
+  const auth = await getOptionalUserFromRequest(request)
+  if (!auth) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, message: "Unauthorized" },
+        { status: 401 },
+      ),
+    }
+  }
+  if (!auth.user.roles.includes("Fleet")) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, message: "Fleet role is required" },
+        { status: 403 },
+      ),
+    }
+  }
+  return { ok: true as const, user: auth.user }
+}
+
 export async function requireAdminFromRequest() {
   const auth = await getCurrentAdminSession()
 

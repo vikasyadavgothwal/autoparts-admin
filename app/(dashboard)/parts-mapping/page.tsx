@@ -1,8 +1,8 @@
 import { PartsMappingPage } from "@/components/admin-dashboard/parts-mapping/parts-mapping-page"
-import { listSupplierParts } from "@/services/parts-mapping/parts-mapping-service"
+import { listSupplierPartsPage } from "@/services/parts-mapping/parts-mapping-service"
 
 export default async function PartsMappingRoutePage() {
-  const parts = await listSupplierParts({ limit: 250 })
+  const result = await listSupplierPartsPage({ page: 1, pageSize: 10 })
 
-  return <PartsMappingPage initialParts={parts} />
+  return <PartsMappingPage initialParts={result.parts} initialPagination={result.pagination} />
 }

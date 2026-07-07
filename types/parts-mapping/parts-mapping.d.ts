@@ -20,13 +20,33 @@ export type PartContentUpdateInput = FirstVendorProductInput
 export type SupplierOfferUpdateInput = {
   price: number | string
   stock: number | string
+  vendorSku?: string | null
+  productName?: string | null
+  shortDescription?: string | null
+  longDescription?: string | null
+  mpn?: string | null
+  status?: string | null
+  grade?: string | null
+  condition?: string | null
+  basePrice?: number | string | null
+  discountPrice?: number | string | null
+  currency?: string | null
+  taxClass?: string | null
+  vat?: string | null
+  maxRetailPrice?: number | string | null
+  wholesaleDistributorPrice?: number | string | null
+  fleetPrice?: number | string | null
+  rawUploadData?: unknown
 }
 
 export type SupplierPartLookupInput = {
+  vendorSku?: string | null
   brand?: string | null
   mpn?: string | null
   partNumber?: string | null
   oemNumber?: string | null
+  competitorPartNumber?: string | null
+  competitorBrandName?: string | null
 }
 
 export type SupplierPartCreateInput = SupplierPartLookupInput & {
@@ -49,6 +69,12 @@ export type SupplierBulkProductRow = {
   brand?: string | null
   price?: number | string | null
   stock?: number | string | null
+  productName?: string | null
+  shortDescription?: string | null
+  longDescription?: string | null
+  status?: string | null
+  grade?: string | null
+  condition?: string | null
   oemSupersessionNumbers?: string[]
   competitorPartNumber?: string | null
   competitorBrandName?: string | null
@@ -62,6 +88,30 @@ export type SupplierBulkImageRow = {
   vendorSku: string
   primaryImageUrl: string
   galleryImageUrls: string[]
+}
+
+export type SupplierBulkStockRow = {
+  rowNumber: number
+  vendorSku: string
+  warehouseId: string
+  quantity: number | string
+  leadTime?: string | null
+  lowStockThreshold?: number | string | null
+  rawUploadData?: unknown
+}
+
+export type SupplierBulkPricingRow = {
+  rowNumber: number
+  vendorSku: string
+  basePrice?: number | string | null
+  discountPrice?: number | string | null
+  currency?: string | null
+  taxClass?: string | null
+  vat?: string | null
+  maxRetailPrice?: number | string | null
+  wholesaleDistributorPrice?: number | string | null
+  fleetPrice?: number | string | null
+  rawUploadData?: unknown
 }
 
 export type SupplierPartRecord = {
@@ -88,6 +138,7 @@ export type SupplierPartRecord = {
   mappingStatus: SupplierPartMappingStatus
   mappingSource: SupplierPartMappingSource | null
   mappingError: string | null
+  rawUploadData?: unknown
   createdAt: string
   updatedAt: string
   part: {

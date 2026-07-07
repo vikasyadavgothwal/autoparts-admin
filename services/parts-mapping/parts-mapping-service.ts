@@ -4,6 +4,7 @@ import { db } from "@/lib/database/prisma"
 import { deleteObjectFromS3 } from "@/lib/storage/s3"
 import {
   get17VinApplicableModels,
+  get17VinInterchanges,
   normalizePartNumber,
   searchPartIn17Vin,
   type Vin17PartCandidate,
@@ -21,7 +22,9 @@ import type {
   PartSearchResponse,
   PartContentUpdateInput,
   SupplierBulkImageRow,
+  SupplierBulkPricingRow,
   SupplierBulkProductRow,
+  SupplierBulkStockRow,
   SupplierPartCreateInput,
   SupplierPartLookupInput,
   SupplierPartLookupResult,
@@ -41,6 +44,64 @@ const normalizeOptionalText = (value: unknown): string | null => {
 
 const normalizeVendorSku = (value: unknown): string =>
   normalizeText(value).toUpperCase()
+
+const normalizeVendorSkuLookupKey = (value: unknown): string =>
+  normalizeVendorSku(value).replace(/[^A-Z0-9]/g, "")
+
+type SupplierSkuCandidate = {
+  id: string
+  vendorSku: string | null
+}
+
+const createSupplierPartSkuResolver = async (supplierId: string) => {
+  const supplierParts = await db.supplierPart.findMany({
+    where: {
+      supplierId,
+      vendorSku: { not: null },
+    },
+    select: {
+      id: true,
+      vendorSku: true,
+    },
+  })
+
+  const exactMatches = new Map<string, SupplierSkuCandidate>()
+  const compactMatches = new Map<string, SupplierSkuCandidate | null>()
+
+  for (const supplierPart of supplierParts) {
+    const exactKey = normalizeVendorSku(supplierPart.vendorSku)
+    if (exactKey) {
+      exactMatches.set(exactKey, supplierPart)
+    }
+
+    const compactKey = normalizeVendorSkuLookupKey(supplierPart.vendorSku)
+    if (compactKey) {
+      compactMatches.set(
+        compactKey,
+        compactMatches.has(compactKey) ? null : supplierPart,
+      )
+    }
+  }
+
+  return (vendorSku: string): SupplierSkuCandidate | null => {
+    const exactKey = normalizeVendorSku(vendorSku)
+    if (!exactKey) {
+      return null
+    }
+
+    const exactMatch = exactMatches.get(exactKey)
+    if (exactMatch) {
+      return exactMatch
+    }
+
+    const compactKey = normalizeVendorSkuLookupKey(vendorSku)
+    if (!compactKey) {
+      return null
+    }
+
+    return compactMatches.get(compactKey) ?? null
+  }
+}
 
 const BRAND_ALIASES: Record<string, string> = {
   VOLKSWAGEN: "VW",
@@ -90,6 +151,47 @@ const parseStock = (value: number | string): number => {
   return numeric
 }
 
+const parseOptionalMoney = (
+  value: number | string | null | undefined,
+): number | null => {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return null
+  }
+
+  return parseMoney(value)
+}
+
+const parseNonNegativeWholeNumber = (
+  value: number | string | null | undefined,
+  label: string,
+): number => {
+  const numeric = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10)
+  if (!Number.isInteger(numeric) || numeric < 0) {
+    throw new Error(`${label} must be a non-negative whole number`)
+  }
+
+  return numeric
+}
+
+const parseOptionalNonNegativeWholeNumber = (
+  value: number | string | null | undefined,
+  label: string,
+): number | null => {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return null
+  }
+
+  return parseNonNegativeWholeNumber(value, label)
+}
+
 const parseJson = (value: unknown): Prisma.InputJsonValue | undefined => {
   if (value === undefined || value === null) {
     return undefined
@@ -123,6 +225,18 @@ const mapSupplierPart = (part: {
   mappingStatus: SupplierPartMappingStatus
   mappingSource: SupplierPartMappingSource | null
   mappingError: string | null
+  rawUploadData?: Prisma.JsonValue | null
+  pricing?: {
+    basePrice: number | null
+    discountPrice: number | null
+    currency: string
+    taxClass: string | null
+    vat: string | null
+    maxRetailPrice: number | null
+    wholesaleDistributorPrice: number | null
+    fleetPrice: number | null
+    rawUploadData: Prisma.JsonValue | null
+  } | null
   createdAt: Date
   updatedAt: Date
   supplier?: {
@@ -145,7 +259,36 @@ const mapSupplierPart = (part: {
     description: string | null
     keyFeatures: string[]
   } | null
-}): SupplierPartRecord => ({
+}) => {
+  const toObject = (value: Prisma.JsonValue | null | undefined) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {}
+  const moneyFromCents = (value: number | null) =>
+    value === null ? "" : String(value / 100)
+  const rawUploadData = {
+    ...toObject(part.rawUploadData),
+    ...toObject(part.pricing?.rawUploadData),
+  }
+
+  if (part.pricing) {
+    rawUploadData["Base Price (AED)"] ??= moneyFromCents(part.pricing.basePrice)
+    rawUploadData["Discount Price (AED)"] ??= moneyFromCents(
+      part.pricing.discountPrice,
+    )
+    rawUploadData.Currency ??= part.pricing.currency
+    rawUploadData["Tax Class"] ??= part.pricing.taxClass ?? ""
+    rawUploadData.VAT ??= part.pricing.vat ?? ""
+    rawUploadData["Max Retail Price"] ??= moneyFromCents(
+      part.pricing.maxRetailPrice,
+    )
+    rawUploadData["Wholesale/Distributor Pricing"] ??= moneyFromCents(
+      part.pricing.wholesaleDistributorPrice,
+    )
+    rawUploadData["Fleet Pricing"] ??= moneyFromCents(part.pricing.fleetPrice)
+  }
+
+  return {
   id: part.id,
   supplierId: part.supplierId,
   vendorSku: part.vendorSku,
@@ -173,6 +316,7 @@ const mapSupplierPart = (part: {
   mappingStatus: part.mappingStatus,
   mappingSource: part.mappingSource,
   mappingError: part.mappingError,
+  rawUploadData: Object.keys(rawUploadData).length > 0 ? rawUploadData : undefined,
   createdAt: part.createdAt.toISOString(),
   updatedAt: part.updatedAt.toISOString(),
   part: part.part
@@ -191,16 +335,23 @@ const mapSupplierPart = (part: {
         keyFeatures: part.part.keyFeatures,
       }
     : null,
-})
+  }
+}
 
 const normalizeInputNumbers = (input: {
   mpn?: string | null
   partNumber?: string | null
   oemNumber?: string | null
 }) => {
+  const unifiedPartNumber = normalizeOptionalText(input.partNumber)
   const originalMpn =
-    normalizeOptionalText(input.mpn) ?? normalizeOptionalText(input.partNumber)
-  const originalOemNumber = normalizeOptionalText(input.oemNumber)
+    normalizeOptionalText(input.mpn) ??
+    unifiedPartNumber ??
+    normalizeOptionalText(input.oemNumber)
+  const originalOemNumber =
+    normalizeOptionalText(input.oemNumber) ??
+    unifiedPartNumber ??
+    normalizeOptionalText(input.mpn)
 
   return {
     originalMpn,
@@ -267,8 +418,7 @@ const findConfirmedLocalPartUid = async (
       !candidate.part.source.endsWith("_pending") &&
       candidate.part.source !== "supplier_pending" &&
       brandsAreCompatible(supplierBrand, [
-        candidate.brand,
-        candidate.part.brandName,
+        candidate.brand ?? candidate.part.brandName,
       ]),
   )
 
@@ -394,7 +544,7 @@ const pick17VinCandidate = (
       candidate: candidates[0],
       confident: false,
       matchError:
-        "17VIN returned results, but none exactly matched the submitted OEM or MPN",
+        "No exact match was found for the submitted OEM or MPN",
     }
   }
 
@@ -407,7 +557,7 @@ const pick17VinCandidate = (
       candidate: exactNumberMatches[0],
       confident: false,
       matchError:
-        "17VIN part number matched, but the supplier brand did not match",
+        "The submitted part number matched, but the brand did not match",
     }
   }
 
@@ -536,17 +686,32 @@ const saveFitments = async (
 }
 
 const validateLookupInput = (input: SupplierPartLookupInput) => {
-  const brand = normalizeOptionalText(input.brand)
+  const vendorSku = normalizeVendorSku(input.vendorSku)
   const numbers = normalizeInputNumbers(input)
+  const brand = normalizeOptionalText(input.brand)
+  const competitorPartNumber = normalizeOptionalText(input.competitorPartNumber)
+  const competitorBrandName = normalizeOptionalText(input.competitorBrandName)
 
-  if (!brand) {
-    throw new Error("Brand is required")
+  if (!vendorSku) {
+    throw new Error("Vendor SKU is required")
   }
-  if (!numbers.originalMpn || !numbers.originalOemNumber) {
-    throw new Error("Both MPN and OEM number are required")
+  if (
+    !numbers.originalMpn &&
+    !numbers.originalOemNumber &&
+    (!brand || !competitorPartNumber)
+  ) {
+    throw new Error(
+      "Provide MPN / OEM number, or provide Brand Name and Competitor OEM Part Number",
+    )
   }
 
-  return { brand, ...numbers }
+  return {
+    vendorSku,
+    brand,
+    competitorPartNumber,
+    competitorBrandName,
+    ...numbers,
+  }
 }
 
 const partMasterSummary = (part: {
@@ -581,20 +746,78 @@ export async function lookupSupplierPart(
   supplierId: string,
   input: SupplierPartLookupInput,
 ): Promise<SupplierPartLookupResult> {
-  const details = validateLookupInput(input)
-  const localPartUid = await findLocalPartUid(
+  let details = validateLookupInput(input)
+  const existingSkuOffer = await db.supplierPart.findUnique({
+    where: {
+      supplierId_vendorSku: {
+        supplierId,
+        vendorSku: details.vendorSku,
+      },
+    },
+  })
+
+  let competitorResolution: BulkPartResolution | null = null
+  if (!details.originalOemNumber && details.competitorPartNumber) {
+    competitorResolution = await resolvePartFromCompetitor(details)
+    if (
+      existingSkuOffer?.partUid &&
+      existingSkuOffer.partUid !== competitorResolution.partUid
+    ) {
+      throw new Error("This Vendor SKU is already assigned to another product")
+    }
+    details = {
+      ...details,
+      brand: competitorResolution.resolvedBrand ?? details.brand,
+      originalOemNumber: competitorResolution.resolvedOemNumber,
+      normalizedOemNumber: normalizePartNumber(
+        competitorResolution.resolvedOemNumber,
+      ),
+    }
+  }
+
+  if (existingSkuOffer) {
+    const submittedNumbers = new Set([
+      details.normalizedMpn,
+      details.normalizedOemNumber,
+    ].filter((value): value is string => Boolean(value)))
+    const existingNumbers = [
+      existingSkuOffer.normalizedMpn,
+      existingSkuOffer.normalizedOemNumber,
+    ].filter((value): value is string => Boolean(value))
+    if (
+      existingNumbers.length > 0 &&
+      !existingNumbers.some((value) => submittedNumbers.has(value))
+    ) {
+      throw new Error("This Vendor SKU is already assigned to another part number")
+    }
+  }
+  const indexedPartUid = await findLocalPartUid(
     details.normalizedOemNumber,
     details.normalizedMpn,
     details.brand,
   )
+  if (
+    existingSkuOffer?.partUid &&
+    indexedPartUid &&
+    existingSkuOffer.partUid !== indexedPartUid
+  ) {
+    throw new Error("This Vendor SKU is already assigned to another product")
+  }
+  const localPartUid =
+    competitorResolution?.partUid ??
+    indexedPartUid ??
+    existingSkuOffer?.partUid ??
+    null
 
   if (localPartUid) {
     const [part, supplierOffer] = await Promise.all([
       db.partMaster.findUnique({ where: { partUid: localPartUid } }),
-      db.supplierPart.findFirst({
-        where: { supplierId, partUid: localPartUid },
-        orderBy: { updatedAt: "desc" },
-      }),
+      existingSkuOffer
+        ? Promise.resolve(existingSkuOffer)
+        : db.supplierPart.findFirst({
+            where: { supplierId, partUid: localPartUid },
+            orderBy: { updatedAt: "desc" },
+          }),
     ])
 
     if (part) {
@@ -641,9 +864,8 @@ export async function lookupSupplierPart(
       details.originalOemNumber,
       details.originalMpn,
     ])
-  } catch (error) {
-    vin17Error =
-      error instanceof Error ? error.message : "17VIN lookup is unavailable"
+  } catch {
+    vin17Error = "Unable to verify this part number right now"
   }
   const { candidate, confident, matchError } = pick17VinCandidate(
     candidates,
@@ -670,7 +892,7 @@ export async function lookupSupplierPart(
     message:
       vin17Error ??
       matchError ??
-      "No complete product exists locally. Complete the first-vendor product form.",
+      "No complete product exists yet. Complete the first-vendor product form.",
   }
 }
 
@@ -686,17 +908,48 @@ export async function createSupplierPart(
   supplierId: string,
   input: SupplierPartCreateInput,
 ) {
-  const details = validateLookupInput(input)
+  let details = validateLookupInput(input)
   const price = parseMoney(input.price)
   const stock = parseStock(input.stock)
   let partUid = normalizeOptionalText(input.partUid)
   const completePartUid = normalizeOptionalText(input.completePartUid)
+  let competitorResolution: BulkPartResolution | null = null
+  if (!details.originalOemNumber && details.competitorPartNumber) {
+    competitorResolution = await resolvePartFromCompetitor(details)
+    if (partUid && partUid !== competitorResolution.partUid) {
+      throw new Error("The selected product does not match the competitor OEM")
+    }
+    if (completePartUid && completePartUid !== competitorResolution.partUid) {
+      throw new Error(
+        "The product selected for completion does not match the competitor OEM",
+      )
+    }
+    if (!completePartUid) {
+      partUid = competitorResolution.partUid
+    }
+    details = {
+      ...details,
+      brand: competitorResolution.resolvedBrand ?? details.brand,
+      originalOemNumber: competitorResolution.resolvedOemNumber,
+      normalizedOemNumber: normalizePartNumber(
+        competitorResolution.resolvedOemNumber,
+      ),
+    }
+  }
   let master = partUid
     ? await db.partMaster.findUnique({ where: { partUid } })
     : null
   let mappingSource: SupplierPartMappingSource =
-    SupplierPartMappingSource.local_db
+    competitorResolution?.mappingSource ?? SupplierPartMappingSource.local_db
   let requiresAdminApproval = false
+  const existingSkuOffer = await db.supplierPart.findUnique({
+    where: {
+      supplierId_vendorSku: {
+        supplierId,
+        vendorSku: details.vendorSku,
+      },
+    },
+  })
 
   if (master) {
     const matchingUid = await findLocalPartUid(
@@ -705,7 +958,7 @@ export async function createSupplierPart(
       details.brand,
     )
     if (matchingUid !== master.partUid) {
-      throw new Error("The selected product does not match the submitted OEM, MPN, and brand")
+      throw new Error("The selected product does not match the submitted MPN / OEM number")
     }
   } else {
     const product = input.product
@@ -739,11 +992,13 @@ export async function createSupplierPart(
       throw new Error("At least one uploaded product image is required")
     }
 
-    const localPartUid = await findLocalPartUid(
-      details.normalizedOemNumber,
-      details.normalizedMpn,
-      details.brand,
-    )
+    const localPartUid =
+      competitorResolution?.partUid ??
+      await findLocalPartUid(
+        details.normalizedOemNumber,
+        details.normalizedMpn,
+        details.brand,
+      )
     if (localPartUid) {
       if (completePartUid && completePartUid !== localPartUid) {
         throw new Error("The product selected for completion does not match the submitted identifiers")
@@ -778,7 +1033,7 @@ export async function createSupplierPart(
           details.originalMpn,
         ])
       } catch {
-        // Complete first-vendor details are sufficient when 17VIN is unavailable.
+        // Complete first-vendor details are sufficient when automatic verification is unavailable.
       }
       const { candidate, confident } = pick17VinCandidate(
         candidates,
@@ -836,6 +1091,9 @@ export async function createSupplierPart(
   if (!master || !partUid) {
     throw new Error("Unable to resolve the master product")
   }
+  if (existingSkuOffer?.partUid && existingSkuOffer.partUid !== partUid) {
+    throw new Error("This Vendor SKU is already assigned to another product")
+  }
 
   if (!requiresAdminApproval) {
     await createPartNumberIndexIfMissing({
@@ -854,11 +1112,12 @@ export async function createSupplierPart(
     })
   }
 
-  const existingOffer = await db.supplierPart.findFirst({
+  const existingOffer = existingSkuOffer ?? await db.supplierPart.findFirst({
     where: { supplierId, partUid },
     orderBy: { updatedAt: "desc" },
   })
   const offerData = {
+    vendorSku: details.vendorSku,
     originalPartName: master.partName ?? master.heading ?? "Supplier product",
     originalBrand: details.brand,
     originalMpn: details.originalMpn,
@@ -870,6 +1129,8 @@ export async function createSupplierPart(
     currency: DEFAULT_CURRENCY,
     category: master.category,
     partUid,
+    competitorPartNumber: details.competitorPartNumber,
+    competitorBrandName: details.competitorBrandName,
     mappingStatus: requiresAdminApproval
       ? SupplierPartMappingStatus.pending_review
       : SupplierPartMappingStatus.mapped,
@@ -894,6 +1155,8 @@ export async function createSupplierPart(
 type BulkPartResolution = {
   partUid: string
   mappingSource: SupplierPartMappingSource
+  resolvedOemNumber: string
+  resolvedBrand: string | null
 }
 
 const resolveConfirmedBulkPart = async (
@@ -913,6 +1176,8 @@ const resolveConfirmedBulkPart = async (
     return {
       partUid: localPartUid,
       mappingSource: SupplierPartMappingSource.local_db,
+      resolvedOemNumber: row.oemNumber,
+      resolvedBrand: brand,
     }
   }
 
@@ -925,7 +1190,7 @@ const resolveConfirmedBulkPart = async (
   )
   if (!candidate || !confident) {
     throw new Error(
-      matchError ?? "No exact OEM match was found in the local catalog or 17VIN",
+      matchError ?? "No exact OEM match was found",
     )
   }
 
@@ -950,7 +1215,239 @@ const resolveConfirmedBulkPart = async (
     source: "17vin_bulk_upload",
   })
 
-  return { partUid, mappingSource: SupplierPartMappingSource.vin17 }
+  return {
+    partUid,
+    mappingSource: SupplierPartMappingSource.vin17,
+    resolvedOemNumber: row.oemNumber,
+    resolvedBrand: brand ?? candidate.brandName,
+  }
+}
+
+const findLocalEquivalentOem = async (
+  normalizedCompetitorOem: string,
+  supplierBrand: string,
+): Promise<{ partUid: string; oemNumber: string } | null> => {
+  const [indexedCompetitorParts, directCompetitorParts] = await Promise.all([
+    db.partNumberIndex.findMany({
+      where: { numberNormalized: normalizedCompetitorOem },
+      select: { partUid: true },
+    }),
+    db.partMaster.findMany({
+      where: { normalizedPartNumber: normalizedCompetitorOem },
+      select: { partUid: true },
+    }),
+  ])
+  const partUids = Array.from(
+    new Set([
+      ...indexedCompetitorParts.map((part) => part.partUid),
+      ...directCompetitorParts.map((part) => part.partUid),
+    ]),
+  )
+  if (partUids.length === 0) {
+    return null
+  }
+
+  const relatedNumbers = await db.partNumberIndex.findMany({
+    where: { partUid: { in: partUids } },
+    orderBy: { createdAt: "asc" },
+    select: {
+      partUid: true,
+      numberOriginal: true,
+      numberType: true,
+      brand: true,
+      part: { select: { brandName: true, source: true } },
+    },
+  })
+  const confirmedNumbers = relatedNumbers.filter(
+    (candidate) =>
+      !candidate.part.source.endsWith("_pending") &&
+      candidate.part.source !== "supplier_pending" &&
+      brandsAreCompatible(supplierBrand, [
+        candidate.brand,
+        candidate.part.brandName,
+      ]),
+  )
+  const preferredNumber =
+    confirmedNumbers.find(
+      (candidate) => candidate.numberType === PartNumberType.oem,
+    ) ?? confirmedNumbers[0]
+
+  if (preferredNumber) {
+    return {
+      partUid: preferredNumber.partUid,
+      oemNumber: preferredNumber.numberOriginal,
+    }
+  }
+
+  const directBrandCandidates = await db.partMaster.findMany({
+    where: {
+      partUid: { in: partUids },
+      source: { not: "supplier_pending" },
+      NOT: { source: { endsWith: "_pending" } },
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      partUid: true,
+      partNumber: true,
+      brandName: true,
+    },
+  })
+  const directBrandMatch = directBrandCandidates.find((candidate) =>
+    brandsAreCompatible(supplierBrand, [candidate.brandName]),
+  )
+
+  return directBrandMatch?.partNumber
+    ? {
+        partUid: directBrandMatch.partUid,
+        oemNumber: directBrandMatch.partNumber,
+      }
+    : null
+}
+
+const resolvePartFromCompetitor = async (
+  row: Pick<
+    SupplierBulkProductRow,
+    "brand" | "competitorPartNumber" | "competitorBrandName" | "mpn"
+  >,
+): Promise<BulkPartResolution> => {
+  const supplierBrand = normalizeOptionalText(row.brand)
+  const competitorOem = normalizeOptionalText(row.competitorPartNumber)
+  const competitorBrand = normalizeOptionalText(row.competitorBrandName)
+
+  if (!supplierBrand) {
+    throw new Error(
+      "Brand Name is required when OEM Part Number is missing",
+    )
+  }
+  if (!competitorOem) {
+    throw new Error(
+      "Competitor OEM Part Number is required when OEM Part Number is missing",
+    )
+  }
+
+  const normalizedCompetitorOem = normalizePartNumber(competitorOem)
+  const localEquivalent = await findLocalEquivalentOem(
+    normalizedCompetitorOem,
+    supplierBrand,
+  )
+  if (localEquivalent) {
+    return {
+      partUid: localEquivalent.partUid,
+      mappingSource: SupplierPartMappingSource.local_db,
+      resolvedOemNumber: localEquivalent.oemNumber,
+      resolvedBrand: supplierBrand,
+    }
+  }
+
+  const competitorCandidates = await search17VinCandidates([competitorOem])
+  const {
+    candidate: competitorCandidate,
+    confident,
+    matchError,
+  } = pick17VinCandidate(
+    competitorCandidates,
+    normalizedCompetitorOem,
+    null,
+    competitorBrand,
+  )
+  if (!competitorCandidate || !confident || !competitorCandidate.partNumber) {
+    throw new Error(
+      matchError ??
+        "No exact competitor OEM match was found",
+    )
+  }
+  if (!competitorCandidate.groupId) {
+    throw new Error(
+      "The competitor OEM was found, but product group details were missing",
+    )
+  }
+
+  const interchange = await get17VinInterchanges(
+    competitorCandidate.partNumber,
+    competitorCandidate.groupId,
+  )
+  const equivalentCandidates = [
+    ...interchange.oeInterchanges,
+    ...interchange.factoryInterchanges,
+  ]
+  const supplierCandidate = equivalentCandidates.find(
+    (candidate) =>
+      Boolean(candidate.partNumber) &&
+      brandsAreCompatible(supplierBrand, [candidate.brandName]),
+  )
+  if (!supplierCandidate?.partNumber) {
+    throw new Error(
+      `No equivalent OEM was found for brand ${supplierBrand}`,
+    )
+  }
+
+  const resolvedOemNumber =
+    supplierCandidate.partNumberOriginal ?? supplierCandidate.partNumber
+  const normalizedResolvedOem = normalizePartNumber(resolvedOemNumber)
+  const localPartUid = await findConfirmedLocalPartUid(
+    normalizedResolvedOem,
+    supplierBrand,
+  )
+  if (localPartUid) {
+    await createPartNumberIndexIfMissing({
+      partUid: localPartUid,
+      numberOriginal: competitorOem,
+      numberType: PartNumberType.oem,
+      brand: competitorBrand ?? competitorCandidate.brandName,
+      source: "17vin_interchange_bulk_upload",
+    })
+    return {
+      partUid: localPartUid,
+      mappingSource: SupplierPartMappingSource.local_db,
+      resolvedOemNumber,
+      resolvedBrand: supplierBrand,
+    }
+  }
+
+  const partUid = await findOrCreatePartMasterFrom17Vin(supplierCandidate, {
+    originalPartName:
+      supplierCandidate.partName ??
+      competitorCandidate.partName ??
+      `OEM ${resolvedOemNumber}`,
+    originalBrand: supplierBrand,
+    originalMpn: normalizeOptionalText(row.mpn),
+    originalOemNumber: resolvedOemNumber,
+    category:
+      supplierCandidate.category ??
+      competitorCandidate.category ??
+      interchange.part?.category ??
+      competitorCandidate.partName ??
+      interchange.part?.partName ??
+      competitorCandidate.groupName,
+  })
+  const vehicles = supplierCandidate.groupId
+    ? await get17VinApplicableModels(
+        supplierCandidate.partNumber,
+        supplierCandidate.groupId,
+      )
+    : []
+  await saveFitments(partUid, vehicles)
+  await createPartNumberIndexIfMissing({
+    partUid,
+    numberOriginal: resolvedOemNumber,
+    numberType: PartNumberType.oem,
+    brand: supplierCandidate.brandName ?? supplierBrand,
+    source: "17vin_interchange_bulk_upload",
+  })
+  await createPartNumberIndexIfMissing({
+    partUid,
+    numberOriginal: competitorOem,
+    numberType: PartNumberType.oem,
+    brand: competitorBrand ?? competitorCandidate.brandName,
+    source: "17vin_interchange_bulk_upload",
+  })
+
+  return {
+    partUid,
+    mappingSource: SupplierPartMappingSource.vin17,
+    resolvedOemNumber,
+    resolvedBrand: supplierBrand,
+  }
 }
 
 const mapWithConcurrency = async <T, R>(
@@ -975,24 +1472,129 @@ const mapWithConcurrency = async <T, R>(
   return results
 }
 
+const hasSupplierProductInfo = (row: SupplierBulkProductRow) =>
+  Boolean(
+    normalizeOptionalText(row.productName) &&
+      normalizeOptionalText(row.mpn ?? row.oemNumber),
+  )
+
+const hasUploadedValue = (value: unknown) =>
+  !(value === null || value === undefined || (typeof value === "string" && value.trim() === ""))
+
+const upsertPendingSupplierProductInfo = async (
+  supplierId: string,
+  row: SupplierBulkProductRow,
+  vendorSku: string,
+  reason: string,
+) => {
+  const existingSkuOffer = await db.supplierPart.findUnique({
+    where: {
+      supplierId_vendorSku: {
+        supplierId,
+        vendorSku,
+      },
+    },
+  })
+  const productName =
+    normalizeOptionalText(row.productName) ??
+    normalizeOptionalText(row.shortDescription) ??
+    normalizeOptionalText(row.longDescription) ??
+    `Supplier SKU ${vendorSku}`
+  const originalMpn = normalizeOptionalText(row.mpn) ?? normalizeOptionalText(row.oemNumber)
+  const originalOemNumber = normalizeOptionalText(row.oemNumber)
+  const uploadedPrice = hasUploadedValue(row.price)
+  const uploadedStock = hasUploadedValue(row.stock)
+  const commonData = {
+    vendorSku,
+    originalPartName: productName,
+    originalBrand: normalizeOptionalText(row.brand),
+    originalMpn,
+    originalOemNumber,
+    normalizedMpn: originalMpn ? normalizePartNumber(originalMpn) : null,
+    normalizedOemNumber: originalOemNumber
+      ? normalizePartNumber(originalOemNumber)
+      : null,
+    category: normalizeOptionalText(row.grade) ?? normalizeOptionalText(row.condition),
+    oemSupersessionNumbers: row.oemSupersessionNumbers ?? [],
+    competitorPartNumber: normalizeOptionalText(row.competitorPartNumber),
+    competitorBrandName: normalizeOptionalText(row.competitorBrandName),
+    hsCode: normalizeOptionalText(row.hsCode),
+    ...(row.imageUrls?.length ? { supplierImageUrls: row.imageUrls } : {}),
+    rawUploadData: parseJson(row.rawUploadData),
+  }
+  const pendingData =
+    existingSkuOffer?.partUid
+      ? {}
+      : {
+          mappingStatus: SupplierPartMappingStatus.pending_review,
+          mappingSource: null,
+          mappingError: reason,
+        }
+
+  const supplierPart = existingSkuOffer
+    ? await db.supplierPart.update({
+        where: { id: existingSkuOffer.id },
+        data: {
+          ...commonData,
+          ...(uploadedPrice ? { price: parseMoney(row.price ?? 0) } : {}),
+          ...(uploadedStock ? { stock: parseStock(row.stock ?? 0) } : {}),
+          ...pendingData,
+        },
+      })
+    : await db.supplierPart.create({
+        data: {
+          supplierId,
+          ...commonData,
+          price: parseMoney(uploadedPrice ? row.price ?? 0 : 0),
+          stock: parseStock(uploadedStock ? row.stock ?? 0 : 0),
+          currency: DEFAULT_CURRENCY,
+          mappingStatus: SupplierPartMappingStatus.pending_review,
+          mappingSource: null,
+          mappingError: reason,
+        },
+      })
+
+  return getSupplierPartById(supplierPart.id)
+}
+
 export async function importSupplierPartsBulk(
   supplierId: string,
   rows: SupplierBulkProductRow[],
 ) {
   const seenSkus = new Set<string>()
-  const resolutionByOem = new Map<string, Promise<BulkPartResolution>>()
+  const resolutionByLookup = new Map<string, Promise<BulkPartResolution>>()
 
   const results = await mapWithConcurrency(rows, 5, async (row) => {
     const vendorSku = normalizeVendorSku(row.vendorSku)
     const oemNumber = normalizeOptionalText(row.oemNumber)
+    const supplierBrand = normalizeOptionalText(row.brand)
+    const competitorOem = normalizeOptionalText(row.competitorPartNumber)
+    const competitorBrand = normalizeOptionalText(row.competitorBrandName)
+    const hasProductInfo = hasSupplierProductInfo(row)
 
-    if (!vendorSku || !oemNumber) {
+    if (!vendorSku) {
       return {
         ok: false as const,
         rowNumber: row.rowNumber,
         vendorSku,
+        brand: supplierBrand,
         oemNumber: oemNumber ?? "",
-        reason: "Vendor SKU Number and OEM Part Number are required",
+        competitorPartNumber: competitorOem,
+        competitorBrandName: competitorBrand,
+        reason: "Vendor SKU Number is required",
+      }
+    }
+    if (!oemNumber && (!supplierBrand || !competitorOem) && !hasProductInfo) {
+      return {
+        ok: false as const,
+        rowNumber: row.rowNumber,
+        vendorSku,
+        brand: supplierBrand,
+        oemNumber: "",
+        competitorPartNumber: competitorOem,
+        competitorBrandName: competitorBrand,
+        reason:
+          "Provide OEM Part Number, or provide Brand Name and Competitor OEM Part Number",
       }
     }
     if (seenSkus.has(vendorSku)) {
@@ -1000,44 +1602,79 @@ export async function importSupplierPartsBulk(
         ok: false as const,
         rowNumber: row.rowNumber,
         vendorSku,
-        oemNumber,
+        brand: supplierBrand,
+        oemNumber: oemNumber ?? "",
+        competitorPartNumber: competitorOem,
+        competitorBrandName: competitorBrand,
         reason: "Duplicate Vendor SKU Number in this file",
       }
     }
     seenSkus.add(vendorSku)
 
-    const normalizedOemNumber = normalizePartNumber(oemNumber)
-    let resolutionPromise = resolutionByOem.get(normalizedOemNumber)
-    if (!resolutionPromise) {
-      resolutionPromise = resolveConfirmedBulkPart({ ...row, oemNumber })
-      resolutionByOem.set(normalizedOemNumber, resolutionPromise)
-    }
-
     try {
+      if (!oemNumber && (!supplierBrand || !competitorOem)) {
+        const part = await upsertPendingSupplierProductInfo(
+          supplierId,
+          row,
+          vendorSku,
+          "Product info uploaded; MPN/OEM is pending admin mapping",
+        )
+        return {
+          ok: true as const,
+          rowNumber: row.rowNumber,
+          vendorSku,
+          brand: supplierBrand,
+          oemNumber: oemNumber ?? "",
+          competitorPartNumber: competitorOem,
+          competitorBrandName: competitorBrand,
+          mappingSource: null,
+          part,
+        }
+      }
+
+      const lookupKey = oemNumber
+        ? `oem:${normalizePartNumber(oemNumber)}:${normalizeBrandToken(supplierBrand ?? "")}`
+        : `competitor:${normalizePartNumber(competitorOem ?? "")}:${normalizeBrandToken(supplierBrand ?? "")}:${normalizeBrandToken(competitorBrand ?? "")}`
+      let resolutionPromise = resolutionByLookup.get(lookupKey)
+      if (!resolutionPromise) {
+        resolutionPromise = oemNumber
+          ? resolveConfirmedBulkPart({ ...row, oemNumber })
+          : resolvePartFromCompetitor(row)
+        resolutionByLookup.set(lookupKey, resolutionPromise)
+      }
       const resolution = await resolutionPromise
+      const resolvedOemNumber = resolution.resolvedOemNumber
+      const normalizedOemNumber = normalizePartNumber(resolvedOemNumber)
       const master = await db.partMaster.findUniqueOrThrow({
         where: { partUid: resolution.partUid },
       })
+      const uploadedPrice = hasUploadedValue(row.price)
+      const uploadedStock = hasUploadedValue(row.stock)
       const originalMpn = normalizeOptionalText(row.mpn)
+      const uploadedProductName = normalizeOptionalText(row.productName)
+      const uploadedCategory =
+        normalizeOptionalText(row.grade) ?? normalizeOptionalText(row.condition)
+      const originalPartName =
+        uploadedProductName ?? master.partName ?? `OEM ${resolvedOemNumber}`
       const supplierPart = await db.supplierPart.upsert({
         where: { supplierId_vendorSku: { supplierId, vendorSku } },
         create: {
           supplierId,
           vendorSku,
           partUid: resolution.partUid,
-          originalPartName: master.partName ?? `OEM ${oemNumber}`,
-          originalBrand: master.brandName ?? normalizeOptionalText(row.brand),
+          originalPartName,
+          originalBrand: resolution.resolvedBrand ?? master.brandName,
           originalMpn,
-          originalOemNumber: oemNumber,
+          originalOemNumber: resolvedOemNumber,
           normalizedMpn: originalMpn ? normalizePartNumber(originalMpn) : null,
           normalizedOemNumber,
-          price: parseMoney(row.price ?? 0),
-          stock: parseStock(row.stock ?? 0),
+          price: parseMoney(uploadedPrice ? row.price ?? 0 : 0),
+          stock: parseStock(uploadedStock ? row.stock ?? 0 : 0),
           currency: DEFAULT_CURRENCY,
-          category: master.category,
+          category: uploadedCategory ?? master.category,
           oemSupersessionNumbers: row.oemSupersessionNumbers ?? [],
-          competitorPartNumber: normalizeOptionalText(row.competitorPartNumber),
-          competitorBrandName: normalizeOptionalText(row.competitorBrandName),
+          competitorPartNumber: competitorOem,
+          competitorBrandName: competitorBrand,
           hsCode: normalizeOptionalText(row.hsCode),
           supplierImageUrls: row.imageUrls ?? [],
           mappingStatus: SupplierPartMappingStatus.mapped,
@@ -1047,19 +1684,19 @@ export async function importSupplierPartsBulk(
         },
         update: {
           partUid: resolution.partUid,
-          originalPartName: master.partName ?? `OEM ${oemNumber}`,
-          originalBrand: master.brandName ?? normalizeOptionalText(row.brand),
+          originalPartName,
+          originalBrand: resolution.resolvedBrand ?? master.brandName,
           originalMpn,
-          originalOemNumber: oemNumber,
+          originalOemNumber: resolvedOemNumber,
           normalizedMpn: originalMpn ? normalizePartNumber(originalMpn) : null,
           normalizedOemNumber,
-          price: parseMoney(row.price ?? 0),
-          stock: parseStock(row.stock ?? 0),
+          ...(uploadedPrice ? { price: parseMoney(row.price ?? 0) } : {}),
+          ...(uploadedStock ? { stock: parseStock(row.stock ?? 0) } : {}),
           currency: DEFAULT_CURRENCY,
-          category: master.category,
+          category: uploadedCategory ?? master.category,
           oemSupersessionNumbers: row.oemSupersessionNumbers ?? [],
-          competitorPartNumber: normalizeOptionalText(row.competitorPartNumber),
-          competitorBrandName: normalizeOptionalText(row.competitorBrandName),
+          competitorPartNumber: competitorOem,
+          competitorBrandName: competitorBrand,
           hsCode: normalizeOptionalText(row.hsCode),
           ...(row.imageUrls?.length
             ? { supplierImageUrls: row.imageUrls }
@@ -1075,16 +1712,43 @@ export async function importSupplierPartsBulk(
         ok: true as const,
         rowNumber: row.rowNumber,
         vendorSku,
-        oemNumber,
+        brand: resolution.resolvedBrand,
+        oemNumber: resolvedOemNumber,
+        competitorPartNumber: competitorOem,
+        competitorBrandName: competitorBrand,
         mappingSource: resolution.mappingSource,
         part: await getSupplierPartById(supplierPart.id),
       }
     } catch (error) {
+      if (hasProductInfo) {
+        const reason =
+          error instanceof Error ? error.message : "Unable to confirm this OEM"
+        const part = await upsertPendingSupplierProductInfo(
+          supplierId,
+          row,
+          vendorSku,
+          reason,
+        )
+        return {
+          ok: true as const,
+          rowNumber: row.rowNumber,
+          vendorSku,
+          brand: supplierBrand,
+          oemNumber: oemNumber ?? "",
+          competitorPartNumber: competitorOem,
+          competitorBrandName: competitorBrand,
+          mappingSource: null,
+          part,
+        }
+      }
       return {
         ok: false as const,
         rowNumber: row.rowNumber,
         vendorSku,
-        oemNumber,
+        brand: supplierBrand,
+        oemNumber: oemNumber ?? "",
+        competitorPartNumber: competitorOem,
+        competitorBrandName: competitorBrand,
         reason:
           error instanceof Error ? error.message : "Unable to confirm this OEM",
       }
@@ -1113,17 +1777,11 @@ export async function updateSupplierPartImagesBulk(
   rows: SupplierBulkImageRow[],
 ) {
   const results = []
+  const resolveSupplierPart = await createSupplierPartSkuResolver(supplierId)
 
   for (const row of rows) {
     const vendorSku = normalizeVendorSku(row.vendorSku)
-    const supplierPart = vendorSku
-      ? await db.supplierPart.findFirst({
-          where: {
-            supplierId,
-            vendorSku: { equals: vendorSku, mode: "insensitive" },
-          },
-        })
-      : null
+    const supplierPart = resolveSupplierPart(vendorSku)
 
     if (!supplierPart) {
       results.push({
@@ -1163,6 +1821,219 @@ export async function updateSupplierPartImagesBulk(
   }
 }
 
+export async function updateSupplierPartStockBulk(
+  supplierId: string,
+  rows: SupplierBulkStockRow[],
+) {
+  const results = []
+  const resolveSupplierPart = await createSupplierPartSkuResolver(supplierId)
+
+  for (const row of rows) {
+    const vendorSku = normalizeVendorSku(row.vendorSku)
+    const warehouseId = normalizeOptionalText(row.warehouseId)
+
+    try {
+      if (!vendorSku) {
+        throw new Error("SKU is required")
+      }
+      if (!warehouseId) {
+        throw new Error("Warehouse ID is required")
+      }
+
+      const quantity = parseNonNegativeWholeNumber(row.quantity, "Quantity")
+      const lowStockThreshold = parseOptionalNonNegativeWholeNumber(
+        row.lowStockThreshold,
+        "Low Stock Threshold",
+      )
+      const supplierPart = resolveSupplierPart(vendorSku)
+
+      if (!supplierPart) {
+        results.push({
+          ok: false as const,
+          rowNumber: row.rowNumber,
+          vendorSku,
+          reason: "No mapped product exists for this supplier SKU",
+        })
+        continue
+      }
+
+      const matchedVendorSku = normalizeVendorSku(supplierPart.vendorSku ?? vendorSku)
+
+      await db.supplierPartStock.upsert({
+        where: {
+          supplierId_vendorSku_warehouseId: {
+            supplierId,
+            vendorSku: matchedVendorSku,
+            warehouseId,
+          },
+        },
+        create: {
+          supplierId,
+          supplierPartId: supplierPart.id,
+          vendorSku: matchedVendorSku,
+          warehouseId,
+          quantity,
+          leadTime: normalizeOptionalText(row.leadTime),
+          lowStockThreshold,
+          rawUploadData: parseJson(row.rawUploadData),
+        },
+        update: {
+          supplierPartId: supplierPart.id,
+          quantity,
+          leadTime: normalizeOptionalText(row.leadTime),
+          lowStockThreshold,
+          rawUploadData: parseJson(row.rawUploadData),
+        },
+      })
+
+      const stockTotal = await db.supplierPartStock.aggregate({
+        where: { supplierId, vendorSku: matchedVendorSku },
+        _sum: { quantity: true },
+      })
+      await db.supplierPart.update({
+        where: { id: supplierPart.id },
+        data: { stock: stockTotal._sum.quantity ?? 0 },
+      })
+
+      results.push({
+        ok: true as const,
+        rowNumber: row.rowNumber,
+        vendorSku: matchedVendorSku,
+        part: await getSupplierPartById(supplierPart.id),
+      })
+    } catch (error) {
+      results.push({
+        ok: false as const,
+        rowNumber: row.rowNumber,
+        vendorSku,
+        reason:
+          error instanceof Error ? error.message : "Unable to update stock",
+      })
+    }
+  }
+
+  return {
+    totalRows: rows.length,
+    updatedCount: results.filter((result) => result.ok).length,
+    unmatchedCount: results.filter((result) => !result.ok).length,
+    updatedParts: results
+      .filter((result) => result.ok)
+      .map((result) => result.part),
+    unmatched: results.filter((result) => !result.ok),
+  }
+}
+
+export async function updateSupplierPartPricingBulk(
+  supplierId: string,
+  rows: SupplierBulkPricingRow[],
+) {
+  const results = []
+  const resolveSupplierPart = await createSupplierPartSkuResolver(supplierId)
+
+  for (const row of rows) {
+    const vendorSku = normalizeVendorSku(row.vendorSku)
+
+    try {
+      if (!vendorSku) {
+        throw new Error("SKU is required")
+      }
+
+      const basePrice = parseOptionalMoney(row.basePrice)
+      const discountPrice = parseOptionalMoney(row.discountPrice)
+      if (basePrice === null && discountPrice === null) {
+        throw new Error("Base Price or Discount Price is required")
+      }
+
+      const supplierPart = resolveSupplierPart(vendorSku)
+
+      if (!supplierPart) {
+        results.push({
+          ok: false as const,
+          rowNumber: row.rowNumber,
+          vendorSku,
+          reason: "No mapped product exists for this supplier SKU",
+        })
+        continue
+      }
+
+      const matchedVendorSku = normalizeVendorSku(supplierPart.vendorSku ?? vendorSku)
+      const currency = normalizeOptionalText(row.currency)?.toUpperCase() ?? DEFAULT_CURRENCY
+      const effectivePrice = discountPrice ?? basePrice
+      await db.supplierPartPricing.upsert({
+        where: {
+          supplierId_vendorSku: {
+            supplierId,
+            vendorSku: matchedVendorSku,
+          },
+        },
+        create: {
+          supplierId,
+          supplierPartId: supplierPart.id,
+          vendorSku: matchedVendorSku,
+          basePrice,
+          discountPrice,
+          currency,
+          taxClass: normalizeOptionalText(row.taxClass),
+          vat: normalizeOptionalText(row.vat),
+          maxRetailPrice: parseOptionalMoney(row.maxRetailPrice),
+          wholesaleDistributorPrice: parseOptionalMoney(
+            row.wholesaleDistributorPrice,
+          ),
+          fleetPrice: parseOptionalMoney(row.fleetPrice),
+          rawUploadData: parseJson(row.rawUploadData),
+        },
+        update: {
+          supplierPartId: supplierPart.id,
+          basePrice,
+          discountPrice,
+          currency,
+          taxClass: normalizeOptionalText(row.taxClass),
+          vat: normalizeOptionalText(row.vat),
+          maxRetailPrice: parseOptionalMoney(row.maxRetailPrice),
+          wholesaleDistributorPrice: parseOptionalMoney(
+            row.wholesaleDistributorPrice,
+          ),
+          fleetPrice: parseOptionalMoney(row.fleetPrice),
+          rawUploadData: parseJson(row.rawUploadData),
+        },
+      })
+
+      await db.supplierPart.update({
+        where: { id: supplierPart.id },
+        data: {
+          price: effectivePrice ?? 0,
+          currency,
+        },
+      })
+
+      results.push({
+        ok: true as const,
+        rowNumber: row.rowNumber,
+        vendorSku: matchedVendorSku,
+        part: await getSupplierPartById(supplierPart.id),
+      })
+    } catch (error) {
+      results.push({
+        ok: false as const,
+        rowNumber: row.rowNumber,
+        vendorSku,
+        reason:
+          error instanceof Error ? error.message : "Unable to update pricing",
+      })
+    }
+  }
+
+  return {
+    totalRows: rows.length,
+    updatedCount: results.filter((result) => result.ok).length,
+    unmatchedCount: results.filter((result) => !result.ok).length,
+    updatedParts: results
+      .filter((result) => result.ok)
+      .map((result) => result.part),
+    unmatched: results.filter((result) => !result.ok),
+  }
+}
+
 export async function updateSupplierPartOffer(
   supplierId: string,
   supplierPartId: string,
@@ -1170,21 +2041,150 @@ export async function updateSupplierPartOffer(
 ) {
   const supplierPart = await db.supplierPart.findFirst({
     where: { id: supplierPartId, supplierId },
-    select: { id: true },
+    select: { id: true, vendorSku: true, rawUploadData: true },
   })
 
   if (!supplierPart) {
     throw new Error("Supplier part not found")
   }
 
-  await db.supplierPart.update({
-    where: { id: supplierPart.id },
-    data: {
-      price: parseMoney(input.price),
-      stock: parseStock(input.stock),
-      currency: DEFAULT_CURRENCY,
-    },
-  })
+  const vendorSku =
+    input.vendorSku === undefined || input.vendorSku === null
+      ? null
+      : normalizeVendorSku(input.vendorSku)
+  if (input.vendorSku !== undefined && !vendorSku) {
+    throw new Error("SKU is required")
+  }
+  if (vendorSku && vendorSku !== supplierPart.vendorSku) {
+    const existingSku = await db.supplierPart.findUnique({
+      where: {
+        supplierId_vendorSku: {
+          supplierId,
+          vendorSku,
+        },
+      },
+      select: { id: true },
+    })
+    if (existingSku && existingSku.id !== supplierPart.id) {
+      throw new Error("This SKU is already used by another supplier product")
+    }
+  }
+
+  const productName = normalizeOptionalText(input.productName)
+  const mpn = normalizeOptionalText(input.mpn)
+  const grade = normalizeOptionalText(input.grade)
+  const condition = normalizeOptionalText(input.condition)
+  const currentRawData =
+    supplierPart.rawUploadData &&
+    typeof supplierPart.rawUploadData === "object" &&
+    !Array.isArray(supplierPart.rawUploadData)
+      ? { ...(supplierPart.rawUploadData as Record<string, unknown>) }
+      : {}
+  const submittedRawData =
+    input.rawUploadData &&
+    typeof input.rawUploadData === "object" &&
+    !Array.isArray(input.rawUploadData)
+      ? (input.rawUploadData as Record<string, unknown>)
+      : {}
+  const rawUploadData = { ...currentRawData, ...submittedRawData }
+  const finalVendorSku = vendorSku ?? supplierPart.vendorSku ?? ""
+
+  rawUploadData.SKU = finalVendorSku
+  if (productName) {
+    rawUploadData["Product Name"] = productName
+  }
+  if (input.shortDescription !== undefined) {
+    rawUploadData["Short Description"] =
+      normalizeOptionalText(input.shortDescription) ?? ""
+  }
+  if (input.longDescription !== undefined) {
+    rawUploadData["Long Description"] =
+      normalizeOptionalText(input.longDescription) ?? ""
+  }
+  if (mpn) {
+    rawUploadData["Manufacturer Part Number (MPN)"] = mpn
+  }
+  if (input.status !== undefined) {
+    rawUploadData.Status = normalizeOptionalText(input.status) ?? ""
+  }
+  if (input.grade !== undefined) {
+    rawUploadData.Grade = grade ?? ""
+  }
+  if (input.condition !== undefined) {
+    rawUploadData.Condition = condition ?? ""
+  }
+  const basePrice = parseOptionalMoney(input.basePrice)
+  const discountPrice = parseOptionalMoney(input.discountPrice)
+  const currency =
+    normalizeOptionalText(input.currency)?.toUpperCase() ?? DEFAULT_CURRENCY
+  const maxRetailPrice = parseOptionalMoney(input.maxRetailPrice)
+  const wholesaleDistributorPrice = parseOptionalMoney(
+    input.wholesaleDistributorPrice,
+  )
+  const fleetPrice = parseOptionalMoney(input.fleetPrice)
+  const activePrice = discountPrice ?? basePrice ?? parseMoney(input.price)
+
+  rawUploadData["Base Price (AED)"] = input.basePrice ?? ""
+  rawUploadData["Discount Price (AED)"] = input.discountPrice ?? ""
+  rawUploadData.Currency = currency
+  rawUploadData["Tax Class"] = normalizeOptionalText(input.taxClass) ?? ""
+  rawUploadData.VAT = normalizeOptionalText(input.vat) ?? ""
+  rawUploadData["Max Retail Price"] = input.maxRetailPrice ?? ""
+  rawUploadData["Wholesale/Distributor Pricing"] =
+    input.wholesaleDistributorPrice ?? ""
+  rawUploadData["Fleet Pricing"] = input.fleetPrice ?? ""
+  rawUploadData.Price = input.price
+  rawUploadData.Stock = input.stock
+
+  await db.$transaction([
+    db.supplierPart.update({
+      where: { id: supplierPart.id },
+      data: {
+        ...(vendorSku ? { vendorSku } : {}),
+        ...(productName ? { originalPartName: productName } : {}),
+        ...(mpn
+          ? {
+              originalMpn: mpn,
+              normalizedMpn: normalizePartNumber(mpn),
+            }
+          : {}),
+        ...(grade || condition ? { category: grade ?? condition } : {}),
+        price: activePrice,
+        stock: parseStock(input.stock),
+        currency,
+        rawUploadData: parseJson(rawUploadData),
+      },
+    }),
+    db.supplierPartPricing.upsert({
+      where: { supplierPartId: supplierPart.id },
+      create: {
+        supplierId,
+        supplierPartId: supplierPart.id,
+        vendorSku: finalVendorSku,
+        basePrice,
+        discountPrice,
+        currency,
+        taxClass: normalizeOptionalText(input.taxClass),
+        vat: normalizeOptionalText(input.vat),
+        maxRetailPrice,
+        wholesaleDistributorPrice,
+        fleetPrice,
+        rawUploadData: parseJson(rawUploadData),
+      },
+      update: {
+        vendorSku: finalVendorSku,
+        basePrice,
+        discountPrice,
+        currency,
+        taxClass: normalizeOptionalText(input.taxClass),
+        vat: normalizeOptionalText(input.vat),
+        maxRetailPrice,
+        wholesaleDistributorPrice,
+        fleetPrice,
+        rawUploadData: parseJson(rawUploadData),
+      },
+    }),
+  ])
 
   return getSupplierPartById(supplierPart.id)
 }
@@ -1279,8 +2279,8 @@ export async function runSupplierPartMapping(supplierPartId: string) {
           mappingError:
             matchError ??
             (candidate
-              ? "Uncertain 17VIN match needs admin review"
-              : "No matching part found in local DB or 17VIN"),
+              ? "Uncertain match needs admin review"
+              : "No matching part found"),
         },
       })
     }
@@ -1326,13 +2326,12 @@ export async function runSupplierPartMapping(supplierPartId: string) {
         mappingError: null,
       },
     })
-  } catch (error) {
+  } catch {
     return db.supplierPart.update({
       where: { id: supplierPartId },
       data: {
         mappingStatus: SupplierPartMappingStatus.failed,
-        mappingError:
-          error instanceof Error ? error.message : "17VIN mapping failed",
+        mappingError: "Unable to map this part automatically",
       },
     })
   }
@@ -1564,6 +2563,7 @@ export async function getSupplierPartById(id: string) {
           keyFeatures: true,
         },
       },
+      pricing: true,
     },
   })
 
@@ -1655,10 +2655,101 @@ export async function listSupplierParts(input: {
           keyFeatures: true,
         },
       },
+      pricing: true,
     },
   })
 
   return parts.map(mapSupplierPart)
+}
+
+export async function listSupplierPartsPage(input: {
+  supplierId?: string
+  status?: SupplierPartMappingStatus
+  query?: string
+  page?: number
+  pageSize?: number
+}) {
+  const query = normalizeText(input.query)
+  const page = Math.max(1, Number.isFinite(input.page) ? input.page ?? 1 : 1)
+  const pageSize = Math.min(
+    50,
+    Math.max(1, Number.isFinite(input.pageSize) ? input.pageSize ?? 10 : 10),
+  )
+  const where: Prisma.SupplierPartWhereInput = {
+    ...(input.supplierId ? { supplierId: input.supplierId } : {}),
+    ...(input.status ? { mappingStatus: input.status } : {}),
+    ...(query
+      ? {
+          OR: [
+            { originalPartName: { contains: query, mode: "insensitive" } },
+            { vendorSku: { contains: query, mode: "insensitive" } },
+            { originalBrand: { contains: query, mode: "insensitive" } },
+            { originalMpn: { contains: query, mode: "insensitive" } },
+            { originalOemNumber: { contains: query, mode: "insensitive" } },
+            { partUid: { contains: query, mode: "insensitive" } },
+            {
+              supplier: {
+                is: {
+                  OR: [
+                    { companyName: { contains: query, mode: "insensitive" } },
+                    { firstName: { contains: query, mode: "insensitive" } },
+                    { lastName: { contains: query, mode: "insensitive" } },
+                    { email: { contains: query, mode: "insensitive" } },
+                  ],
+                },
+              },
+            },
+          ],
+        }
+      : {}),
+  }
+
+  const [parts, total] = await Promise.all([
+    db.supplierPart.findMany({
+      where,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      orderBy: [{ updatedAt: "desc" }],
+      include: {
+        supplier: {
+          select: {
+            companyName: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+        part: {
+          select: {
+            partUid: true,
+            partName: true,
+            partNumber: true,
+            brandName: true,
+            category: true,
+            source: true,
+            imageUrls: true,
+            imageKeys: true,
+            badgeText: true,
+            heading: true,
+            description: true,
+            keyFeatures: true,
+          },
+        },
+        pricing: true,
+      },
+    }),
+    db.supplierPart.count({ where }),
+  ])
+
+  return {
+    parts: parts.map(mapSupplierPart),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+  }
 }
 
 export async function searchPartsFromLocalDb(input: {

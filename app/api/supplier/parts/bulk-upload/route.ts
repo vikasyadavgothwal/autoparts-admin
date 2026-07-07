@@ -4,11 +4,15 @@ import * as XLSX from "xlsx"
 import { requireSupplierFromRequest } from "@/lib/parts-mapping/auth"
 import {
   importSupplierPartsBulk,
+  updateSupplierPartPricingBulk,
   updateSupplierPartImagesBulk,
+  updateSupplierPartStockBulk,
 } from "@/services/parts-mapping/parts-mapping-service"
 import type {
   SupplierBulkImageRow,
+  SupplierBulkPricingRow,
   SupplierBulkProductRow,
+  SupplierBulkStockRow,
 } from "@/types/parts-mapping/parts-mapping"
 
 export const dynamic = "force-dynamic"
@@ -171,23 +175,122 @@ const parseImageRows = async (file: File): Promise<SupplierBulkImageRow[]> => {
   })
 }
 
+const parseStockRows = async (file: File): Promise<SupplierBulkStockRow[]> => {
+  const rows = await parseSpreadsheet(file)
+  const headers = Object.keys(rows[0]).map(normalizeHeader)
+  const hasSkuColumn = headers.some((header) =>
+    ["sku", "vendorsku", "vendorskunumber"].includes(header),
+  )
+  if (
+    !hasSkuColumn ||
+    !headers.includes("warehouseid") ||
+    !headers.includes("quantity")
+  ) {
+    throw new Error(
+      "The stock file must contain SKU, Warehouse ID, and Quantity columns",
+    )
+  }
+
+  return rows.map((row, index) => ({
+    rowNumber: index + 2,
+    vendorSku: readCell(row, ["SKU", "Vendor SKU", "Vendor SKU Number"]),
+    warehouseId: readCell(row, ["Warehouse ID", "Warehouse", "Warehouse Name"]),
+    quantity: readCell(row, ["Quantity", "Stock", "Qty"]),
+    leadTime: readCell(row, ["Lead Time", "Lead Time Days"]),
+    lowStockThreshold: readCell(row, [
+      "Low Stock Threshold",
+      "Low Stock",
+      "Reorder Threshold",
+    ]),
+    rawUploadData: { ...row },
+  }))
+}
+
+const parsePricingRows = async (
+  file: File,
+): Promise<SupplierBulkPricingRow[]> => {
+  const rows = await parseSpreadsheet(file)
+  const headers = Object.keys(rows[0]).map(normalizeHeader)
+  const hasSkuColumn = headers.some((header) =>
+    ["sku", "vendorsku", "vendorskunumber"].includes(header),
+  )
+  const hasBasePrice = headers.some((header) =>
+    ["basepriceaed", "baseprice", "price"].includes(header),
+  )
+  const hasDiscountPrice = headers.some((header) =>
+    ["discountpriceaed", "discountprice", "saleprice"].includes(header),
+  )
+  if (
+    !hasSkuColumn ||
+    (!hasBasePrice && !hasDiscountPrice)
+  ) {
+    throw new Error(
+      "The pricing file must contain SKU and Base Price (AED) or Discount Price (AED) columns",
+    )
+  }
+
+  return rows.map((row, index) => ({
+    rowNumber: index + 2,
+    vendorSku: readCell(row, ["SKU", "Vendor SKU", "Vendor SKU Number"]),
+    basePrice: readCell(row, ["Base Price (AED)", "Base Price", "Price"]),
+    discountPrice: readCell(row, [
+      "Discount Price (AED)",
+      "Discount Price",
+      "Sale Price",
+    ]),
+    currency: readCell(row, ["Currency"]),
+    taxClass: readCell(row, ["Tax Class"]),
+    vat: readCell(row, ["VAT"]),
+    maxRetailPrice: readCell(row, [
+      "Max Retail Price",
+      "MRP",
+      "Maximum Retail Price",
+    ]),
+    wholesaleDistributorPrice: readCell(row, [
+      "Wholesale/Distributor Pricing",
+      "Wholesale Distributor Pricing",
+      "Wholesale Pricing",
+      "Distributor Pricing",
+    ]),
+    fleetPrice: readCell(row, ["Fleet Pricing", "Fleet Price"]),
+    rawUploadData: { ...row },
+  }))
+}
+
 const parseProductRows = async (
   file: File,
   imageRows: SupplierBulkImageRow[],
 ): Promise<SupplierBulkProductRow[]> => {
   const rows = await parseSpreadsheet(file)
   const headers = Object.keys(rows[0]).map(normalizeHeader)
+  const hasSkuColumn = headers.some((header) =>
+    ["sku", "vendorsku", "vendorskunumber"].includes(header),
+  )
+  const hasOemColumn = headers.some((header) =>
+    ["oempartnumber", "oemnumber", "oem"].includes(header),
+  )
+  const hasMpnColumn = headers.some((header) =>
+    [
+      "manufacturerpartnumbermpn",
+      "manufacturerpartnumber",
+      "mpn",
+      "partnumber",
+    ].includes(header),
+  )
+  const hasCompetitorOemColumn = headers.some((header) =>
+    [
+      "competitoroempartnumber",
+      "competitoroemnumber",
+      "competitorpartnumber",
+    ].includes(header),
+  )
+  const hasProductNameColumn = headers.includes("productname")
   if (
-    !headers.includes("platformpartnumbersku") ||
-    !headers.some((header) =>
-      ["vendorskunumber", "vendorsku", "sku"].includes(header),
-    ) ||
-    !headers.some((header) =>
-      ["oempartnumber", "oemnumber", "oem"].includes(header),
-    )
+    !hasSkuColumn ||
+    (!hasOemColumn && !hasCompetitorOemColumn && !(hasProductNameColumn && hasMpnColumn))
   ) {
     throw new Error(
-      "The product file must contain Platform Part number (SKU), Vendor SKU number, and OEM Part Number columns",
+      "The product file must contain SKU and either OEM/competitor fields or Product Name plus Manufacturer Part Number (MPN)",
     )
   }
   const imagesBySku = new Map(
@@ -208,6 +311,18 @@ const parseProductRows = async (
       "OEM Number",
       "OEM",
     ])
+    const mpn = readCell(row, [
+      "Manufacturer Part Number (MPN)",
+      "Manufacturer Part Number",
+      "MPN",
+      "Part Number",
+    ])
+    const brand = readCell(row, [
+      "Brand Name",
+      "Product Brand Name",
+      "Product Brand",
+      "Brand",
+    ])
     const rawUploadData = { ...row }
     for (const key of Object.keys(rawUploadData)) {
       if (normalizeHeader(key) === "platformpartnumbersku") {
@@ -219,14 +334,37 @@ const parseProductRows = async (
       rowNumber: index + 2,
       vendorSku,
       oemNumber,
-      mpn: null,
-      brand: null,
-      price: 0,
-      stock: 0,
+      mpn,
+      brand,
+      price: readCell(row, [
+        "Price",
+        "Base Price (AED)",
+        "Base Price",
+        "Discount Price (AED)",
+        "Discount Price",
+      ]),
+      stock: readCell(row, ["Stock", "Quantity", "Qty"]),
+      productName: readCell(row, ["Product Name", "Product"]),
+      shortDescription: readCell(row, [
+        "Short Description",
+        "Product Short Description",
+      ]),
+      longDescription: readCell(row, [
+        "Long Description",
+        "Product Long Description",
+        "Description",
+      ]),
+      status: readCell(row, ["Status"]),
+      grade: readCell(row, ["Grade"]),
+      condition: readCell(row, ["Condition"]),
       oemSupersessionNumbers: splitValues(
         readCell(row, ["OEM Supersession Numbers", "Supersession Numbers"]),
       ),
-      competitorPartNumber: readCell(row, ["Competitor Part Number"]),
+      competitorPartNumber: readCell(row, [
+        "Competitor OEM Part Number",
+        "Competitor OEM Number",
+        "Competitor Part Number",
+      ]),
       competitorBrandName: readCell(row, ["Competitor Brand Name"]),
       hsCode: readCell(row, ["HS Code", "Harmonized System Code"]),
       imageUrls: imagesBySku.get(vendorSku.trim().toUpperCase()) ?? [],
@@ -250,6 +388,8 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData()
     const mode = String(formData.get("mode") ?? "products")
     const imageFile = getUploadedFile(formData, "imageFile")
+    const stockFile = getUploadedFile(formData, "stockFile")
+    const pricingFile = getUploadedFile(formData, "pricingFile")
 
     if (mode === "images") {
       if (!imageFile) {
@@ -261,6 +401,34 @@ export async function POST(request: NextRequest) {
       const summary = await updateSupplierPartImagesBulk(
         auth.user.id,
         await parseImageRows(imageFile),
+      )
+      return NextResponse.json({ ok: true, mode, summary })
+    }
+
+    if (mode === "stock") {
+      if (!stockFile) {
+        return NextResponse.json(
+          { ok: false, message: "Select a stock CSV or Excel file" },
+          { status: 400 },
+        )
+      }
+      const summary = await updateSupplierPartStockBulk(
+        auth.user.id,
+        await parseStockRows(stockFile),
+      )
+      return NextResponse.json({ ok: true, mode, summary })
+    }
+
+    if (mode === "pricing") {
+      if (!pricingFile) {
+        return NextResponse.json(
+          { ok: false, message: "Select a pricing CSV or Excel file" },
+          { status: 400 },
+        )
+      }
+      const summary = await updateSupplierPartPricingBulk(
+        auth.user.id,
+        await parsePricingRows(pricingFile),
       )
       return NextResponse.json({ ok: true, mode, summary })
     }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 import {
   createSupplierPart,
-  listSupplierParts,
+  listSupplierPartsPage,
 } from "@/services/parts-mapping/parts-mapping-service"
 import { readJsonBody, requireSupplierFromRequest } from "@/lib/parts-mapping/auth"
 import type { SupplierPartCreateInput } from "@/types/parts-mapping/parts-mapping"
@@ -18,13 +18,17 @@ export async function GET(request: NextRequest) {
   const status = request.nextUrl.searchParams.get("status") ?? undefined
   const query = request.nextUrl.searchParams.get("q") ?? undefined
 
-  const parts = await listSupplierParts({
+  const page = Number.parseInt(request.nextUrl.searchParams.get("page") ?? "1", 10)
+  const pageSize = Number.parseInt(request.nextUrl.searchParams.get("pageSize") ?? "10", 10)
+  const result = await listSupplierPartsPage({
     supplierId: auth.user.id,
-    status: status as Parameters<typeof listSupplierParts>[0]["status"],
+    status: status as Parameters<typeof listSupplierPartsPage>[0]["status"],
     query,
+    page,
+    pageSize,
   })
 
-  return NextResponse.json({ ok: true, parts }, { status: 200 })
+  return NextResponse.json({ ok: true, ...result }, { status: 200 })
 }
 
 export async function POST(request: NextRequest) {

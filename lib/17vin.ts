@@ -36,6 +36,12 @@ export type Vin17VehicleCandidate = {
   raw: unknown
 }
 
+export type Vin17InterchangeResult = {
+  part: Vin17PartCandidate | null
+  oeInterchanges: Vin17PartCandidate[]
+  factoryInterchanges: Vin17PartCandidate[]
+}
+
 const containsCjkText = (value: string) => /[\u3400-\u9fff]/u.test(value)
 
 const sanitizeUpstreamMessage = (message: string | null): string | null => {
@@ -175,6 +181,19 @@ const findListAtPath = (payload: unknown, path: string[]): unknown[] => {
   }
 
   return Array.isArray(current) ? current : []
+}
+
+const findValueAtPath = (payload: unknown, path: string[]): unknown => {
+  let current = payload
+
+  for (const key of path) {
+    if (!isObject(current)) {
+      return null
+    }
+    current = current[key]
+  }
+
+  return current
 }
 
 const assert17VinBusinessSuccess = (payload: unknown) => {
@@ -360,6 +379,38 @@ export async function searchPartIn17Vin(
   return findList(payload)
     .map(mapPartCandidate)
     .filter((candidate): candidate is Vin17PartCandidate => candidate !== null)
+}
+
+export async function get17VinInterchanges(
+  partNumber: string,
+  groupId: string | number,
+): Promise<Vin17InterchangeResult> {
+  const payload = await fetch17Vin({
+    action: "get_interchange_from_part_number_and_group_id_plus_zh",
+    part_number: partNumber,
+    group_id: String(groupId),
+  })
+
+  const part = mapPartCandidate(
+    findValueAtPath(payload, ["data", "InterchangeInfo", "PartInfo"]) ??
+      findValueAtPath(payload, ["data", "PartInfo"]),
+  )
+  const oeInterchanges = findListAtPath(payload, [
+    "data",
+    "InterchangeInfo",
+    "OeInterchange",
+  ])
+    .map(mapPartCandidate)
+    .filter((candidate): candidate is Vin17PartCandidate => candidate !== null)
+  const factoryInterchanges = findListAtPath(payload, [
+    "data",
+    "InterchangeInfo",
+    "FactoryInterchange",
+  ])
+    .map(mapPartCandidate)
+    .filter((candidate): candidate is Vin17PartCandidate => candidate !== null)
+
+  return { part, oeInterchanges, factoryInterchanges }
 }
 
 export async function get17VinApplicableModels(

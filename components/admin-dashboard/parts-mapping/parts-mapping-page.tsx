@@ -5,7 +5,6 @@ import {
   CircleCheck,
   Eye,
   MoreHorizontal,
-  RefreshCw,
   Search,
   Trash2,
   Wrench,
@@ -46,6 +45,14 @@ import type { SupplierPartMappingStatus } from "@/lib/generated/prisma/client"
 
 type PartsMappingPageProps = {
   initialParts: SupplierPartRecord[]
+  initialPagination: PartsPagination
+}
+
+type PartsPagination = {
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
 }
 
 const statusFilters: Array<{
@@ -76,8 +83,9 @@ const formatStatus = (status: string) =>
     .map((part) => part[0]?.toUpperCase() + part.slice(1))
     .join(" ")
 
-export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
+export function PartsMappingPage({ initialParts, initialPagination }: PartsMappingPageProps) {
   const [parts, setParts] = useState(initialParts)
+  const [pagination, setPagination] = useState(initialPagination)
   const [query, setQuery] = useState("")
   const [statusFilter, setStatusFilter] =
     useState<SupplierPartMappingStatus | "all">("all")
@@ -86,57 +94,49 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
   const [partToReview, setPartToReview] = useState<SupplierPartRecord | null>(null)
   const [retainedImageKeys, setRetainedImageKeys] = useState<string[]>([])
   const [partToDelete, setPartToDelete] = useState<SupplierPartRecord | null>(null)
+  const [loadError, setLoadError] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
   const [isPending, startTransition] = useTransition()
 
-  const filteredParts = parts.filter((part) => {
-    const matchesStatus =
-      statusFilter === "all" || part.mappingStatus === statusFilter
-    const normalizedQuery = query.trim().toLowerCase()
-
-    if (!matchesStatus) {
-      return false
+  const loadParts = async (
+    page: number,
+    status: SupplierPartMappingStatus | "all" = statusFilter,
+    search: string = query,
+  ) => {
+    setIsLoading(true)
+    setLoadError("")
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: "10",
+        status,
+        q: search.trim(),
+      })
+      const response = await fetch(`/api/admin/parts/pending-review?${params}`, {
+        cache: "no-store",
+      })
+      const payload = await response.json() as {
+        ok: boolean
+        parts?: SupplierPartRecord[]
+        pagination?: PartsPagination
+        message?: string
+      }
+      if (!response.ok || !payload.ok || !payload.parts || !payload.pagination) {
+        throw new Error(payload.message ?? "Unable to load supplier parts")
+      }
+      setParts(payload.parts)
+      setPagination(payload.pagination)
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Unable to load supplier parts")
+    } finally {
+      setIsLoading(false)
     }
-
-    if (!normalizedQuery) {
-      return true
-    }
-
-    return [
-      part.originalPartName,
-      part.vendorSku ?? "",
-      part.originalBrand ?? "",
-      part.originalMpn ?? "",
-      part.originalOemNumber ?? "",
-      part.supplierName ?? "",
-      part.partUid ?? "",
-      part.mappingError ?? "",
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(normalizedQuery)
-  })
+  }
 
   const updatePartInState = (updatedPart: SupplierPartRecord) => {
     setParts((current) =>
       current.map((part) => (part.id === updatedPart.id ? updatedPart : part)),
     )
-  }
-
-  const retryMapping = (partId: string) => {
-    startTransition(async () => {
-      const response = await fetch(`/api/admin/parts/${partId}/retry-mapping`, {
-        method: "POST",
-      })
-      const payload = await response.json()
-
-      if (!response.ok || !payload.ok) {
-        toast.error(payload.message ?? "Unable to retry mapping")
-        return
-      }
-
-      updatePartInState(payload.part)
-      toast.success("Mapping retried")
-    })
   }
 
   const approveProduct = (partId: string) => {
@@ -318,7 +318,7 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
     <div className="space-y-6">
       <PageHeading
         title="Supplier Parts Mapping"
-        subtitle="Review supplier uploads, retry failed mapping, and manually link parts to the master catalog."
+        subtitle="Review supplier uploads and manually link parts to the master catalog by existing UID."
       />
 
       <Card className="border border-dashboard-panel-border">
@@ -329,13 +329,23 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
                 key={filter.value}
                 size="sm"
                 variant={statusFilter === filter.value ? "default" : "outline"}
-                onClick={() => setStatusFilter(filter.value)}
+                onClick={() => {
+                  setStatusFilter(filter.value)
+                  void loadParts(1, filter.value)
+                }}
               >
                 {filter.label}
               </Button>
             ))}
           </div>
-          <div className="relative w-full lg:max-w-sm">
+          <form
+            className="flex w-full gap-2 lg:max-w-md"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void loadParts(1)
+            }}
+          >
+          <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-dashboard-muted" />
             <Input
               value={query}
@@ -344,9 +354,13 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
               className="h-9 pl-9"
             />
           </div>
+          <Button type="submit" size="sm" disabled={isLoading}>Search</Button>
+          {query ? <Button type="button" size="sm" variant="outline" onClick={() => { setQuery(""); void loadParts(1, statusFilter, "") }}>Clear</Button> : null}
+          </form>
         </CardHeader>
 
         <CardContent className="px-0">
+          {loadError ? <p className="mx-4 mb-3 rounded-md border border-dashboard-danger/30 bg-dashboard-danger/10 p-3 text-sm text-dashboard-danger">{loadError}</p> : null}
           <Table>
             <TableHeader>
               <TableRow>
@@ -360,7 +374,7 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredParts.length === 0 ? (
+              {parts.length === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={7}
@@ -370,7 +384,7 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredParts.map((part) => (
+                parts.map((part) => (
                   <TableRow key={part.id}>
                     <TableCell className="px-4">
                       <div className="space-y-1">
@@ -436,12 +450,6 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
                             </DropdownMenuItem>
                           ) : null}
                           <DropdownMenuItem
-                            onSelect={() => retryMapping(part.id)}
-                          >
-                            <RefreshCw />
-                            Retry automatic mapping
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
                             onSelect={() => setPartToMap(part)}
                           >
                             <Wrench />
@@ -463,6 +471,14 @@ export function PartsMappingPage({ initialParts }: PartsMappingPageProps) {
               )}
             </TableBody>
           </Table>
+          <div className="flex flex-col gap-3 border-t border-dashboard-panel-border px-4 py-4 text-sm text-dashboard-muted sm:flex-row sm:items-center sm:justify-between">
+            <p>Showing {parts.length ? (pagination.page - 1) * pagination.pageSize + 1 : 0}-{Math.min(pagination.page * pagination.pageSize, pagination.total)} of {pagination.total} parts</p>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" disabled={isLoading || pagination.page <= 1} onClick={() => void loadParts(pagination.page - 1)}>Previous</Button>
+              <span>Page {pagination.page} of {pagination.totalPages}</span>
+              <Button size="sm" variant="outline" disabled={isLoading || pagination.page >= pagination.totalPages} onClick={() => void loadParts(pagination.page + 1)}>Next</Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
