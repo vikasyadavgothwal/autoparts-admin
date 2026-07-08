@@ -2,6 +2,10 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 
 import type { AuthTokenClaims } from "@/types/admin-auth/admin-auth"
 
+type JwtPayload = {
+  exp: number
+}
+
 const HEADER = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
 
 const encodeBase64Url = (value: string): string =>
@@ -18,7 +22,7 @@ const buildSignature = (data: string, secret: string): string =>
   createHmac("sha256", secret).update(data).digest("base64url")
 
 export const signJwt = (
-  payload: AuthTokenClaims,
+  payload: JwtPayload,
   secret: string,
 ): string => {
   const encodedHeader = HEADER
@@ -28,7 +32,10 @@ export const signJwt = (
   return `${encodedHeader}.${encodedPayload}.${signature}`
 }
 
-export const verifyJwt = (token: string, secret: string): AuthTokenClaims | null => {
+export const verifyJwt = <TPayload extends JwtPayload = AuthTokenClaims>(
+  token: string,
+  secret: string,
+): TPayload | null => {
   const parts = token.split(".")
   if (parts.length !== 3) {
     return null
@@ -57,9 +64,9 @@ export const verifyJwt = (token: string, secret: string): AuthTokenClaims | null
     return null
   }
 
-  let tokenPayload: AuthTokenClaims
+  let tokenPayload: TPayload
   try {
-    tokenPayload = JSON.parse(decodeBase64Url(encodedPayload)) as AuthTokenClaims
+    tokenPayload = JSON.parse(decodeBase64Url(encodedPayload)) as TPayload
   } catch {
     return null
   }

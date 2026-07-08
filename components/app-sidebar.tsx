@@ -16,6 +16,7 @@ import {
   FileText,
   Building2,
   ChartColumn,
+  PackageSearch,
   Settings,
 } from "lucide-react"
 import {
@@ -42,6 +43,7 @@ const items: readonly AppSidebarNavItem[] = [
   { title: "Garages", url: "/garages", icon: Wrench },
   { title: "RFQs", url: "/rfqs", icon: FileText },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
+  { title: "Parts Mapping", url: appRoutes.partsMapping, icon: PackageSearch },
   { title: "Reports", url: "/reports", icon: ChartColumn },
 ]
 

@@ -7,41 +7,309 @@ datasource db {
   provider = "postgresql"
 }
 
-model MainWebsiteContent {
-  id        String   @id @default(cuid())
-  slug      String   @unique
-  content   Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@map("main_website_contents")
+enum UserRole {
+  Fleet
+  User
+  Garage
+  Supplier
 }
 
-model admin {
-  id               String       @id @default(cuid())
-  email            String       @unique
-  name             String?
-  passwordHash     String
-  isActive         Boolean      @default(true)
-  failedLoginCount Int          @default(0)
-  lockedUntil      DateTime?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
-
-  sessions         adminSession[]
-  roles            adminRole[]
+enum SupplierPartMappingStatus {
+  uploaded
+  processing
+  mapped
+  pending_review
+  failed
 }
 
-model role {
+enum SupplierPartMappingSource {
+  local_db
+  vin17    @map("17vin")
+  manual
+}
+
+enum PartNumberType {
+  mpn
+  oem
+  brand_part_number
+  unknown
+}
+
+enum FleetVehicleStatus {
+  active
+  maintenance
+  inactive
+}
+
+enum RfqSource {
+  fleet
+  user
+}
+
+enum RfqStatus {
+  open
+  closed
+  cancelled
+}
+
+enum RfqBidStatus {
+  submitted
+  accepted
+  rejected
+  withdrawn
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  processing
+  shipped
+  delivered
+  cancelled
+}
+
+enum OrderSource {
+  rfq
+  direct
+}
+
+model User {
+  id                   String                @id @default(cuid())
+  firebaseUid          String?               @unique
+  email                String?               @unique
+  phone                String?               @unique
+  googleId             String?               @unique
+  passwordHash         String?
+  firstName            String?
+  lastName             String?
+  avatarUrl            String?
+  companyName          String?
+  addressLine1         String?
+  addressLine2         String?
+  city                 String?
+  state                String?
+  postalCode           String?
+  country              String?
+  roles                UserRole[]            @default([User])
+  activeRole           UserRole              @default(User)
+  isActive             Boolean               @default(true)
+  emailVerifiedAt      DateTime?
+  lastLoginAt          DateTime?
+  authVersion          Int                   @default(1)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  sessions             UserSession[]
+  supplierParts        SupplierPart[]
+  supplierPartStocks   SupplierPartStock[]
+  supplierPartPricings SupplierPartPricing[]
+  fleetVehicles        FleetVehicle[]
+  rfqs                 Rfq[]
+  rfqBids              RfqBid[]
+  buyerOrders          Order[]               @relation("OrderBuyer")
+  supplierOrders       Order[]               @relation("OrderSupplier")
+
+  @@index([roles], type: Gin)
+  @@index([activeRole])
+  @@index([isActive])
+  @@map("users")
+}
+
+model FleetVehicle {
+  id          String             @id @default(cuid())
+  fleetId     String
+  vehicleName String
+  vin         String
+  mileage     Int
+  driver      String?
+  status      FleetVehicleStatus @default(active)
+  year        Int
+  make        String
+  model       String
+  trim        String?
+  isPrimary   Boolean            @default(false)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  fleet       User               @relation(fields: [fleetId], references: [id], onDelete: Cascade)
+  rfqs        Rfq[]
+
+  @@unique([fleetId, vin])
+  @@index([fleetId, status])
+  @@index([vin])
+  @@map("fleet_vehicles")
+}
+
+model Rfq {
+  id                  String    @id @default(cuid())
+  publicId            String    @unique @default(dbgenerated("next_rfq_public_id()"))
+  requesterId         String?
+  fleetVehicleId      String?
+  source              RfqSource
+  status              RfqStatus @default(open)
+  projectName         String
+  description         String?
+  responseDeadline    DateTime
+  deliveryRequirement String
+  paymentTerms        String
+  companyName         String
+  contactName         String
+  email               String
+  phone               String
+  vehicleVin          String?
+  vehicleYear         Int?
+  vehicleMake         String?
+  vehicleModel        String?
+  vehicleTrim         String?
+  attachmentKey       String?
+  attachmentUrl       String?
+  attachmentName      String?
+  attachmentMimeType  String?
+  attachmentSize      Int?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  requester    User?         @relation(fields: [requesterId], references: [id], onDelete: SetNull)
+  fleetVehicle FleetVehicle? @relation(fields: [fleetVehicleId], references: [id], onDelete: SetNull)
+  parts        RfqPart[]
+  bids         RfqBid[]
+  order        Order?
+
+  @@index([requesterId])
+  @@index([fleetVehicleId])
+  @@index([status, createdAt])
+  @@index([source])
+  @@map("rfqs")
+}
+
+model RfqBid {
+  id           String       @id @default(cuid())
+  rfqId        String
+  supplierId   String
+  totalAmount  Int
+  deliveryDays Int
+  validUntil   DateTime?
+  notes        String?
+  status       RfqBidStatus @default(submitted)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  rfq      Rfq    @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplier User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  order    Order?
+
+  @@unique([rfqId, supplierId])
+  @@index([supplierId, status])
+  @@index([rfqId, status])
+  @@map("rfq_bids")
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  publicId    String      @unique @default(dbgenerated("next_order_public_id()"))
+  source      OrderSource @default(rfq)
+  rfqId       String?     @unique
+  bidId       String?     @unique
+  buyerId     String
+  supplierId  String
+  totalAmount Int
+  status      OrderStatus @default(pending)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  rfq      Rfq?        @relation(fields: [rfqId], references: [id], onDelete: Restrict)
+  bid      RfqBid?     @relation(fields: [bidId], references: [id], onDelete: Restrict)
+  buyer    User        @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  supplier User        @relation("OrderSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
+  items    OrderItem[]
+
+  @@index([buyerId, status])
+  @@index([supplierId, status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String   @id @default(cuid())
+  orderId        String
+  supplierPartId String?
+  partName       String
+  partNumber     String?
+  quantity       Int
+  unitPrice      Int?
+  lineTotal      Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplierPart SupplierPart? @relation(fields: [supplierPartId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([supplierPartId])
+  @@index([partNumber])
+  @@map("order_items")
+}
+
+model RfqPart {
   id          String   @id @default(cuid())
-  code        String   @unique
-  name        String
-  description String?
-  isSystem    Boolean  @default(false)
+  rfqId       String
+  partName    String
+  partNumber  String?
+  quantity    Int
+  targetPrice Int?
+  notes       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  permissions rolePermission[]
-  admins      adminRole[]
+  rfq Rfq @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+
+  @@index([rfqId])
+  @@index([partNumber])
+  @@map("rfq_parts")
+}
+
+model UserSession {
+  id               String    @id @default(cuid())
+  userId           String
+  refreshTokenHash String    @unique
+  accessJti        String
+  deviceName       String?
+  userAgent        String?
+  ipHash           String?
+  lastUsedAt       DateTime?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
+
+model admin {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  name             String?
+  passwordHash     String
+  roleIds          String[]  @default([])
+  isActive         Boolean   @default(true)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  sessions adminSession[]
+}
+
+model role {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  name          String
+  description   String?
+  permissionIds String[] @default([])
+  isSystem      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model permission {
@@ -50,39 +318,12 @@ model permission {
   name        String
   description String?
   createdAt   DateTime @default(now())
-
-  roles       rolePermission[]
-}
-
-model adminRole {
-  adminId    String
-  roleId     String
-  assignedAt DateTime @default(now())
-  assignedBy String?
-
-  admin admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  role  role  @relation(fields: [roleId], references: [id], onDelete: Cascade)
-
-  @@id([adminId, roleId])
-  @@map("admin_roles")
-}
-
-model rolePermission {
-  roleId       String
-  permissionId String
-  createdAt    DateTime @default(now())
-
-  role       role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-
-  @@id([roleId, permissionId])
-  @@map("role_permissions")
 }
 
 model adminSession {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   adminId          String
-  refreshTokenHash  String   @unique
+  refreshTokenHash String    @unique
   accessJti        String
   deviceHash       String
   ipHash           String
@@ -91,13 +332,214 @@ model adminSession {
   expiresAt        DateTime
   revokedAt        DateTime?
   replacedBy       String?
-  lastUsedAt       DateTime @default(now())
-  rotationCount    Int      @default(0)
-  createdAt        DateTime @default(now())
+  lastUsedAt       DateTime  @default(now())
+  rotationCount    Int       @default(0)
+  createdAt        DateTime  @default(now())
 
   admin admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
   @@index([adminId])
   @@index([expiresAt])
   @@map("admin_sessions")
+}
+
+model MainWebsiteContent {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  content   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("main_website_contents")
+}
+
+model SupplierPart {
+  id                     String                     @id @default(cuid())
+  supplierId             String
+  vendorSku              String?
+  partUid                String?
+  originalPartName       String
+  originalBrand          String?
+  originalMpn            String?
+  originalOemNumber      String?
+  normalizedMpn          String?
+  normalizedOemNumber    String?
+  price                  Int
+  stock                  Int
+  currency               String?
+  category               String?
+  oemSupersessionNumbers String[]                   @default([])
+  competitorPartNumber   String?
+  competitorBrandName    String?
+  hsCode                 String?
+  supplierImageUrls      String[]                   @default([])
+  mappingStatus          SupplierPartMappingStatus  @default(uploaded)
+  mappingSource          SupplierPartMappingSource?
+  mappingError           String?
+  rawUploadData          Json?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+
+  supplier   User                 @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  part       PartMaster?          @relation(fields: [partUid], references: [partUid], onDelete: SetNull)
+  orderItems OrderItem[]
+  stockRows  SupplierPartStock[]
+  pricing    SupplierPartPricing?
+
+  @@unique([supplierId, vendorSku])
+  @@index([supplierId])
+  @@index([partUid])
+  @@index([mappingStatus])
+  @@index([normalizedMpn])
+  @@index([normalizedOemNumber])
+  @@map("supplier_parts")
+}
+
+model SupplierPartStock {
+  id                String   @id @default(cuid())
+  supplierId        String
+  supplierPartId    String
+  vendorSku         String
+  warehouseId       String
+  quantity          Int
+  leadTime          String?
+  lowStockThreshold Int?
+  rawUploadData     Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  supplier     User         @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  supplierPart SupplierPart @relation(fields: [supplierPartId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, vendorSku, warehouseId])
+  @@index([supplierId])
+  @@index([supplierPartId])
+  @@index([vendorSku])
+  @@map("supplier_part_stock")
+}
+
+model SupplierPartPricing {
+  id                        String   @id @default(cuid())
+  supplierId                String
+  supplierPartId            String   @unique
+  vendorSku                 String
+  basePrice                 Int?
+  discountPrice             Int?
+  currency                  String   @default("AED")
+  taxClass                  String?
+  vat                       String?
+  maxRetailPrice            Int?
+  wholesaleDistributorPrice Int?
+  fleetPrice                Int?
+  rawUploadData             Json?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  supplier     User         @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  supplierPart SupplierPart @relation(fields: [supplierPartId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, vendorSku])
+  @@index([supplierId])
+  @@index([vendorSku])
+  @@map("supplier_part_pricing")
+}
+
+model PartMaster {
+  id                   String   @id @default(cuid())
+  partUid              String   @unique
+  source               String
+  sourcePartId         String?
+  partNumber           String?
+  normalizedPartNumber String?
+  partNumberOriginal   String?
+  brandName            String?
+  partName             String?
+  category             String?
+  groupId              String?
+  groupName            String?
+  imageUrl             String?
+  imageUrls            String[] @default([])
+  imageKeys            String[] @default([])
+  badgeText            String?
+  heading              String?
+  description          String?
+  keyFeatures          String[] @default([])
+  raw17VinPartInfo     Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  supplierParts SupplierPart[]
+  numbers       PartNumberIndex[]
+  fitments      MasterFitment[]
+
+  @@index([normalizedPartNumber])
+  @@index([normalizedPartNumber, groupId])
+  @@index([groupId])
+  @@map("part_master")
+}
+
+model PartNumberIndex {
+  id               String         @id @default(cuid())
+  partUid          String
+  numberOriginal   String
+  numberNormalized String
+  numberType       PartNumberType
+  brand            String?
+  source           String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  part             PartMaster     @relation(fields: [partUid], references: [partUid], onDelete: Cascade)
+
+  @@unique([partUid, numberNormalized, numberType])
+  @@index([numberNormalized])
+  @@index([numberNormalized, brand])
+  @@index([partUid])
+  @@map("part_number_index")
+}
+
+model MasterFitment {
+  id              String   @id @default(cuid())
+  partUid         String
+  source          String
+  vin17ModelId    String?
+  brand           String?
+  make            String?
+  model           String?
+  series          String?
+  modelYear       Int?
+  yearFrom        Int?
+  yearTo          Int?
+  engine          String?
+  engineNo        String?
+  cc              String?
+  fuelType        String?
+  transmission    String?
+  bodyType        String?
+  dateBegin       String?
+  dateEnd         String?
+  raw17VinVehicle Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  part PartMaster @relation(fields: [partUid], references: [partUid], onDelete: Cascade)
+
+  @@unique([partUid, vin17ModelId])
+  @@index([partUid])
+  @@index([make, model, modelYear])
+  @@index([brand, model, modelYear])
+  @@index([engineNo])
+  @@map("master_fitment")
+}
+
+model UnmatchedPartSearchLog {
+  id               String   @id @default(cuid())
+  searchedNumber   String
+  normalizedNumber String
+  userId           String?
+  resultStatus     String
+  createdAt        DateTime @default(now())
+
+  @@index([normalizedNumber])
+  @@index([userId])
+  @@map("unmatched_part_search_logs")
 }
