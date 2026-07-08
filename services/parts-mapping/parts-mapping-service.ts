@@ -1,7 +1,8 @@
+import { Buffer } from "node:buffer"
 import crypto from "node:crypto"
 
 import { db } from "@/lib/database/prisma"
-import { deleteObjectFromS3 } from "@/lib/storage/s3"
+import { deleteObjectFromS3, uploadObjectToS3 } from "@/lib/storage/s3"
 import {
   get17VinApplicableModels,
   get17VinInterchanges,
@@ -33,6 +34,14 @@ import type {
 } from "@/types/parts-mapping/parts-mapping"
 
 const DEFAULT_CURRENCY = "AED"
+const SUPPLIER_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+const SUPPLIER_IMAGE_FETCH_TIMEOUT_MS = 15_000
+const SUPPLIER_IMAGE_UPLOAD_CONCURRENCY = 3
+const SUPPORTED_SUPPLIER_IMAGE_TYPES: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+}
 
 const normalizeText = (value: unknown): string =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
@@ -1472,6 +1481,212 @@ const mapWithConcurrency = async <T, R>(
   return results
 }
 
+class SupplierImageUploadError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "SupplierImageUploadError"
+  }
+}
+
+const normalizeImageContentType = (value: string | null): string =>
+  value?.split(";")[0]?.trim().toLowerCase() ?? ""
+
+const sanitizeS3PathSegment = (value: string): string => {
+  const sanitized = value
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+
+  return sanitized.slice(0, 80) || "sku"
+}
+
+const isBlockedExternalImageHost = (hostname: string): boolean => {
+  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase()
+
+  return (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "127.0.0.1" ||
+    normalized === "0.0.0.0" ||
+    normalized === "::1" ||
+    normalized.startsWith("10.") ||
+    normalized.startsWith("192.168.") ||
+    normalized.startsWith("169.254.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(normalized) ||
+    (normalized.includes(":") &&
+      (normalized.startsWith("fc") || normalized.startsWith("fd")))
+  )
+}
+
+const fetchExternalSupplierImage = async (
+  imageUrl: string,
+  imageIndex: number,
+) => {
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(imageUrl)
+  } catch {
+    throw new SupplierImageUploadError(`Image ${imageIndex}: invalid image URL`)
+  }
+
+  if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+    throw new SupplierImageUploadError(
+      `Image ${imageIndex}: image URL must use HTTP or HTTPS`,
+    )
+  }
+
+  if (isBlockedExternalImageHost(parsedUrl.hostname)) {
+    throw new SupplierImageUploadError(
+      `Image ${imageIndex}: local or private image URLs are not allowed`,
+    )
+  }
+
+  const abortController = new AbortController()
+  const timeout = setTimeout(
+    () => abortController.abort(),
+    SUPPLIER_IMAGE_FETCH_TIMEOUT_MS,
+  )
+
+  let response: Response
+  try {
+    response = await fetch(parsedUrl.toString(), {
+      signal: abortController.signal,
+      redirect: "follow",
+    })
+  } catch (error) {
+    throw new SupplierImageUploadError(
+      `Image ${imageIndex}: unable to download image${
+        error instanceof Error ? ` (${error.message})` : ""
+      }`,
+    )
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  if (!response.ok) {
+    throw new SupplierImageUploadError(
+      `Image ${imageIndex}: image download failed with HTTP ${response.status}`,
+    )
+  }
+
+  const contentType = normalizeImageContentType(
+    response.headers.get("content-type"),
+  )
+  const extension = SUPPORTED_SUPPLIER_IMAGE_TYPES[contentType]
+  if (!extension) {
+    throw new SupplierImageUploadError(
+      `Image ${imageIndex}: only JPG, PNG, or WebP images are supported`,
+    )
+  }
+
+  const contentLength = Number.parseInt(
+    response.headers.get("content-length") ?? "",
+    10,
+  )
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > SUPPLIER_IMAGE_MAX_BYTES
+  ) {
+    throw new SupplierImageUploadError(
+      `Image ${imageIndex}: image must be no larger than 5 MB`,
+    )
+  }
+
+  let body: Buffer
+  try {
+    body = Buffer.from(await response.arrayBuffer())
+  } catch (error) {
+    throw new SupplierImageUploadError(
+      `Image ${imageIndex}: unable to read image data${
+        error instanceof Error ? ` (${error.message})` : ""
+      }`,
+    )
+  }
+  if (body.byteLength > SUPPLIER_IMAGE_MAX_BYTES) {
+    throw new SupplierImageUploadError(
+      `Image ${imageIndex}: image must be no larger than 5 MB`,
+    )
+  }
+
+  return { body, contentType, extension }
+}
+
+const uploadSupplierImageUrlsToS3 = async ({
+  supplierId,
+  vendorSku,
+  imageUrls,
+}: {
+  supplierId: string
+  vendorSku: string
+  imageUrls: string[]
+}): Promise<string[]> => {
+  const uniqueImageUrls = Array.from(
+    new Set(imageUrls.map(normalizeText).filter(Boolean)),
+  )
+
+  if (!uniqueImageUrls.length) {
+    return []
+  }
+
+  const safeSku = sanitizeS3PathSegment(vendorSku)
+  const indexedImageUrls = uniqueImageUrls.map((imageUrl, index) => ({
+    imageUrl,
+    index,
+  }))
+
+  return mapWithConcurrency(
+    indexedImageUrls,
+    SUPPLIER_IMAGE_UPLOAD_CONCURRENCY,
+    async ({ imageUrl, index }) => {
+      const imageNumber = index + 1
+      const image = await fetchExternalSupplierImage(imageUrl, imageNumber)
+      let uploaded: Awaited<ReturnType<typeof uploadObjectToS3>>
+
+      try {
+        const key = [
+          "supplier-products",
+          supplierId,
+          "bulk",
+          safeSku,
+          `${Date.now()}-${crypto.randomUUID()}.${image.extension}`,
+        ].join("/")
+        uploaded = await uploadObjectToS3({
+          key,
+          body: image.body,
+          contentType: image.contentType,
+        })
+      } catch (error) {
+        throw new SupplierImageUploadError(
+          `Image ${imageNumber}: unable to upload image to S3${
+            error instanceof Error ? ` (${error.message})` : ""
+          }`,
+        )
+      }
+
+      return uploaded.objectUrl
+    },
+  )
+}
+
+const withUploadedSupplierImageUrls = async (
+  supplierId: string,
+  vendorSku: string,
+  row: SupplierBulkProductRow,
+): Promise<SupplierBulkProductRow> => {
+  if (!row.imageUrls?.length) {
+    return row
+  }
+
+  return {
+    ...row,
+    imageUrls: await uploadSupplierImageUrlsToS3({
+      supplierId,
+      vendorSku,
+      imageUrls: row.imageUrls,
+    }),
+  }
+}
+
 const hasSupplierProductInfo = (row: SupplierBulkProductRow) =>
   Boolean(
     normalizeOptionalText(row.productName) &&
@@ -1571,6 +1786,7 @@ export async function importSupplierPartsBulk(
     const competitorOem = normalizeOptionalText(row.competitorPartNumber)
     const competitorBrand = normalizeOptionalText(row.competitorBrandName)
     const hasProductInfo = hasSupplierProductInfo(row)
+    let rowForPersistence = row
 
     if (!vendorSku) {
       return {
@@ -1612,10 +1828,16 @@ export async function importSupplierPartsBulk(
     seenSkus.add(vendorSku)
 
     try {
+      rowForPersistence = await withUploadedSupplierImageUrls(
+        supplierId,
+        vendorSku,
+        row,
+      )
+
       if (!oemNumber && (!supplierBrand || !competitorOem)) {
         const part = await upsertPendingSupplierProductInfo(
           supplierId,
-          row,
+          rowForPersistence,
           vendorSku,
           "Product info uploaded; MPN/OEM is pending admin mapping",
         )
@@ -1676,7 +1898,7 @@ export async function importSupplierPartsBulk(
           competitorPartNumber: competitorOem,
           competitorBrandName: competitorBrand,
           hsCode: normalizeOptionalText(row.hsCode),
-          supplierImageUrls: row.imageUrls ?? [],
+          supplierImageUrls: rowForPersistence.imageUrls ?? [],
           mappingStatus: SupplierPartMappingStatus.mapped,
           mappingSource: resolution.mappingSource,
           mappingError: null,
@@ -1698,8 +1920,8 @@ export async function importSupplierPartsBulk(
           competitorPartNumber: competitorOem,
           competitorBrandName: competitorBrand,
           hsCode: normalizeOptionalText(row.hsCode),
-          ...(row.imageUrls?.length
-            ? { supplierImageUrls: row.imageUrls }
+          ...(rowForPersistence.imageUrls?.length
+            ? { supplierImageUrls: rowForPersistence.imageUrls }
             : {}),
           mappingStatus: SupplierPartMappingStatus.mapped,
           mappingSource: resolution.mappingSource,
@@ -1720,12 +1942,24 @@ export async function importSupplierPartsBulk(
         part: await getSupplierPartById(supplierPart.id),
       }
     } catch (error) {
+      if (error instanceof SupplierImageUploadError) {
+        return {
+          ok: false as const,
+          rowNumber: row.rowNumber,
+          vendorSku,
+          brand: supplierBrand,
+          oemNumber: oemNumber ?? "",
+          competitorPartNumber: competitorOem,
+          competitorBrandName: competitorBrand,
+          reason: error.message,
+        }
+      }
       if (hasProductInfo) {
         const reason =
           error instanceof Error ? error.message : "Unable to confirm this OEM"
         const part = await upsertPendingSupplierProductInfo(
           supplierId,
-          row,
+          rowForPersistence,
           vendorSku,
           reason,
         )
@@ -1793,21 +2027,34 @@ export async function updateSupplierPartImagesBulk(
       continue
     }
 
-    await db.supplierPart.update({
-      where: { id: supplierPart.id },
-      data: {
-        supplierImageUrls: [
-          row.primaryImageUrl,
-          ...row.galleryImageUrls,
-        ],
-      },
-    })
-    results.push({
-      ok: true as const,
-      rowNumber: row.rowNumber,
-      vendorSku,
-      part: await getSupplierPartById(supplierPart.id),
-    })
+    try {
+      const supplierImageUrls = await uploadSupplierImageUrlsToS3({
+        supplierId,
+        vendorSku: normalizeVendorSku(supplierPart.vendorSku ?? vendorSku),
+        imageUrls: [row.primaryImageUrl, ...row.galleryImageUrls],
+      })
+
+      await db.supplierPart.update({
+        where: { id: supplierPart.id },
+        data: {
+          supplierImageUrls,
+        },
+      })
+      results.push({
+        ok: true as const,
+        rowNumber: row.rowNumber,
+        vendorSku,
+        part: await getSupplierPartById(supplierPart.id),
+      })
+    } catch (error) {
+      results.push({
+        ok: false as const,
+        rowNumber: row.rowNumber,
+        vendorSku,
+        reason:
+          error instanceof Error ? error.message : "Unable to upload images to S3",
+      })
+    }
   }
 
   return {
