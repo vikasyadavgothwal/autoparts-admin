@@ -65,3 +65,59 @@ When adding anything new:
 - [Create a new file](./skills/new-file.md)
 - [Create an API page/route](./skills/api-page.md)
 - [Add end-to-end functionality](./skills/new-functionality.md)
+
+<!-- BEGIN:autoparts-pro-codex-docs -->
+
+## AutoParts Pro App Scope
+
+App: `auto_parts_admin`  
+Role: Admin app and backend/API
+
+### Responsibility
+
+Admin dashboard and main backend/API surface for approvals, users, suppliers, garages, vehicles, catalog, public pages, RFQs, orders, marketplace, auth, Prisma, VIN lookup, and S3 uploads.
+
+### Important Folders and Files
+
+- app/(dashboard)
+- app/api, app/api/v1, app/api/v2
+- `actions/`
+- `services/`
+- `lib/auth, lib/user-auth, lib/storage, lib/17vin.ts, lib/vin-search`
+- `prisma/schema.prisma, prisma.config.ts`
+- `types/`
+- `skills/`
+
+### Connected Apps and Services
+
+- All frontend apps through API routes
+- Database through Prisma
+- Firebase Admin/service-account auth
+- S3-compatible storage for images/files
+- 17VIN/VIN API integrations
+
+### Rules for Working Here
+
+- Read the project root `AGENTS.md` and `docs/` files before cross-app work.
+- Keep changes inside `auto_parts_admin` unless the task explicitly requires another app.
+- Do not change API contracts, Prisma schema, auth cookies/JWTs, Firebase config, route base paths, or shared env behavior without listing affected apps first.
+- Do not mix public website, admin, user, supplier, garage, and fleet business logic unless existing imports or APIs already connect them.
+- Preserve existing Next.js version guidance and local architecture rules.
+
+### What Not to Touch Unless Explicitly Required
+
+- Other app folders.
+- Package manager files and lockfiles.
+- `.env` files and secrets.
+- Generated folders such as `.next` and `node_modules`.
+- Backend/API or Prisma code outside this app's scope.
+
+### Check After Changes
+
+- Admin pages and API routes compile
+- Prisma schema/API contract changes are coordinated with every frontend app
+- Auth, S3, VIN, marketplace, RFQ, order, and supplier inventory flows are verified after changes
+- Run the commands documented in this app README when relevant.
+- Update project root `docs/AI_HANDOFF.md` after major changes.
+
+<!-- END:autoparts-pro-codex-docs -->

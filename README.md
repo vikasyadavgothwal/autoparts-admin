@@ -58,3 +58,84 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+<!-- BEGIN:autoparts-pro-codex-docs -->
+
+## AutoParts Pro App Notes
+
+### App Purpose
+
+Admin dashboard and main backend/API surface for approvals, users, suppliers, garages, vehicles, catalog, public pages, RFQs, orders, marketplace, auth, Prisma, VIN lookup, and S3 uploads.
+
+### Important Folders
+
+- app/(dashboard)
+- app/api, app/api/v1, app/api/v2
+- `actions/`
+- `services/`
+- `lib/auth, lib/user-auth, lib/storage, lib/17vin.ts, lib/vin-search`
+- `prisma/schema.prisma, prisma.config.ts`
+- `types/`
+- `skills/`
+
+### Environment Variables
+
+Detected or documented variables:
+
+- `DATABASE_URL`
+- `FIREBASE_SERVICE_ACCOUNT_JSON`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
+- `USER_AUTH_ALLOWED_ORIGINS`
+- `USER_JWT_ACCESS_SECRET`
+- `USER_JWT_REFRESH_SECRET`
+- `ADMIN_JWT_ACCESS_SECRET`
+- `ADMIN_JWT_REFRESH_SECRET`
+- `ADMIN_TOKEN_PEPPER`
+- `ADMIN_BOOTSTRAP_TOKEN`
+- `AWS_S3_BUCKET`
+- `AWS_REGION`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `VIN17_BASE_URL`
+- `VIN_API_BASE_URL`
+- `VIN17_USER`
+- `VIN_API_USER`
+- `VIN17_PASSWORD`
+- `VIN_API_PASS`
+
+### Run, Build, and Test Commands
+
+Install:
+
+```bash
+npm install
+```
+
+Detected scripts:
+
+- `npm run dev`
+- `npm run build`
+- `npm run start`
+- `npm run lint`
+
+Runtime note: dev/start use Next.js defaults unless overridden.
+
+### Connected Apps and Services
+
+- All frontend apps through API routes
+- Database through Prisma
+- Firebase Admin/service-account auth
+- S3-compatible storage for images/files
+- 17VIN/VIN API integrations
+
+### Common Checks Before Deployment
+
+- Admin pages and API routes compile
+- Prisma schema/API contract changes are coordinated with every frontend app
+- Auth, S3, VIN, marketplace, RFQ, order, and supplier inventory flows are verified after changes
+- Run lint/build for this app before deployment.
+- Re-check affected API, auth, database, and env contracts in connected apps.
+
+<!-- END:autoparts-pro-codex-docs -->
