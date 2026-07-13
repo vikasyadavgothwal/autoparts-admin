@@ -6,7 +6,7 @@ import {
   getOptionalUserFromRequest,
 } from "@/lib/parts-mapping/auth"
 import { deleteObjectFromS3, uploadObjectToS3 } from "@/lib/storage/s3"
-import { createRfq, listFleetRfqs, listSupplierRfqs } from "@/services/fleet/fleet-service"
+import { createRfq, listFleetRfqs, listSupplierRfqs, listUserRfqs } from "@/services/fleet/fleet-service"
 import type { CreateRfqInput, RfqAttachment } from "@/types/rfq/rfq"
 
 export const dynamic = "force-dynamic"
@@ -27,10 +27,13 @@ export async function GET(request: NextRequest) {
   if (auth.user.activeRole === "Fleet" && auth.user.roles.includes("Fleet")) {
     return NextResponse.json({ ok: true, ...(await listFleetRfqs(auth.user.id, page, pageSize, search)) })
   }
+  if (auth.user.activeRole === "User" && auth.user.roles.includes("User")) {
+    return NextResponse.json({ ok: true, ...(await listUserRfqs(auth.user.id, page, pageSize, search)) })
+  }
   if (auth.user.activeRole === "Supplier" && auth.user.roles.includes("Supplier")) {
     return NextResponse.json({ ok: true, ...(await listSupplierRfqs(auth.user.id, page, pageSize, search)) })
   }
-  return NextResponse.json({ ok: false, message: "Supplier or Fleet role is required" }, { status: 403 })
+  return NextResponse.json({ ok: false, message: "User, Supplier, or Fleet role is required" }, { status: 403 })
 }
 
 export async function POST(request: NextRequest) {

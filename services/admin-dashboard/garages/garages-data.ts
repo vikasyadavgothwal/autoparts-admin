@@ -2,7 +2,6 @@ import { Star, TrendingUp, Users, Wrench } from "lucide-react"
 import type {
   GarageActivity,
   GarageKpi,
-  GarageRecord,
   GarageTableColumn,
 } from "@/types/admin-dashboard/garages/garages-types"
 
@@ -67,69 +66,6 @@ export const GARAGE_TABLE_COLUMNS: readonly GarageTableColumn[] = [
   { key: "joinDate", label: "Join Date", className: "w-[10%]" },
   { key: "status", label: "Status", className: "w-[12%]" },
   { key: "actions", label: "", className: "w-[7%]" },
-]
-
-export const GARAGES: readonly GarageRecord[] = [
-  {
-    id: "GAR-001",
-    name: "AutoFix Garage",
-    owner: "John Smith",
-    location: "Los Angeles, CA",
-    rating: "4.8",
-    bookings: 234,
-    revenue: "$45,680",
-    joinDate: "2023-03-15",
-    status: "Active",
-    verified: true,
-  },
-  {
-    id: "GAR-002",
-    name: "QuickServe Auto",
-    owner: "Maria Garcia",
-    location: "San Diego, CA",
-    rating: "4.6",
-    bookings: 189,
-    revenue: "$38,920",
-    joinDate: "2023-05-22",
-    status: "Active",
-    verified: true,
-  },
-  {
-    id: "GAR-003",
-    name: "Pro Mechanics Plus",
-    owner: "David Chen",
-    location: "San Francisco, CA",
-    rating: "4.9",
-    bookings: 312,
-    revenue: "$58,340",
-    joinDate: "2023-01-10",
-    status: "Active",
-    verified: true,
-  },
-  {
-    id: "GAR-004",
-    name: "Budget Auto Repair",
-    owner: "Robert Johnson",
-    location: "Sacramento, CA",
-    rating: "4.2",
-    bookings: 145,
-    revenue: "$28,450",
-    joinDate: "2023-08-05",
-    status: "Active",
-    verified: false,
-  },
-  {
-    id: "GAR-005",
-    name: "Elite Car Care",
-    owner: "Sarah Williams",
-    location: "Oakland, CA",
-    rating: "4.7",
-    bookings: 201,
-    revenue: "$42,180",
-    joinDate: "2023-06-18",
-    status: "Pending",
-    verified: false,
-  },
 ]
 
 export const GARAGE_ACTIVITIES: readonly GarageActivity[] = [

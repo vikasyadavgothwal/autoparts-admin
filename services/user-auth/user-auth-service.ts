@@ -12,6 +12,9 @@ import type {
   UserSessionRequestContext,
 } from "@/types/user-auth/user-auth"
 
+const VERIFIED_ACCOUNT_ROLE_REQUIRED_MESSAGE =
+  "Choose an account type to finish creating your account"
+
 const normalizeText = (value: string | null | undefined): string | null => {
   const normalized = value?.trim().replace(/\s+/g, " ") ?? ""
   return normalized || null
@@ -176,6 +179,10 @@ export async function loginUserWithFirebase(
 
   if (existingUser && !existingUser.isActive) {
     throw new Error("User account is inactive")
+  }
+
+  if (!existingUser && !requestedRole) {
+    throw new Error(VERIFIED_ACCOUNT_ROLE_REQUIRED_MESSAGE)
   }
 
   const loggedInAt = new Date()

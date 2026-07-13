@@ -398,6 +398,62 @@ export async function listFleetRfqs(
   }
 }
 
+export async function listUserRfqs(
+  userId: string,
+  page: number,
+  pageSize: number,
+  search = "",
+) {
+  const safePage = Math.max(1, page)
+  const safePageSize = Math.min(50, Math.max(1, pageSize))
+  const query = search.trim()
+  const where: Prisma.RfqWhereInput = {
+    requesterId: userId,
+    source: RfqSource.user,
+    ...(query ? {
+      OR: [
+        { publicId: { contains: query, mode: "insensitive" } },
+        { projectName: { contains: query, mode: "insensitive" } },
+        { vehicleVin: { contains: query, mode: "insensitive" } },
+        { vehicleMake: { contains: query, mode: "insensitive" } },
+        { vehicleModel: { contains: query, mode: "insensitive" } },
+        { parts: { some: { partName: { contains: query, mode: "insensitive" } } } },
+        { parts: { some: { partNumber: { contains: query, mode: "insensitive" } } } },
+      ],
+    } : {}),
+  }
+  const [rfqs, total] = await Promise.all([
+    db.rfq.findMany({
+      where,
+      include: {
+        parts: true,
+        bids: {
+          include: {
+            supplier: {
+              select: { id: true, companyName: true, firstName: true, lastName: true, email: true },
+            },
+          },
+          orderBy: { totalAmount: "asc" },
+        },
+        order: true,
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (safePage - 1) * safePageSize,
+      take: safePageSize,
+    }),
+    db.rfq.count({ where }),
+  ])
+  return {
+    rfqs: rfqs.map(mapRfqMoney),
+    pagination: {
+      page: safePage,
+      pageSize: safePageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / safePageSize)),
+    },
+  }
+}
+
 export async function listAdminRfqs(page = 1, pageSize = 100) {
   const safePage = Math.max(1, page)
   const safePageSize = Math.min(200, Math.max(1, pageSize))
@@ -471,10 +527,15 @@ export async function submitRfqBid(
   return { ...bid, totalAmount: bid.totalAmount / 100 }
 }
 
-export async function acceptRfqBid(fleetId: string, rfqId: string, bidId: string) {
+export async function acceptRfqBid(
+  requesterId: string,
+  rfqId: string,
+  bidId: string,
+  source: RfqSource = RfqSource.fleet,
+) {
   return db.$transaction(async (transaction) => {
     const rfq = await transaction.rfq.findFirst({
-      where: { id: rfqId, requesterId: fleetId, source: RfqSource.fleet },
+      where: { id: rfqId, requesterId, source },
       include: { order: true, parts: true },
     })
     if (!rfq) throw new Error("RFQ not found")
@@ -510,7 +571,7 @@ export async function acceptRfqBid(fleetId: string, rfqId: string, bidId: string
     }
 
     const closed = await transaction.rfq.updateMany({
-      where: { id: rfqId, requesterId: fleetId, status: RfqStatus.open },
+      where: { id: rfqId, requesterId, status: RfqStatus.open },
       data: { status: RfqStatus.closed },
     })
     if (closed.count !== 1) throw new Error("This RFQ was updated by another request")
@@ -527,7 +588,7 @@ export async function acceptRfqBid(fleetId: string, rfqId: string, bidId: string
       data: {
         rfqId,
         bidId,
-        buyerId: fleetId,
+        buyerId: requesterId,
         supplierId: bid.supplierId,
         totalAmount: bid.totalAmount,
         items: {

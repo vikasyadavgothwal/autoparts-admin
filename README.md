@@ -39,6 +39,8 @@ USER_JWT_REFRESH_SECRET=
 ```
 
 Apply the Prisma migration before deploying the Firebase login flow.
+Google and phone sign-in from the public website are Firebase Auth providers;
+the backend validates Firebase ID tokens and then issues the app session cookies.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
@@ -104,6 +106,8 @@ Detected or documented variables:
 - `VIN_API_USER`
 - `VIN17_PASSWORD`
 - `VIN_API_PASS`
+- `GARAGE_EMAIL_VERIFICATION_WEBHOOK_URL`
+- `GARAGE_SMS_OTP_WEBHOOK_URL`
 
 ### Run, Build, and Test Commands
 

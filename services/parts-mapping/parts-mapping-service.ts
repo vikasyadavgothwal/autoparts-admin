@@ -20,6 +20,7 @@ import {
 } from "@/lib/generated/prisma/client"
 import type {
   ManualMapInput,
+  MappedCatalogPartRecord,
   PartSearchResponse,
   PartContentUpdateInput,
   SupplierBulkImageRow,
@@ -110,6 +111,32 @@ const createSupplierPartSkuResolver = async (supplierId: string) => {
 
     return compactMatches.get(compactKey) ?? null
   }
+}
+
+type SupplierOemCandidate = {
+  id: string
+  vendorSku: string | null
+  partUid: string | null
+}
+
+const findSupplierPartBySupplierOem = async (
+  supplierId: string,
+  normalizedOemNumber: string | null,
+  excludeId?: string | null,
+): Promise<SupplierOemCandidate | null> => {
+  if (!normalizedOemNumber) {
+    return null
+  }
+
+  return db.supplierPart.findFirst({
+    where: {
+      supplierId,
+      normalizedOemNumber,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, vendorSku: true, partUid: true },
+  })
 }
 
 const BRAND_ALIASES: Record<string, string> = {
@@ -1121,10 +1148,22 @@ export async function createSupplierPart(
     })
   }
 
-  const existingOffer = existingSkuOffer ?? await db.supplierPart.findFirst({
+  const existingOemOffer = await findSupplierPartBySupplierOem(
+    supplierId,
+    details.normalizedOemNumber,
+    existingSkuOffer?.id,
+  )
+  if (existingSkuOffer && existingOemOffer) {
+    throw new Error(
+      `This OEM is already used by this supplier under SKU ${existingOemOffer.vendorSku ?? "unknown"}`,
+    )
+  }
+
+  const existingPartOffer = await db.supplierPart.findFirst({
     where: { supplierId, partUid },
     orderBy: { updatedAt: "desc" },
   })
+  const existingOffer = existingSkuOffer ?? existingOemOffer ?? existingPartOffer
   const offerData = {
     vendorSku: details.vendorSku,
     originalPartName: master.partName ?? master.heading ?? "Supplier product",
@@ -1696,6 +1735,11 @@ const hasSupplierProductInfo = (row: SupplierBulkProductRow) =>
 const hasUploadedValue = (value: unknown) =>
   !(value === null || value === undefined || (typeof value === "string" && value.trim() === ""))
 
+const isSupplierOemConflictError = (error: unknown): error is Error =>
+  error instanceof Error &&
+  (error.message.startsWith("This OEM is already used") ||
+    error.message.startsWith("This supplier OEM is already mapped"))
+
 const upsertPendingSupplierProductInfo = async (
   supplierId: string,
   row: SupplierBulkProductRow,
@@ -1737,8 +1781,15 @@ const upsertPendingSupplierProductInfo = async (
     ...(row.imageUrls?.length ? { supplierImageUrls: row.imageUrls } : {}),
     rawUploadData: parseJson(row.rawUploadData),
   }
+  const existingOemOffer = existingSkuOffer
+    ? null
+    : await findSupplierPartBySupplierOem(
+        supplierId,
+        commonData.normalizedOemNumber,
+      )
+  const existingOffer = existingSkuOffer ?? existingOemOffer
   const pendingData =
-    existingSkuOffer?.partUid
+    existingOffer?.partUid
       ? {}
       : {
           mappingStatus: SupplierPartMappingStatus.pending_review,
@@ -1746,9 +1797,9 @@ const upsertPendingSupplierProductInfo = async (
           mappingError: reason,
         }
 
-  const supplierPart = existingSkuOffer
+  const supplierPart = existingOffer
     ? await db.supplierPart.update({
-        where: { id: existingSkuOffer.id },
+        where: { id: existingOffer.id },
         data: {
           ...commonData,
           ...(uploadedPrice ? { price: parseMoney(row.price ?? 0) } : {}),
@@ -1777,6 +1828,7 @@ export async function importSupplierPartsBulk(
   rows: SupplierBulkProductRow[],
 ) {
   const seenSkus = new Set<string>()
+  const seenOemNumbers = new Map<string, string>()
   const resolutionByLookup = new Map<string, Promise<BulkPartResolution>>()
 
   const results = await mapWithConcurrency(rows, 5, async (row) => {
@@ -1825,6 +1877,25 @@ export async function importSupplierPartsBulk(
         reason: "Duplicate Vendor SKU Number in this file",
       }
     }
+    const normalizedInputOemNumber = oemNumber
+      ? normalizePartNumber(oemNumber)
+      : null
+    if (normalizedInputOemNumber) {
+      const duplicateSku = seenOemNumbers.get(normalizedInputOemNumber)
+      if (duplicateSku && duplicateSku !== vendorSku) {
+        return {
+          ok: false as const,
+          rowNumber: row.rowNumber,
+          vendorSku,
+          brand: supplierBrand,
+          oemNumber: oemNumber ?? "",
+          competitorPartNumber: competitorOem,
+          competitorBrandName: competitorBrand,
+          reason: `Duplicate OEM Part Number in this file; already used by SKU ${duplicateSku}`,
+        }
+      }
+      seenOemNumbers.set(normalizedInputOemNumber, vendorSku)
+    }
     seenSkus.add(vendorSku)
 
     try {
@@ -1867,6 +1938,20 @@ export async function importSupplierPartsBulk(
       const resolution = await resolutionPromise
       const resolvedOemNumber = resolution.resolvedOemNumber
       const normalizedOemNumber = normalizePartNumber(resolvedOemNumber)
+      const duplicateResolvedSku = seenOemNumbers.get(normalizedOemNumber)
+      if (duplicateResolvedSku && duplicateResolvedSku !== vendorSku) {
+        return {
+          ok: false as const,
+          rowNumber: row.rowNumber,
+          vendorSku,
+          brand: supplierBrand,
+          oemNumber: resolvedOemNumber,
+          competitorPartNumber: competitorOem,
+          competitorBrandName: competitorBrand,
+          reason: `Duplicate OEM Part Number in this file; already used by SKU ${duplicateResolvedSku}`,
+        }
+      }
+      seenOemNumbers.set(normalizedOemNumber, vendorSku)
       const master = await db.partMaster.findUniqueOrThrow({
         where: { partUid: resolution.partUid },
       })
@@ -1878,57 +1963,82 @@ export async function importSupplierPartsBulk(
         normalizeOptionalText(row.grade) ?? normalizeOptionalText(row.condition)
       const originalPartName =
         uploadedProductName ?? master.partName ?? `OEM ${resolvedOemNumber}`
-      const supplierPart = await db.supplierPart.upsert({
+      const existingSkuOffer = await db.supplierPart.findUnique({
         where: { supplierId_vendorSku: { supplierId, vendorSku } },
-        create: {
-          supplierId,
-          vendorSku,
-          partUid: resolution.partUid,
-          originalPartName,
-          originalBrand: resolution.resolvedBrand ?? master.brandName,
-          originalMpn,
-          originalOemNumber: resolvedOemNumber,
-          normalizedMpn: originalMpn ? normalizePartNumber(originalMpn) : null,
-          normalizedOemNumber,
-          price: parseMoney(uploadedPrice ? row.price ?? 0 : 0),
-          stock: parseStock(uploadedStock ? row.stock ?? 0 : 0),
-          currency: DEFAULT_CURRENCY,
-          category: uploadedCategory ?? master.category,
-          oemSupersessionNumbers: row.oemSupersessionNumbers ?? [],
-          competitorPartNumber: competitorOem,
-          competitorBrandName: competitorBrand,
-          hsCode: normalizeOptionalText(row.hsCode),
-          supplierImageUrls: rowForPersistence.imageUrls ?? [],
-          mappingStatus: SupplierPartMappingStatus.mapped,
-          mappingSource: resolution.mappingSource,
-          mappingError: null,
-          rawUploadData: parseJson(row.rawUploadData),
-        },
-        update: {
-          partUid: resolution.partUid,
-          originalPartName,
-          originalBrand: resolution.resolvedBrand ?? master.brandName,
-          originalMpn,
-          originalOemNumber: resolvedOemNumber,
-          normalizedMpn: originalMpn ? normalizePartNumber(originalMpn) : null,
-          normalizedOemNumber,
-          ...(uploadedPrice ? { price: parseMoney(row.price ?? 0) } : {}),
-          ...(uploadedStock ? { stock: parseStock(row.stock ?? 0) } : {}),
-          currency: DEFAULT_CURRENCY,
-          category: uploadedCategory ?? master.category,
-          oemSupersessionNumbers: row.oemSupersessionNumbers ?? [],
-          competitorPartNumber: competitorOem,
-          competitorBrandName: competitorBrand,
-          hsCode: normalizeOptionalText(row.hsCode),
-          ...(rowForPersistence.imageUrls?.length
-            ? { supplierImageUrls: rowForPersistence.imageUrls }
-            : {}),
-          mappingStatus: SupplierPartMappingStatus.mapped,
-          mappingSource: resolution.mappingSource,
-          mappingError: null,
-          rawUploadData: parseJson(row.rawUploadData),
-        },
+        select: { id: true, vendorSku: true, partUid: true },
       })
+      const existingOemOffer = await findSupplierPartBySupplierOem(
+        supplierId,
+        normalizedOemNumber,
+        existingSkuOffer?.id,
+      )
+      if (existingSkuOffer && existingOemOffer) {
+        throw new Error(
+          `This OEM is already used by this supplier under SKU ${existingOemOffer.vendorSku ?? "unknown"}`,
+        )
+      }
+      const existingOffer = existingSkuOffer ?? existingOemOffer
+      if (existingOffer?.partUid && existingOffer.partUid !== resolution.partUid) {
+        throw new Error(
+          "This supplier OEM is already mapped to another product",
+        )
+      }
+
+      const createData = {
+        supplierId,
+        vendorSku,
+        partUid: resolution.partUid,
+        originalPartName,
+        originalBrand: resolution.resolvedBrand ?? master.brandName,
+        originalMpn,
+        originalOemNumber: resolvedOemNumber,
+        normalizedMpn: originalMpn ? normalizePartNumber(originalMpn) : null,
+        normalizedOemNumber,
+        price: parseMoney(uploadedPrice ? row.price ?? 0 : 0),
+        stock: parseStock(uploadedStock ? row.stock ?? 0 : 0),
+        currency: DEFAULT_CURRENCY,
+        category: uploadedCategory ?? master.category,
+        oemSupersessionNumbers: row.oemSupersessionNumbers ?? [],
+        competitorPartNumber: competitorOem,
+        competitorBrandName: competitorBrand,
+        hsCode: normalizeOptionalText(row.hsCode),
+        supplierImageUrls: rowForPersistence.imageUrls ?? [],
+        mappingStatus: SupplierPartMappingStatus.mapped,
+        mappingSource: resolution.mappingSource,
+        mappingError: null,
+        rawUploadData: parseJson(row.rawUploadData),
+      }
+      const updateData = {
+        vendorSku,
+        partUid: resolution.partUid,
+        originalPartName,
+        originalBrand: resolution.resolvedBrand ?? master.brandName,
+        originalMpn,
+        originalOemNumber: resolvedOemNumber,
+        normalizedMpn: originalMpn ? normalizePartNumber(originalMpn) : null,
+        normalizedOemNumber,
+        ...(uploadedPrice ? { price: parseMoney(row.price ?? 0) } : {}),
+        ...(uploadedStock ? { stock: parseStock(row.stock ?? 0) } : {}),
+        currency: DEFAULT_CURRENCY,
+        category: uploadedCategory ?? master.category,
+        oemSupersessionNumbers: row.oemSupersessionNumbers ?? [],
+        competitorPartNumber: competitorOem,
+        competitorBrandName: competitorBrand,
+        hsCode: normalizeOptionalText(row.hsCode),
+        ...(rowForPersistence.imageUrls?.length
+          ? { supplierImageUrls: rowForPersistence.imageUrls }
+          : {}),
+        mappingStatus: SupplierPartMappingStatus.mapped,
+        mappingSource: resolution.mappingSource,
+        mappingError: null,
+        rawUploadData: parseJson(row.rawUploadData),
+      }
+      const supplierPart = existingOffer
+        ? await db.supplierPart.update({
+            where: { id: existingOffer.id },
+            data: updateData,
+          })
+        : await db.supplierPart.create({ data: createData })
 
       return {
         ok: true as const,
@@ -1943,6 +2053,18 @@ export async function importSupplierPartsBulk(
       }
     } catch (error) {
       if (error instanceof SupplierImageUploadError) {
+        return {
+          ok: false as const,
+          rowNumber: row.rowNumber,
+          vendorSku,
+          brand: supplierBrand,
+          oemNumber: oemNumber ?? "",
+          competitorPartNumber: competitorOem,
+          competitorBrandName: competitorBrand,
+          reason: error.message,
+        }
+      }
+      if (isSupplierOemConflictError(error)) {
         return {
           ok: false as const,
           rowNumber: row.rowNumber,
@@ -2907,6 +3029,186 @@ export async function listSupplierParts(input: {
   })
 
   return parts.map(mapSupplierPart)
+}
+
+const mappedSupplierPartWhere: Prisma.SupplierPartWhereInput = {
+  mappingStatus: SupplierPartMappingStatus.mapped,
+  partUid: { not: null },
+}
+
+const toUniqueTextList = (values: Array<string | null | undefined>) =>
+  Array.from(
+    new Map(
+      values
+        .map((value) => normalizeOptionalText(value))
+        .filter((value): value is string => Boolean(value))
+        .map((value) => [value.toUpperCase(), value] as const),
+    ).values(),
+  )
+
+const mapMappedCatalogPart = (part: {
+  partUid: string
+  partName: string | null
+  partNumber: string | null
+  brandName: string | null
+  category: string | null
+  source: string
+  imageUrls: string[]
+  imageKeys: string[]
+  badgeText: string | null
+  heading: string | null
+  description: string | null
+  keyFeatures: string[]
+  updatedAt: Date
+  numbers: Array<{
+    numberOriginal: string
+    numberType: PartNumberType
+  }>
+  supplierParts: Array<{
+    originalOemNumber: string | null
+    originalMpn: string | null
+    updatedAt: Date
+  }>
+}): MappedCatalogPartRecord => {
+  const indexedOems = part.numbers
+    .filter((number) => number.numberType === PartNumberType.oem)
+    .map((number) => number.numberOriginal)
+  const indexedMpns = part.numbers
+    .filter((number) => number.numberType === PartNumberType.mpn)
+    .map((number) => number.numberOriginal)
+  const supplierOems = part.supplierParts.map((supplierPart) =>
+    supplierPart.originalOemNumber,
+  )
+  const supplierMpns = part.supplierParts.map((supplierPart) =>
+    supplierPart.originalMpn,
+  )
+  const latestSupplierPartUpdatedAt = part.supplierParts.reduce<Date | null>(
+    (latest, supplierPart) =>
+      !latest || supplierPart.updatedAt > latest ? supplierPart.updatedAt : latest,
+    null,
+  )
+
+  return {
+    partUid: part.partUid,
+    partName: part.partName,
+    partNumber: part.partNumber,
+    brandName: part.brandName,
+    category: part.category,
+    source: part.source,
+    imageUrls: part.imageUrls,
+    imageKeys: part.imageKeys,
+    badgeText: part.badgeText,
+    heading: part.heading,
+    description: part.description,
+    keyFeatures: part.keyFeatures,
+    oemNumbers: toUniqueTextList([...indexedOems, ...supplierOems]),
+    mpnNumbers: toUniqueTextList([...indexedMpns, ...supplierMpns]),
+    mappedStatus: SupplierPartMappingStatus.mapped,
+    supplierPartCount: part.supplierParts.length,
+    latestSupplierPartUpdatedAt:
+      latestSupplierPartUpdatedAt?.toISOString() ?? part.updatedAt.toISOString(),
+  }
+}
+
+export async function listMappedCatalogPartsPage(input: {
+  query?: string
+  page?: number
+  pageSize?: number
+}) {
+  const query = normalizeText(input.query)
+  const normalizedQuery = query ? normalizePartNumber(query) : ""
+  const page = Math.max(1, Number.isFinite(input.page) ? input.page ?? 1 : 1)
+  const pageSize = Math.min(
+    50,
+    Math.max(1, Number.isFinite(input.pageSize) ? input.pageSize ?? 10 : 10),
+  )
+  const numberSearch: Prisma.PartNumberIndexWhereInput[] = query
+    ? [
+        { numberOriginal: { contains: query, mode: "insensitive" } },
+        ...(normalizedQuery
+          ? [{ numberNormalized: { contains: normalizedQuery } }]
+          : []),
+      ]
+    : []
+  const supplierNumberSearch: Prisma.SupplierPartWhereInput[] = query
+    ? [
+        { originalOemNumber: { contains: query, mode: "insensitive" } },
+        { originalMpn: { contains: query, mode: "insensitive" } },
+        ...(normalizedQuery
+          ? [
+              { normalizedOemNumber: { contains: normalizedQuery } },
+              { normalizedMpn: { contains: normalizedQuery } },
+            ]
+          : []),
+      ]
+    : []
+  const where: Prisma.PartMasterWhereInput = {
+    supplierParts: { some: mappedSupplierPartWhere },
+    ...(query
+      ? {
+          OR: [
+            { partUid: { contains: query, mode: "insensitive" } },
+            { partName: { contains: query, mode: "insensitive" } },
+            { heading: { contains: query, mode: "insensitive" } },
+            { partNumber: { contains: query, mode: "insensitive" } },
+            { partNumberOriginal: { contains: query, mode: "insensitive" } },
+            { brandName: { contains: query, mode: "insensitive" } },
+            { category: { contains: query, mode: "insensitive" } },
+            ...(numberSearch.length
+              ? [{ numbers: { some: { OR: numberSearch } } }]
+              : []),
+            ...(supplierNumberSearch.length
+              ? [
+                  {
+                    supplierParts: {
+                      some: {
+                        ...mappedSupplierPartWhere,
+                        OR: supplierNumberSearch,
+                      },
+                    },
+                  },
+                ]
+              : []),
+          ],
+        }
+      : {}),
+  }
+
+  const [parts, total] = await Promise.all([
+    db.partMaster.findMany({
+      where,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      orderBy: [{ updatedAt: "desc" }],
+      include: {
+        numbers: {
+          where: { numberType: { in: [PartNumberType.oem, PartNumberType.mpn] } },
+          orderBy: [{ numberType: "asc" }, { createdAt: "asc" }],
+          select: { numberOriginal: true, numberType: true },
+        },
+        supplierParts: {
+          where: mappedSupplierPartWhere,
+          orderBy: [{ updatedAt: "desc" }],
+          select: {
+            originalOemNumber: true,
+            originalMpn: true,
+            updatedAt: true,
+          },
+        },
+      },
+    }),
+    db.partMaster.count({ where }),
+  ])
+
+  return {
+    parts: parts.map(mapMappedCatalogPart),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+  }
 }
 
 export async function listSupplierPartsPage(input: {

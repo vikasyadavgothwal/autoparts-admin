@@ -28,6 +28,7 @@ export const appRoutes = {
   search: "/search",
   business: "/business",
   rfqs: "/rfqs",
+  queries: "/queries",
   orders: "/orders",
   partsMapping: "/parts-mapping",
   suppliers: "/pages/suppliers-page",

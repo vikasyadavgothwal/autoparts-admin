@@ -16,6 +16,7 @@ export type VinSearchNormalizedResultPayload = {
   VIN: string
   "Model year": string
   "Make name": string
+  "Model id"?: string
 }
 
 export type VinSearchParsedBodyResult =

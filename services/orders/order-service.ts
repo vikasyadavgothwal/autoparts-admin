@@ -3,6 +3,7 @@ import {
   OrderSource,
   OrderStatus,
   Prisma,
+  SupplierApprovalStatus,
   SupplierPartMappingStatus,
   UserRole,
 } from "@/lib/generated/prisma/client"
@@ -145,6 +146,12 @@ export async function createDirectOrder(
       where: {
         id: supplierPartId,
         mappingStatus: SupplierPartMappingStatus.mapped,
+        supplier: {
+          is: {
+            isActive: true,
+            supplierApprovalStatus: SupplierApprovalStatus.Approved,
+          },
+        },
       },
       include: { part: true },
     })

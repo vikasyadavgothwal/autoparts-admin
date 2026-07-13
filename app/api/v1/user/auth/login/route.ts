@@ -131,6 +131,7 @@ export async function POST(
       { status: 500 },
     ))
   }
+  console.log("Login successful for user:", result.user?.id, "Expires at:", result.expiresAt , result)
 
   const response = NextResponse.json(
     {

@@ -62,6 +62,29 @@ export async function requireFleetFromRequest(request: NextRequest) {
   return { ok: true as const, user: auth.user }
 }
 
+export async function requireGarageFromRequest(request: NextRequest) {
+  const auth = await getOptionalUserFromRequest(request)
+  if (!auth) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, message: "Unauthorized" },
+        { status: 401 },
+      ),
+    }
+  }
+  if (!auth.user.roles.includes("Garage")) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, message: "Garage role is required" },
+        { status: 403 },
+      ),
+    }
+  }
+  return { ok: true as const, user: auth.user }
+}
+
 export async function requireAdminFromRequest() {
   const auth = await getCurrentAdminSession()
 

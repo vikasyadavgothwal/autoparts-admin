@@ -1,3 +1,5 @@
+import Link from "next/link"
+
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -9,7 +11,6 @@ import {
   RFQ_TABLE_HEADERS,
   ORDERS,
   ORDER_TABLE_HEADERS,
-  SUPPLIERS,
   SUPPLIER_TABLE_HEADERS,
   SYSTEM_HEALTH_METRICS,
 } from "@/services/admin-dashboard/dashboard/dashboard-data"
@@ -20,8 +21,24 @@ import {
   DashboardTableSection,
 } from "./dashboard-components"
 import { appRoutes } from "@/lib/routes"
+import { listAdminSuppliers } from "@/services/admin-dashboard/suppliers/supplier-management-service"
 
-export function AdminDashboardPage() {
+export async function AdminDashboardPage() {
+  const suppliers = await listAdminSuppliers()
+  const allPendingSuppliers = suppliers.filter(
+    (supplier) => supplier.status === "Pending",
+  )
+  const pendingSuppliers = allPendingSuppliers.slice(0, 5)
+  const dashboardSmallStats = DASHBOARD_SMALL_STATS.map((stat) =>
+    stat.title === "Suppliers"
+      ? {
+          ...stat,
+          value: String(suppliers.length),
+          note: `${allPendingSuppliers.length} pending approval${allPendingSuppliers.length === 1 ? "" : "s"}`,
+        }
+      : stat,
+  )
+
   return (
     <div className="space-y-8">
       <PageHeading
@@ -31,15 +48,25 @@ export function AdminDashboardPage() {
 
       <DashboardKpiCards items={DASHBOARD_MAIN_STATS} />
 
-      <DashboardKpiCards items={DASHBOARD_SMALL_STATS} compact />
+      <DashboardKpiCards items={dashboardSmallStats} compact />
 
       <DashboardTableSection
         title="Pending Supplier Approvals"
         linkText="View All Suppliers"
-        linkHref={appRoutes.suppliers}
+        linkHref={appRoutes.supplier}
         headers={SUPPLIER_TABLE_HEADERS}
       >
-        {SUPPLIERS.map((supplier) => (
+        {pendingSuppliers.length === 0 ? (
+          <tr className="dashboard-table-row">
+            <td
+              className="dashboard-table-cell px-6 py-6 text-center text-sm text-dashboard-muted"
+              colSpan={SUPPLIER_TABLE_HEADERS.length}
+            >
+              No supplier applications are waiting for review.
+            </td>
+          </tr>
+        ) : null}
+        {pendingSuppliers.map((supplier) => (
           <tr
             key={supplier.id}
             className="dashboard-table-row cursor-pointer border-[#2A2A2A] transition-colors hover:bg-[#2A2A2A]"
@@ -48,16 +75,18 @@ export function AdminDashboardPage() {
               <span className="font-medium text-[#DC2626]">{supplier.id}</span>
             </td>
             <td className="dashboard-table-cell px-6 py-4 text-sm text-[#9CA3AF]">
-              {supplier.business}
+              {supplier.name}
             </td>
             <td className="dashboard-table-cell px-6 py-4 text-sm text-[#9CA3AF]">
               {supplier.email}
             </td>
             <td className="dashboard-table-cell px-6 py-4 text-sm text-[#9CA3AF]">
-              {supplier.location}
+              {[supplier.city, supplier.state, supplier.country]
+                .filter((value) => value !== "Not added")
+                .join(", ") || "Not added"}
             </td>
             <td className="dashboard-table-cell px-6 py-4 text-sm text-[#9CA3AF]">
-              {supplier.submitted}
+              {supplier.joined}
             </td>
             <td className="dashboard-table-cell px-6 py-4">
               <Badge
@@ -68,14 +97,9 @@ export function AdminDashboardPage() {
               </Badge>
             </td>
             <td className="dashboard-table-cell px-6 py-4">
-              <div className="flex gap-2">
-                <Button className="h-auto rounded bg-[#DC2626] px-3 py-1 text-xs text-white hover:bg-[#B91C1C]">
-                  Approve
-                </Button>
-                <Button className="h-auto rounded bg-[#2A2A2A] px-3 py-1 text-xs text-white hover:bg-[#3A3A3A]">
-                  Reject
-                </Button>
-              </div>
+              <Button asChild size="sm">
+                <Link href={appRoutes.supplier}>Review</Link>
+              </Button>
             </td>
           </tr>
         ))}

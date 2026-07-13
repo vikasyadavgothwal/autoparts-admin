@@ -1,15 +1,7 @@
 "use client"
 
-import { useState, useTransition, type FormEvent } from "react"
-import {
-  CircleCheck,
-  Eye,
-  MoreHorizontal,
-  Search,
-  Trash2,
-  Wrench,
-} from "lucide-react"
-import { toast } from "sonner"
+import { useState } from "react"
+import { Eye, Search } from "lucide-react"
 
 import { PageHeading } from "@/components/admin-dashboard/shared/page-heading"
 import { StatusBadge } from "@/components/admin-dashboard/shared/status-badge"
@@ -23,14 +15,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
   Table,
@@ -40,11 +24,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import type { SupplierPartRecord } from "@/types/parts-mapping/parts-mapping"
-import type { SupplierPartMappingStatus } from "@/lib/generated/prisma/client"
+import type { MappedCatalogPartRecord } from "@/types/parts-mapping/parts-mapping"
 
 type PartsMappingPageProps = {
-  initialParts: SupplierPartRecord[]
+  initialParts: MappedCatalogPartRecord[]
   initialPagination: PartsPagination
 }
 
@@ -55,61 +38,35 @@ type PartsPagination = {
   totalPages: number
 }
 
-const statusFilters: Array<{
-  label: string
-  value: SupplierPartMappingStatus | "all"
-}> = [
-  { label: "All", value: "all" },
-  { label: "Pending Review", value: "pending_review" },
-  { label: "Failed", value: "failed" },
-  { label: "Mapped", value: "mapped" },
-  { label: "Processing", value: "processing" },
-]
+const displayList = (values: string[]) => values.join(", ") || "-"
 
-const statusToneByValue: Record<
-  SupplierPartMappingStatus,
-  "success" | "warning" | "danger" | "info" | "neutral"
-> = {
-  uploaded: "neutral",
-  processing: "info",
-  mapped: "success",
-  pending_review: "warning",
-  failed: "danger",
+const getImageUrl = (part: MappedCatalogPartRecord) => {
+  const imageKey = part.imageKeys[0]
+  if (imageKey) {
+    return `/api/admin/parts/product-image?key=${encodeURIComponent(imageKey)}`
+  }
+
+  return part.imageUrls[0] ?? null
 }
 
-const formatStatus = (status: string) =>
-  status
-    .split("_")
-    .map((part) => part[0]?.toUpperCase() + part.slice(1))
-    .join(" ")
-
-export function PartsMappingPage({ initialParts, initialPagination }: PartsMappingPageProps) {
+export function PartsMappingPage({
+  initialParts,
+  initialPagination,
+}: PartsMappingPageProps) {
   const [parts, setParts] = useState(initialParts)
   const [pagination, setPagination] = useState(initialPagination)
   const [query, setQuery] = useState("")
-  const [statusFilter, setStatusFilter] =
-    useState<SupplierPartMappingStatus | "all">("all")
-  const [manualPartUidById, setManualPartUidById] = useState<Record<string, string>>({})
-  const [partToMap, setPartToMap] = useState<SupplierPartRecord | null>(null)
-  const [partToReview, setPartToReview] = useState<SupplierPartRecord | null>(null)
-  const [retainedImageKeys, setRetainedImageKeys] = useState<string[]>([])
-  const [partToDelete, setPartToDelete] = useState<SupplierPartRecord | null>(null)
+  const [partToView, setPartToView] = useState<MappedCatalogPartRecord | null>(null)
   const [loadError, setLoadError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [isPending, startTransition] = useTransition()
 
-  const loadParts = async (
-    page: number,
-    status: SupplierPartMappingStatus | "all" = statusFilter,
-    search: string = query,
-  ) => {
+  const loadParts = async (page: number, search: string = query) => {
     setIsLoading(true)
     setLoadError("")
     try {
       const params = new URLSearchParams({
         page: String(page),
         pageSize: "10",
-        status,
         q: search.trim(),
       })
       const response = await fetch(`/api/admin/parts/pending-review?${params}`, {
@@ -117,226 +74,36 @@ export function PartsMappingPage({ initialParts, initialPagination }: PartsMappi
       })
       const payload = await response.json() as {
         ok: boolean
-        parts?: SupplierPartRecord[]
+        parts?: MappedCatalogPartRecord[]
         pagination?: PartsPagination
         message?: string
       }
       if (!response.ok || !payload.ok || !payload.parts || !payload.pagination) {
-        throw new Error(payload.message ?? "Unable to load supplier parts")
+        throw new Error(payload.message ?? "Unable to load mapped OEM parts")
       }
       setParts(payload.parts)
       setPagination(payload.pagination)
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Unable to load supplier parts")
+      setLoadError(
+        error instanceof Error ? error.message : "Unable to load mapped OEM parts",
+      )
     } finally {
       setIsLoading(false)
     }
   }
 
-  const updatePartInState = (updatedPart: SupplierPartRecord) => {
-    setParts((current) =>
-      current.map((part) => (part.id === updatedPart.id ? updatedPart : part)),
-    )
-  }
-
-  const approveProduct = (partId: string) => {
-    startTransition(async () => {
-      const response = await fetch(`/api/admin/parts/${partId}/approve`, {
-        method: "POST",
-      })
-      const payload = await response.json()
-
-      if (!response.ok || !payload.ok) {
-        toast.error(payload.message ?? "Unable to approve product")
-        return
-      }
-
-      updatePartInState(payload.part)
-      setPartToReview(null)
-      toast.success("First-vendor product approved")
-    })
-  }
-
-  const openProductReview = (part: SupplierPartRecord) => {
-    setPartToReview(part)
-    setRetainedImageKeys(part.part?.imageKeys ?? [])
-  }
-
-  const saveProductContent = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!partToReview?.part) {
-      return
-    }
-
-    const formData = new FormData(event.currentTarget)
-    const newFiles = formData
-      .getAll("images")
-      .filter((value): value is File => value instanceof File && value.size > 0)
-    const originalPart = partToReview.part
-
-    if (retainedImageKeys.length + newFiles.length === 0) {
-      toast.error("Keep or upload at least one product image")
-      return
-    }
-    if (retainedImageKeys.length + newFiles.length > 8) {
-      toast.error("A product can have a maximum of 8 images")
-      return
-    }
-
-    startTransition(async () => {
-      try {
-        let uploadedImages: Array<{ key: string; url: string }> = []
-        if (newFiles.length > 0) {
-          const uploadData = new FormData()
-          newFiles.forEach((file) => uploadData.append("images", file))
-          const uploadResponse = await fetch("/api/admin/parts/images", {
-            method: "POST",
-            body: uploadData,
-          })
-          const uploadPayload = await uploadResponse.json()
-          if (!uploadResponse.ok || !uploadPayload.ok) {
-            throw new Error(uploadPayload.message ?? "Unable to upload images")
-          }
-          uploadedImages = uploadPayload.images
-        }
-
-        const retainedImages = retainedImageKeys.map((key) => {
-          const index = originalPart.imageKeys.indexOf(key)
-          return { key, url: originalPart.imageUrls[index] }
-        })
-        const images = [...retainedImages, ...uploadedImages]
-        const response = await fetch(
-          `/api/admin/parts/${partToReview.id}/content`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              partName: String(formData.get("partName") ?? ""),
-              category: String(formData.get("category") ?? ""),
-              badgeText: String(formData.get("badgeText") ?? ""),
-              heading: String(formData.get("heading") ?? ""),
-              description: String(formData.get("description") ?? ""),
-              keyFeatures: String(formData.get("keyFeatures") ?? "")
-                .split("\n")
-                .map((value) => value.trim())
-                .filter(Boolean),
-              imageKeys: images.map((image) => image.key),
-              imageUrls: images.map((image) => image.url),
-            }),
-          },
-        )
-        const payload = await response.json()
-        if (!response.ok || !payload.ok) {
-          throw new Error(payload.message ?? "Unable to update product content")
-        }
-
-        updatePartInState(payload.part)
-        setPartToReview(payload.part)
-        setRetainedImageKeys(payload.part.part?.imageKeys ?? [])
-        toast.success("Product content updated")
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Unable to update product",
-        )
-      }
-    })
-  }
-
-  const manualMap = (
-    part: SupplierPartRecord,
-    mode: "existing" | "create" = "existing",
-  ) => {
-    const partUid = manualPartUidById[part.id]?.trim()
-
-    if (mode === "existing" && !partUid) {
-      toast.error("Enter an existing part UID or create a new master part")
-      return
-    }
-
-    startTransition(async () => {
-      const response = await fetch(`/api/admin/parts/${part.id}/manual-map`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          mode === "existing"
-            ? { partUid }
-            : {
-                partName: part.originalPartName,
-                partNumber: part.originalMpn ?? part.originalOemNumber,
-                brandName: part.originalBrand,
-                category: part.category,
-              },
-        ),
-      })
-      const payload = await response.json()
-
-      if (!response.ok || !payload.ok) {
-        toast.error(payload.message ?? "Unable to map part")
-        return
-      }
-
-      updatePartInState(payload.part)
-      setPartToMap(null)
-      toast.success(
-        mode === "existing"
-          ? "Part mapped manually"
-          : "New master part created and mapped",
-      )
-    })
-  }
-
-  const deletePart = () => {
-    if (!partToDelete) {
-      return
-    }
-
-    const partId = partToDelete.id
-
-    startTransition(async () => {
-      const response = await fetch(`/api/admin/parts/${partId}`, {
-        method: "DELETE",
-      })
-      const payload = await response.json()
-
-      if (!response.ok || !payload.ok) {
-        toast.error(payload.message ?? "Unable to delete supplier part")
-        return
-      }
-
-      setParts((current) => current.filter((part) => part.id !== partId))
-      setManualPartUidById((current) => {
-        const next = { ...current }
-        delete next[partId]
-        return next
-      })
-      setPartToDelete(null)
-      toast.success("Supplier part deleted")
-    })
-  }
-
   return (
     <div className="space-y-6">
       <PageHeading
-        title="Supplier Parts Mapping"
-        subtitle="Review supplier uploads and manually link parts to the master catalog by existing UID."
+        title="Mapped OEM Parts"
+        subtitle="View unique mapped master parts by OEM number. Supplier duplicate rows are grouped under the mapped catalog part."
       />
 
       <Card className="border border-dashboard-panel-border">
         <CardHeader className="gap-4 border-b border-dashboard-panel-border lg:flex lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap gap-2">
-            {statusFilters.map((filter) => (
-              <Button
-                key={filter.value}
-                size="sm"
-                variant={statusFilter === filter.value ? "default" : "outline"}
-                onClick={() => {
-                  setStatusFilter(filter.value)
-                  void loadParts(1, filter.value)
-                }}
-              >
-                {filter.label}
-              </Button>
-            ))}
+          <div>
+            <p className="text-sm font-medium text-foreground">Master catalog view</p>
+            <p className="text-xs text-dashboard-muted">One row per mapped catalog part.</p>
           </div>
           <form
             className="flex w-full gap-2 lg:max-w-md"
@@ -345,31 +112,45 @@ export function PartsMappingPage({ initialParts, initialPagination }: PartsMappi
               void loadParts(1)
             }}
           >
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-dashboard-muted" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search supplier part, OEM, MPN"
-              className="h-9 pl-9"
-            />
-          </div>
-          <Button type="submit" size="sm" disabled={isLoading}>Search</Button>
-          {query ? <Button type="button" size="sm" variant="outline" onClick={() => { setQuery(""); void loadParts(1, statusFilter, "") }}>Clear</Button> : null}
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-dashboard-muted" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search OEM or part name"
+                className="h-9 pl-9"
+              />
+            </div>
+            <Button type="submit" size="sm" disabled={isLoading}>Search</Button>
+            {query ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setQuery("")
+                  void loadParts(1, "")
+                }}
+              >
+                Clear
+              </Button>
+            ) : null}
           </form>
         </CardHeader>
 
         <CardContent className="px-0">
-          {loadError ? <p className="mx-4 mb-3 rounded-md border border-dashboard-danger/30 bg-dashboard-danger/10 p-3 text-sm text-dashboard-danger">{loadError}</p> : null}
+          {loadError ? (
+            <p className="mx-4 mb-3 rounded-md border border-dashboard-danger/30 bg-dashboard-danger/10 p-3 text-sm text-dashboard-danger">
+              {loadError}
+            </p>
+          ) : null}
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="px-4">Supplier Part</TableHead>
-                <TableHead>Supplier</TableHead>
-                <TableHead>OEM / MPN</TableHead>
-                <TableHead>Price / Stock</TableHead>
+                <TableHead className="px-4">OEM No</TableHead>
+                <TableHead>Part Name</TableHead>
+                <TableHead>Brand / Category</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Mapped UID</TableHead>
                 <TableHead className="px-4 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -377,94 +158,52 @@ export function PartsMappingPage({ initialParts, initialPagination }: PartsMappi
               {parts.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={5}
                     className="h-32 text-center text-dashboard-muted"
                   >
-                    No supplier parts match this view.
+                    No mapped OEM parts match this view.
                   </TableCell>
                 </TableRow>
               ) : (
                 parts.map((part) => (
-                  <TableRow key={part.id}>
+                  <TableRow key={part.partUid}>
                     <TableCell className="px-4">
+                      <div className="max-w-xs text-sm font-medium text-foreground">
+                        {displayList(part.oemNumbers)}
+                      </div>
+                    </TableCell>
+                    <TableCell>
                       <div className="space-y-1">
                         <p className="font-medium text-foreground">
-                          {part.originalPartName}
+                          {part.partName ?? part.heading ?? "Mapped part"}
                         </p>
-                        <p className="text-xs text-dashboard-muted">
-                          {part.originalBrand ?? "No brand"} ·{" "}
-                          {part.category ?? "No category"}
-                        </p>
-                        {part.mappingError ? (
-                          <p className="max-w-xs truncate text-xs text-dashboard-danger">
-                            {part.mappingError}
+                        {part.partNumber ? (
+                          <p className="text-xs text-dashboard-muted">
+                            Part no: {part.partNumber}
                           </p>
                         ) : null}
                       </div>
                     </TableCell>
-                    <TableCell>{part.supplierName ?? part.supplierId}</TableCell>
                     <TableCell>
                       <div className="space-y-1 text-sm">
-                        <p>OEM: {part.originalOemNumber ?? "-"}</p>
-                        <p>MPN: {part.originalMpn ?? "-"}</p>
-                        <p>SKU: {part.vendorSku ?? "-"}</p>
+                        <p>{part.brandName ?? "No brand"}</p>
+                        <p className="text-xs text-dashboard-muted">
+                          {part.category ?? "No category"}
+                        </p>
                       </div>
                     </TableCell>
                     <TableCell>
-                      {part.currency ?? "AED"} {part.price.toFixed(2)} · {part.stock}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge
-                        label={formatStatus(part.mappingStatus)}
-                        tone={statusToneByValue[part.mappingStatus]}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-dashboard-muted">
-                        {part.partUid ?? "-"}
-                      </span>
+                      <StatusBadge label="Mapped" tone="success" />
                     </TableCell>
                     <TableCell className="px-4 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            disabled={isPending}
-                            aria-label={`Actions for ${part.originalPartName}`}
-                          >
-                            <MoreHorizontal />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-56">
-                          <DropdownMenuLabel>Mapping actions</DropdownMenuLabel>
-                          {part.part ? (
-                            <DropdownMenuItem
-                              onSelect={() => openProductReview(part)}
-                            >
-                              <Eye />
-                              {part.mappingStatus === "pending_review" &&
-                              part.mappingError?.startsWith("First-vendor")
-                                ? "Review submitted product"
-                                : "View or edit product"}
-                            </DropdownMenuItem>
-                          ) : null}
-                          <DropdownMenuItem
-                            onSelect={() => setPartToMap(part)}
-                          >
-                            <Wrench />
-                            Map to existing UID
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onSelect={() => setPartToDelete(part)}
-                          >
-                            <Trash2 />
-                            Delete supplier part
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setPartToView(part)}
+                      >
+                        <Eye />
+                        View
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
@@ -472,293 +211,94 @@ export function PartsMappingPage({ initialParts, initialPagination }: PartsMappi
             </TableBody>
           </Table>
           <div className="flex flex-col gap-3 border-t border-dashboard-panel-border px-4 py-4 text-sm text-dashboard-muted sm:flex-row sm:items-center sm:justify-between">
-            <p>Showing {parts.length ? (pagination.page - 1) * pagination.pageSize + 1 : 0}-{Math.min(pagination.page * pagination.pageSize, pagination.total)} of {pagination.total} parts</p>
+            <p>
+              Showing {parts.length ? (pagination.page - 1) * pagination.pageSize + 1 : 0}-
+              {Math.min(pagination.page * pagination.pageSize, pagination.total)} of {pagination.total} parts
+            </p>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" disabled={isLoading || pagination.page <= 1} onClick={() => void loadParts(pagination.page - 1)}>Previous</Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isLoading || pagination.page <= 1}
+                onClick={() => void loadParts(pagination.page - 1)}
+              >
+                Previous
+              </Button>
               <span>Page {pagination.page} of {pagination.totalPages}</span>
-              <Button size="sm" variant="outline" disabled={isLoading || pagination.page >= pagination.totalPages} onClick={() => void loadParts(pagination.page + 1)}>Next</Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isLoading || pagination.page >= pagination.totalPages}
+                onClick={() => void loadParts(pagination.page + 1)}
+              >
+                Next
+              </Button>
             </div>
           </div>
         </CardContent>
       </Card>
 
       <Dialog
-        open={partToReview !== null}
+        open={partToView !== null}
         onOpenChange={(open) => {
           if (!open) {
-            setPartToReview(null)
+            setPartToView(null)
           }
         }}
       >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Supplier product details</DialogTitle>
+            <DialogTitle>Mapped part details</DialogTitle>
             <DialogDescription>
-              Verify the submitted catalog content before publishing this part.
+              View-only master catalog details for this mapped OEM part.
             </DialogDescription>
           </DialogHeader>
 
-          {partToReview ? (
+          {partToView ? (
             <div className="space-y-5">
-              <div className="grid gap-3 rounded-lg border p-4 text-sm sm:grid-cols-2">
-                <p><strong>Product:</strong> {partToReview.originalPartName}</p>
-                <p><strong>Brand:</strong> {partToReview.originalBrand ?? "-"}</p>
-                <p><strong>Category:</strong> {partToReview.category ?? "-"}</p>
-                <p><strong>OEM:</strong> {partToReview.originalOemNumber ?? "-"}</p>
-                <p><strong>MPN:</strong> {partToReview.originalMpn ?? "-"}</p>
-                <p><strong>Vendor SKU:</strong> {partToReview.vendorSku ?? "-"}</p>
-                <p><strong>HS code:</strong> {partToReview.hsCode ?? "-"}</p>
-                <p><strong>Offer:</strong> AED {partToReview.price.toFixed(2)} · {partToReview.stock}</p>
-              </div>
+              {getImageUrl(partToView) ? (
+                <div
+                  role="img"
+                  aria-label={partToView.partName ?? "Mapped part image"}
+                  className="aspect-video rounded-lg border bg-cover bg-center"
+                  style={{ backgroundImage: `url(${getImageUrl(partToView)})` }}
+                />
+              ) : null}
 
               <div className="grid gap-3 rounded-lg border p-4 text-sm sm:grid-cols-2">
-                <p>
-                  <strong>OEM supersessions:</strong>{" "}
-                  {partToReview.oemSupersessionNumbers.join(", ") || "-"}
-                </p>
-                <p>
-                  <strong>Competitor:</strong>{" "}
-                  {[partToReview.competitorBrandName, partToReview.competitorPartNumber]
-                    .filter(Boolean)
-                    .join(" · ") || "-"}
-                </p>
+                <p><strong>Name:</strong> {partToView.partName ?? "-"}</p>
+                <p><strong>Heading:</strong> {partToView.heading ?? "-"}</p>
+                <p><strong>OEM:</strong> {displayList(partToView.oemNumbers)}</p>
+                <p><strong>Brand:</strong> {partToView.brandName ?? "-"}</p>
+                <p><strong>Category:</strong> {partToView.category ?? "-"}</p>
+                <p><strong>Status:</strong> Mapped</p>
+                <p><strong>Supplier records:</strong> {partToView.supplierPartCount}</p>
+                <p><strong>Source:</strong> {partToView.source}</p>
               </div>
 
-              <div
-                className={
-                  partToReview.part?.source.startsWith("17vin")
-                    ? "rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700"
-                    : "rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800"
-                }
-              >
-                {partToReview.part?.source.startsWith("17vin")
-                  ? "17VIN verified this OEM/MPN and brand combination."
-                  : "No verified match was found in 17VIN. Research the OEM, MPN, brand, fitment, and submitted content independently before approving."}
-              </div>
-
-              {[...partToReview.supplierImageUrls, ...(partToReview.part?.imageKeys.length ? [] : (partToReview.part?.imageUrls ?? []))].length > 0 ? (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Catalog images</p>
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    {[...partToReview.supplierImageUrls, ...(partToReview.part?.imageKeys.length ? [] : (partToReview.part?.imageUrls ?? []))].map((imageUrl) => (
-                      <div
-                        key={imageUrl}
-                        role="img"
-                        aria-label={partToReview.originalPartName}
-                        className="aspect-square rounded-lg border bg-cover bg-center"
-                        style={{ backgroundImage: `url(${imageUrl})` }}
-                      />
-                    ))}
-                  </div>
+              {partToView.description ? (
+                <div className="rounded-lg border p-4 text-sm">
+                  <p className="mb-2 font-medium">Description</p>
+                  <p className="text-dashboard-muted">{partToView.description}</p>
                 </div>
               ) : null}
 
-              <form
-                key={partToReview.id}
-                className="space-y-5"
-                onSubmit={saveProductContent}
-              >
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {partToReview.part?.imageKeys
-                    .filter((key) => retainedImageKeys.includes(key))
-                    .map((key) => (
-                      <div key={key} className="space-y-2">
-                        <div
-                          role="img"
-                          aria-label={partToReview.originalPartName}
-                          className="aspect-square w-full rounded-lg border bg-cover bg-center"
-                          style={{
-                            backgroundImage: `url(/api/admin/parts/product-image?key=${encodeURIComponent(key)})`,
-                          }}
-                        />
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="destructive"
-                          className="w-full"
-                          onClick={() =>
-                            setRetainedImageKeys((current) =>
-                              current.filter((imageKey) => imageKey !== key),
-                            )
-                          }
-                        >
-                          Remove
-                        </Button>
-                      </div>
+              {partToView.keyFeatures.length ? (
+                <div className="rounded-lg border p-4 text-sm">
+                  <p className="mb-2 font-medium">Key features</p>
+                  <ul className="list-disc space-y-1 pl-5 text-dashboard-muted">
+                    {partToView.keyFeatures.map((feature) => (
+                      <li key={feature}>{feature}</li>
                     ))}
+                  </ul>
                 </div>
-
-                <div className="space-y-2">
-                  <label htmlFor="admin-product-images" className="text-sm font-medium">
-                    Add replacement images
-                  </label>
-                  <Input
-                    id="admin-product-images"
-                    name="images"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    multiple
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Keep at least one image. Maximum 8 images total, 5 MB each.
-                  </p>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2 sm:col-span-2">
-                    <label htmlFor="admin-part-name" className="text-sm font-medium">Product name</label>
-                    <Input id="admin-part-name" name="partName" defaultValue={partToReview.part?.partName ?? ""} required />
-                  </div>
-                  <div className="space-y-2">
-                    <label htmlFor="admin-category" className="text-sm font-medium">Category</label>
-                    <Input id="admin-category" name="category" defaultValue={partToReview.part?.category ?? ""} required />
-                  </div>
-                  <div className="space-y-2">
-                    <label htmlFor="admin-badge" className="text-sm font-medium">Badge text</label>
-                    <Input id="admin-badge" name="badgeText" defaultValue={partToReview.part?.badgeText ?? ""} required />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <label htmlFor="admin-heading" className="text-sm font-medium">Heading</label>
-                    <Input id="admin-heading" name="heading" defaultValue={partToReview.part?.heading ?? ""} required />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <label htmlFor="admin-description" className="text-sm font-medium">Description</label>
-                    <textarea
-                      id="admin-description"
-                      name="description"
-                      className="min-h-24 w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
-                      defaultValue={partToReview.part?.description ?? ""}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <label htmlFor="admin-features" className="text-sm font-medium">Key features, one per line</label>
-                    <textarea
-                      id="admin-features"
-                      name="keyFeatures"
-                      className="min-h-28 w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
-                      defaultValue={partToReview.part?.keyFeatures.join("\n") ?? ""}
-                      required
-                    />
-                  </div>
-                </div>
-
-                <DialogFooter>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setPartToReview(null)}
-                    disabled={isPending}
-                  >
-                    Close
-                  </Button>
-                  <Button type="submit" variant="outline" disabled={isPending}>
-                    {isPending ? "Saving..." : "Save changes"}
-                  </Button>
-                  {partToReview.mappingStatus === "pending_review" &&
-                  partToReview.mappingError?.startsWith("First-vendor") ? (
-                    <Button
-                      type="button"
-                      onClick={() => approveProduct(partToReview.id)}
-                      disabled={isPending}
-                    >
-                      <CircleCheck />
-                      {isPending ? "Approving..." : "Approve product"}
-                    </Button>
-                  ) : null}
-                </DialogFooter>
-              </form>
+              ) : null}
             </div>
           ) : null}
-        </DialogContent>
-      </Dialog>
 
-      <Dialog
-        open={partToMap !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPartToMap(null)
-          }
-        }}
-      >
-        <DialogContent showCloseButton={!isPending}>
-          <DialogHeader>
-            <DialogTitle>Map to existing part UID</DialogTitle>
-            <DialogDescription>
-              Link {partToMap?.originalPartName ?? "this supplier part"} to an
-              existing master part.
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            value={partToMap ? (manualPartUidById[partToMap.id] ?? "") : ""}
-            onChange={(event) => {
-              if (!partToMap) {
-                return
-              }
-              setManualPartUidById((current) => ({
-                ...current,
-                [partToMap.id]: event.target.value,
-              }))
-            }}
-            placeholder="Existing part UID"
-            autoFocus
-          />
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setPartToMap(null)}
-              disabled={isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={() => partToMap && manualMap(partToMap, "existing")}
-              disabled={isPending}
-            >
-              {isPending ? "Mapping..." : "Map part"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={partToDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPartToDelete(null)
-          }
-        }}
-      >
-        <DialogContent showCloseButton={!isPending}>
-          <DialogHeader>
-            <DialogTitle>Delete supplier part?</DialogTitle>
-            <DialogDescription>
-              This will permanently remove {partToDelete?.originalPartName ?? "this part"}
-              {partToDelete?.supplierName
-                ? ` from ${partToDelete.supplierName}`
-                : ""}
-              . Its master data and fitments will also be removed when no other
-              supplier uses them.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setPartToDelete(null)}
-              disabled={isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={deletePart}
-              disabled={isPending}
-            >
-              {isPending ? "Deleting..." : "Delete part"}
+            <Button type="button" variant="outline" onClick={() => setPartToView(null)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
