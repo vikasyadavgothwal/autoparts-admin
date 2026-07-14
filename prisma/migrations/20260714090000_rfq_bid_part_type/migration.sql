@@ -1,0 +1,2 @@
+ALTER TABLE "rfq_bids"
+ADD COLUMN "partType" TEXT NOT NULL DEFAULT 'New';

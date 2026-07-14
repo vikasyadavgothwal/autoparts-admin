@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   getOptionalUserFromRequest,
 } from "@/lib/parts-mapping/auth"
+import { RfqSource } from "@/lib/generated/prisma/client"
 import { deleteObjectFromS3, uploadObjectToS3 } from "@/lib/storage/s3"
 import { createRfq, listFleetRfqs, listSupplierRfqs, listUserRfqs } from "@/services/fleet/fleet-service"
 import type { CreateRfqInput, RfqAttachment } from "@/types/rfq/rfq"
@@ -43,8 +44,15 @@ export async function POST(request: NextRequest) {
     const rawPayload = String(formData.get("payload") ?? "")
     const input = JSON.parse(rawPayload) as CreateRfqInput
     const auth = await getOptionalUserFromRequest(request)
-    if (input.source === "fleet" && (!auth || !auth.user.roles.includes("Fleet"))) {
+    const source = input.source === "fleet" ? RfqSource.fleet : RfqSource.user
+    if (!auth) {
+      return NextResponse.json({ ok: false, message: "Sign in to submit an RFQ" }, { status: 401 })
+    }
+    if (source === RfqSource.fleet && (auth.user.activeRole !== "Fleet" || !auth.user.roles.includes("Fleet"))) {
       return NextResponse.json({ ok: false, message: "Fleet authentication is required" }, { status: 403 })
+    }
+    if (source === RfqSource.user && (auth.user.activeRole !== "User" || !auth.user.roles.includes("User"))) {
+      return NextResponse.json({ ok: false, message: "User authentication is required" }, { status: 403 })
     }
 
     const fileValue = formData.get("attachment")
@@ -53,7 +61,7 @@ export async function POST(request: NextRequest) {
       if (fileValue.size > 10 * 1024 * 1024) throw new Error("Attachment must be 10 MB or smaller")
       if (!allowedAttachmentTypes.has(fileValue.type)) throw new Error("Attachment must be PDF, PNG, or JPG")
       const safeName = fileValue.name.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-120)
-      const owner = auth?.user.id ?? "public"
+      const owner = auth.user.id
       const key = `rfq-attachments/${owner}/${crypto.randomUUID()}-${safeName}`
       const uploaded = await uploadObjectToS3({
         key,
@@ -71,7 +79,7 @@ export async function POST(request: NextRequest) {
       uploadedKey = uploaded.key
     }
 
-    const rfq = await createRfq(input, auth?.user.id ?? null, attachment)
+    const rfq = await createRfq(input, auth.user.id, attachment)
     return NextResponse.json({ ok: true, rfq }, { status: 201 })
   } catch (error) {
     if (uploadedKey) {

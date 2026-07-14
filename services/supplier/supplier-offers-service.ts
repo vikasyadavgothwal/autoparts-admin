@@ -89,6 +89,7 @@ const mapOffer = (offer: SupplierOfferPayload): SupplierOfferRecord => ({
   })),
   totalAmount: offer.totalAmount / 100,
   deliveryDays: offer.deliveryDays,
+  partType: offer.partType,
   validUntil: offer.validUntil?.toISOString() ?? null,
   notes: offer.notes,
   status: offer.status,

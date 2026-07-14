@@ -6,6 +6,8 @@ import {
   RfqSource,
   RfqStatus,
 } from "@/lib/generated/prisma/client"
+import { getUserAddressForCheckout } from "@/services/user-addresses/user-address-service"
+import { getUserVehicleForRfq } from "@/services/user-vehicles/user-vehicle-service"
 import type {
   CreateRfqInput,
   FleetVehicleInput,
@@ -42,6 +44,19 @@ const requiredMoneyToCents = (value: unknown, label: string) => {
   const cents = moneyToCents(value)
   if (cents === null || cents <= 0) throw new Error(`${label} must be greater than zero`)
   return cents
+}
+
+const allowedRfqBidPartTypes = ["New", "Used", "Refurbished", "Remanufactured", "Salvage"] as const
+
+const rfqBidPartType = (value: unknown) => {
+  const normalized = text(value)
+  const match = allowedRfqBidPartTypes.find(
+    (partType) => partType.toLowerCase() === normalized.toLowerCase(),
+  )
+  if (!match) {
+    throw new Error(`Part type must be one of: ${allowedRfqBidPartTypes.join(", ")}`)
+  }
+  return match
 }
 
 const mapRfqMoney = <T extends {
@@ -190,6 +205,7 @@ export async function createRfq(
 ) {
   const source = input.source === "fleet" ? RfqSource.fleet : RfqSource.user
   let fleetVehicle = null
+  let userVehicle = null
   const requester = requesterId
     ? await db.user.findUnique({ where: { id: requesterId } })
     : null
@@ -200,6 +216,10 @@ export async function createRfq(
       where: { id: vehicleId, fleetId: requesterId },
     })
     if (!fleetVehicle) throw new Error("Select a vehicle owned by this fleet")
+  }
+  if (source === RfqSource.user && input.userVehicleId) {
+    if (!requesterId) throw new Error("User authentication is required")
+    userVehicle = await getUserVehicleForRfq(requesterId, input.userVehicleId)
   }
 
   if (!Array.isArray(input.parts) || input.parts.length === 0) {
@@ -226,18 +246,20 @@ export async function createRfq(
   if (source === RfqSource.user && !/^[+\d][\d\s()-]{6,20}$/.test(phone)) {
     throw new Error("Enter a valid phone number")
   }
-  const vehicleVin = fleetVehicle?.vin ?? (text(vehicle.vin).toUpperCase() || null)
+  const vehicleVin =
+    fleetVehicle?.vin ?? userVehicle?.vin ?? (text(vehicle.vin).toUpperCase() || null)
   if (vehicleVin && !/^[A-HJ-NPR-Z0-9]{17}$/.test(vehicleVin)) {
     throw new Error("VIN must contain exactly 17 valid characters")
   }
   const vehicleYear =
     fleetVehicle?.year ??
+    userVehicle?.year ??
     (vehicle.year ? wholeNumber(vehicle.year, "Vehicle year", 1886) : null)
   if (vehicleYear && vehicleYear > new Date().getFullYear() + 1) {
     throw new Error("Vehicle year cannot be in the future")
   }
-  const vehicleMake = fleetVehicle?.make ?? (text(vehicle.make) || null)
-  const vehicleModel = fleetVehicle?.model ?? (text(vehicle.model) || null)
+  const vehicleMake = fleetVehicle?.make ?? userVehicle?.make ?? (text(vehicle.make) || null)
+  const vehicleModel = fleetVehicle?.model ?? userVehicle?.model ?? (text(vehicle.model) || null)
   if (source === RfqSource.user && (!vehicleYear || !vehicleMake || !vehicleModel)) {
     throw new Error("Vehicle year, make, and model are required")
   }
@@ -374,7 +396,7 @@ export async function listFleetRfqs(
         bids: {
           include: {
             supplier: {
-              select: { id: true, companyName: true, firstName: true, lastName: true, email: true },
+              select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
             },
           },
           orderBy: { totalAmount: "asc" },
@@ -430,7 +452,7 @@ export async function listUserRfqs(
         bids: {
           include: {
             supplier: {
-              select: { id: true, companyName: true, firstName: true, lastName: true, email: true },
+              select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
             },
           },
           orderBy: { totalAmount: "asc" },
@@ -463,12 +485,12 @@ export async function listAdminRfqs(page = 1, pageSize = 100) {
         parts: true,
         fleetVehicle: true,
         requester: {
-          select: { id: true, companyName: true, firstName: true, lastName: true, email: true },
+          select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
         },
         bids: {
           include: {
             supplier: {
-              select: { id: true, companyName: true, firstName: true, lastName: true, email: true },
+              select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
             },
           },
           orderBy: { totalAmount: "asc" },
@@ -487,7 +509,13 @@ export async function listAdminRfqs(page = 1, pageSize = 100) {
 export async function submitRfqBid(
   supplierId: string,
   rfqId: string,
-  input: { totalAmount?: unknown; deliveryDays?: unknown; validUntil?: unknown; notes?: unknown },
+  input: {
+    totalAmount?: unknown
+    deliveryDays?: unknown
+    partType?: unknown
+    validUntil?: unknown
+    notes?: unknown
+  },
 ) {
   const rfq = await db.rfq.findFirst({
     where: { id: rfqId, status: RfqStatus.open },
@@ -513,12 +541,14 @@ export async function submitRfqBid(
       supplierId,
       totalAmount: requiredMoneyToCents(input.totalAmount, "Total quote"),
       deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
+      partType: rfqBidPartType(input.partType),
       validUntil,
       notes: text(input.notes) || null,
     },
     update: {
       totalAmount: requiredMoneyToCents(input.totalAmount, "Total quote"),
       deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
+      partType: rfqBidPartType(input.partType),
       validUntil,
       notes: text(input.notes) || null,
       status: RfqBidStatus.submitted,
@@ -532,7 +562,15 @@ export async function acceptRfqBid(
   rfqId: string,
   bidId: string,
   source: RfqSource = RfqSource.fleet,
+  addressId?: string,
 ) {
+  const deliveryAddress = addressId
+    ? await getUserAddressForCheckout(requesterId, addressId)
+    : null
+  if (!deliveryAddress) {
+    throw new Error("Select a delivery address before creating an order")
+  }
+
   return db.$transaction(async (transaction) => {
     const rfq = await transaction.rfq.findFirst({
       where: { id: rfqId, requesterId, source },
@@ -590,6 +628,16 @@ export async function acceptRfqBid(
         bidId,
         buyerId: requesterId,
         supplierId: bid.supplierId,
+        deliveryAddressId: deliveryAddress?.id,
+        deliveryRecipientName: deliveryAddress?.recipientName,
+        deliveryPhone: deliveryAddress?.phone,
+        deliveryAddressLine1: deliveryAddress?.addressLine1,
+        deliveryAddressLine2: deliveryAddress?.addressLine2,
+        deliveryLandmark: deliveryAddress?.landmark,
+        deliveryCity: deliveryAddress?.city,
+        deliveryState: deliveryAddress?.state,
+        deliveryPostalCode: deliveryAddress?.postalCode,
+        deliveryCountry: deliveryAddress?.country,
         totalAmount: bid.totalAmount,
         items: {
           create: rfq.parts.map((part) => ({

@@ -4,6 +4,15 @@ import { getOptionalUserFromRequest } from "@/lib/parts-mapping/auth"
 import { RfqSource } from "@/lib/generated/prisma/client"
 import { acceptRfqBid } from "@/services/fleet/fleet-service"
 
+const readOptionalAddressId = async (request: NextRequest) => {
+  try {
+    const body = (await request.json()) as { addressId?: unknown } | null
+    return typeof body?.addressId === "string" ? body.addressId.trim() : ""
+  } catch {
+    return ""
+  }
+}
+
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string; bidId: string }> },
@@ -26,7 +35,8 @@ export async function POST(
   }
   try {
     const { id, bidId } = await context.params
-    const order = await acceptRfqBid(auth.user.id, id, bidId, source)
+    const addressId = await readOptionalAddressId(request)
+    const order = await acceptRfqBid(auth.user.id, id, bidId, source, addressId)
     return NextResponse.json({ ok: true, order })
   } catch (error) {
     return NextResponse.json(

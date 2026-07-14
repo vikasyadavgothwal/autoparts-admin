@@ -566,6 +566,14 @@ const loadPartsByUids = async (
   )
 }
 
+export async function listMarketplaceProductsByUids(
+  partUids: string[],
+  limit = 100,
+) {
+  const parts = await loadPartsByUids(partUids, Math.min(Math.max(limit, 1), 100))
+  return Promise.all(parts.map(summarizeProduct))
+}
+
 const findPartUidsByPartSearch = async (query: string) => {
   const normalizedQuery = normalizeText(query)
   const normalizedNumber = normalizePartNumber(normalizedQuery)
