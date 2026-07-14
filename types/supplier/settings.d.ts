@@ -2,6 +2,7 @@ export type SupplierProfileInput = {
   companyName?: unknown;
   firstName?: unknown;
   lastName?: unknown;
+  email?: unknown;
   phone?: unknown;
   addressLine1?: unknown;
   addressLine2?: unknown;
@@ -19,7 +20,10 @@ export type SupplierProfileRecord = {
   firstName: string | null;
   lastName: string | null;
   email: string | null;
+  emailVerifiedAt: string | null;
   phone: string | null;
+  mobileVerifiedAt: string | null;
+  avatarUrl: string | null;
   addressLine1: string | null;
   addressLine2: string | null;
   city: string | null;
@@ -29,4 +33,10 @@ export type SupplierProfileRecord = {
   supplierApprovalStatus: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type SupplierVerificationResponse = {
+  ok: true;
+  message: string;
+  verificationLink?: string;
 };

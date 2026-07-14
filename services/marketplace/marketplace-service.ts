@@ -398,6 +398,10 @@ const getDisplayImageUrl = async (imageUrl: string): Promise<string> => {
   }
 }
 
+const getOptionalDisplayImageUrl = async (
+  imageUrl: string | null | undefined,
+): Promise<string | null> => (imageUrl ? getDisplayImageUrl(imageUrl) : null)
+
 const getDisplayImageUrls = async (imageUrls: string[]): Promise<string[]> =>
   Promise.all(imageUrls.map(getDisplayImageUrl))
 
@@ -471,7 +475,7 @@ const buildOffer = async (
     id: offer.id,
     supplierId: offer.supplierId,
     supplierName: formatSupplierName(offer),
-    supplierLogo: offer.supplier.avatarUrl,
+    supplierLogo: await getOptionalDisplayImageUrl(offer.supplier.avatarUrl),
     vendorSku: offer.vendorSku,
     price: toMoney(effectivePrice) ?? 0,
     currency: getCurrency(offer),

@@ -161,6 +161,8 @@ model User {
   userVehicles              UserVehicle[]
   garageProfile             GarageProfile?
   garageVerifications       GarageVerificationRequest[]
+  notifications             Notification[]              @relation("UserNotificationRecipient")
+  sentNotifications         Notification[]              @relation("UserNotificationActor")
   supplierReviewedBy        admin?                      @relation("SupplierApprovalReviewer", fields: [supplierReviewedByAdminId], references: [id], onDelete: SetNull)
 
   @@index([roles], type: Gin)
@@ -573,6 +575,36 @@ model admin {
 
   sessions          adminSession[]
   reviewedSuppliers User[]         @relation("SupplierApprovalReviewer")
+  notifications     Notification[] @relation("AdminNotificationRecipient")
+  sentNotifications Notification[] @relation("AdminNotificationActor")
+}
+
+model Notification {
+  id               String    @id @default(cuid())
+  recipientUserId  String?
+  recipientAdminId String?
+  actorUserId      String?
+  actorAdminId     String?
+  type             String
+  title            String
+  body             String
+  linkUrl          String?
+  entityType       String?
+  entityId         String?
+  readAt           DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  recipientUser  User?  @relation("UserNotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  recipientAdmin admin? @relation("AdminNotificationRecipient", fields: [recipientAdminId], references: [id], onDelete: Cascade)
+  actorUser      User?  @relation("UserNotificationActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorAdmin     admin? @relation("AdminNotificationActor", fields: [actorAdminId], references: [id], onDelete: SetNull)
+
+  @@index([recipientUserId, readAt, createdAt])
+  @@index([recipientAdminId, readAt, createdAt])
+  @@index([entityType, entityId])
+  @@index([type, createdAt])
+  @@map("notifications")
 }
 
 model role {

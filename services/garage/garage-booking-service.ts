@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto"
 
 import { db } from "@/lib/database/prisma"
 import { Prisma } from "@/lib/generated/prisma/client"
+import {
+  activeAdminRecipientIds,
+  createNotificationsSafely,
+  type CreateNotificationInput,
+} from "@/services/notifications/notification-service"
 import type {
   GarageBookingInput,
   GarageOfflineBookingInput,
@@ -186,6 +191,79 @@ const bookingSelect = Prisma.sql`
   FROM "garage_bookings"
 `
 
+async function notifyGarageBookingCreated(booking: GarageBookingRecord) {
+  const adminIds = await activeAdminRecipientIds()
+  const notifications: CreateNotificationInput[] = [
+    {
+      recipientUserId: booking.garageId,
+      actorUserId: booking.customerId,
+      type: "booking.created",
+      title: "New service booking",
+      body: `${booking.customerName} booked ${booking.serviceName} for ${booking.bookingDate}.`,
+      linkUrl: "/bookings",
+      entityType: "garage_booking",
+      entityId: booking.id,
+    },
+    ...adminIds.map((adminId) => ({
+      recipientAdminId: adminId,
+      actorUserId: booking.customerId,
+      type: "booking.created",
+      title: "New garage booking",
+      body: `${booking.customerName} booked ${booking.serviceName}.`,
+      linkUrl: "/garages",
+      entityType: "garage_booking",
+      entityId: booking.id,
+    })),
+  ]
+
+  if (booking.customerId) {
+    notifications.push({
+      recipientUserId: booking.customerId,
+      type: "booking.created",
+      title: "Booking confirmed",
+      body: `${booking.serviceName} is booked for ${booking.bookingDate}.`,
+      linkUrl: "/bookings",
+      entityType: "garage_booking",
+      entityId: booking.id,
+    })
+  }
+
+  await createNotificationsSafely(notifications)
+}
+
+async function notifyGarageBookingStatusChanged(booking: GarageBookingRecord) {
+  const notifications: CreateNotificationInput[] = []
+
+  if (booking.customerId) {
+    notifications.push({
+      recipientUserId: booking.customerId,
+      actorUserId: booking.garageId,
+      type: "booking.status.updated",
+      title: "Booking status updated",
+      body: `${booking.serviceName} is now ${booking.status}.`,
+      linkUrl: "/bookings",
+      entityType: "garage_booking",
+      entityId: booking.id,
+    })
+  }
+
+  const adminIds = await activeAdminRecipientIds()
+  notifications.push(
+    ...adminIds.map((adminId) => ({
+      recipientAdminId: adminId,
+      actorUserId: booking.garageId,
+      type: "booking.status.updated",
+      title: "Garage booking status updated",
+      body: `${booking.publicId} is now ${booking.status}.`,
+      linkUrl: "/garages",
+      entityType: "garage_booking",
+      entityId: booking.id,
+    })),
+  )
+
+  await createNotificationsSafely(notifications)
+}
+
 export async function createPublicGarageBooking(
   customer: BookingCustomer,
   input: GarageBookingInput,
@@ -310,7 +388,9 @@ export async function createPublicGarageBooking(
     return rows
   })
 
-  return mapBooking(booking)
+  const mappedBooking = mapBooking(booking)
+  await notifyGarageBookingCreated(mappedBooking)
+  return mappedBooking
 }
 
 export async function createGarageOfflineBooking(
@@ -471,7 +551,9 @@ export async function updateGarageBookingStatus(
   `
 
   if (!booking) throw new Error("Booking not found")
-  return mapBooking(booking)
+  const mappedBooking = mapBooking(booking)
+  await notifyGarageBookingStatusChanged(mappedBooking)
+  return mappedBooking
 }
 
 export async function listUserGarageBookings(customerId: string) {

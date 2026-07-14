@@ -7,6 +7,11 @@ import {
   SupplierPartMappingStatus,
   UserRole,
 } from "@/lib/generated/prisma/client";
+import {
+  activeAdminRecipientIds,
+  createNotificationsSafely,
+  type CreateNotificationInput,
+} from "@/services/notifications/notification-service";
 import { getUserAddressForCheckout } from "@/services/user-addresses/user-address-service";
 
 const normalizePaging = (page: number, pageSize: number) => ({
@@ -238,7 +243,7 @@ export async function createDirectOrders(
   const deliveryAddress = await getUserAddressForCheckout(buyerId, addressId);
   const supplierPartIds = lines.map((line) => line.supplierPartId);
 
-  return db.$transaction(async (transaction) => {
+  const checkout = await db.$transaction(async (transaction) => {
     const supplierParts = await transaction.supplierPart.findMany({
       where: {
         id: { in: supplierPartIds },
@@ -340,4 +345,45 @@ export async function createDirectOrders(
       },
     };
   });
+
+  const adminIds = await activeAdminRecipientIds();
+  const notifications: CreateNotificationInput[] = [];
+
+  for (const order of checkout.orders) {
+    notifications.push({
+      recipientUserId: order.supplier.id,
+      actorUserId: buyerId,
+      type: "order.created",
+      title: "New order received",
+      body: `Order ${order.publicId} was created from a customer checkout.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: order.id,
+    });
+    notifications.push({
+      recipientUserId: buyerId,
+      type: "order.created",
+      title: "Order confirmed",
+      body: `Order ${order.publicId} has been created and sent to the supplier.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: order.id,
+    });
+
+    for (const adminId of adminIds) {
+      notifications.push({
+        recipientAdminId: adminId,
+        actorUserId: buyerId,
+        type: "order.created",
+        title: "New direct order",
+        body: `Direct order ${order.publicId} was created.`,
+        linkUrl: "/orders",
+        entityType: "order",
+        entityId: order.id,
+      });
+    }
+  }
+
+  await createNotificationsSafely(notifications);
+  return checkout;
 }

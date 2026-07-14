@@ -8,6 +8,12 @@ import {
 } from "@/lib/generated/prisma/client"
 import { getUserAddressForCheckout } from "@/services/user-addresses/user-address-service"
 import { getUserVehicleForRfq } from "@/services/user-vehicles/user-vehicle-service"
+import {
+  activeAdminRecipientIds,
+  activeSupplierRecipientIds,
+  createNotificationsSafely,
+  type CreateNotificationInput,
+} from "@/services/notifications/notification-service"
 import type {
   CreateRfqInput,
   FleetVehicleInput,
@@ -57,6 +63,143 @@ const rfqBidPartType = (value: unknown) => {
     throw new Error(`Part type must be one of: ${allowedRfqBidPartTypes.join(", ")}`)
   }
   return match
+}
+
+const requesterLabel = (source: RfqSource) =>
+  source === RfqSource.fleet ? "Fleet" : "Customer"
+
+async function notifyRfqCreated(rfq: {
+  id: string
+  publicId: string
+  projectName: string
+  requesterId: string | null
+  source: RfqSource
+}) {
+  const [supplierIds, adminIds] = await Promise.all([
+    activeSupplierRecipientIds(),
+    activeAdminRecipientIds(),
+  ])
+  const notifications: CreateNotificationInput[] = [
+    ...supplierIds.map((supplierId) => ({
+      recipientUserId: supplierId,
+      actorUserId: rfq.requesterId,
+      type: "rfq.created",
+      title: "New RFQ available",
+      body: `${requesterLabel(rfq.source)} RFQ ${rfq.publicId} is open for supplier quotes.`,
+      linkUrl: "/rfq-inbox",
+      entityType: "rfq",
+      entityId: rfq.id,
+    })),
+    ...adminIds.map((adminId) => ({
+      recipientAdminId: adminId,
+      actorUserId: rfq.requesterId,
+      type: "rfq.created",
+      title: "New RFQ submitted",
+      body: `${requesterLabel(rfq.source)} RFQ ${rfq.publicId} was submitted.`,
+      linkUrl: "/rfqs",
+      entityType: "rfq",
+      entityId: rfq.id,
+    })),
+  ]
+
+  await createNotificationsSafely(notifications)
+}
+
+async function notifyRfqBidSubmitted(input: {
+  rfqId: string
+  rfqPublicId: string
+  requesterId: string | null
+  supplierId: string
+  source: RfqSource
+  isUpdate: boolean
+}) {
+  const adminIds = await activeAdminRecipientIds()
+  const title = input.isUpdate ? "RFQ quote updated" : "New RFQ quote received"
+  const notifications: CreateNotificationInput[] = []
+
+  if (input.requesterId) {
+    notifications.push({
+      recipientUserId: input.requesterId,
+      actorUserId: input.supplierId,
+      type: input.isUpdate ? "rfq.bid.updated" : "rfq.bid.created",
+      title,
+      body: `A supplier ${input.isUpdate ? "updated a quote" : "submitted a quote"} for RFQ ${input.rfqPublicId}.`,
+      linkUrl: "/rfqs",
+      entityType: "rfq",
+      entityId: input.rfqId,
+    })
+  }
+
+  notifications.push(
+    ...adminIds.map((adminId) => ({
+      recipientAdminId: adminId,
+      actorUserId: input.supplierId,
+      type: input.isUpdate ? "rfq.bid.updated" : "rfq.bid.created",
+      title,
+      body: `Supplier quote activity on ${requesterLabel(input.source)} RFQ ${input.rfqPublicId}.`,
+      linkUrl: "/rfqs",
+      entityType: "rfq",
+      entityId: input.rfqId,
+    })),
+  )
+
+  await createNotificationsSafely(notifications)
+}
+
+async function notifyRfqBidAccepted(input: {
+  rfqId: string
+  rfqPublicId: string
+  requesterId: string
+  source: RfqSource
+  orderId: string
+  orderPublicId: string
+  acceptedSupplierId: string
+  rejectedSupplierIds: string[]
+}) {
+  const adminIds = await activeAdminRecipientIds()
+  const notifications: CreateNotificationInput[] = [
+    {
+      recipientUserId: input.requesterId,
+      type: "rfq.bid.accepted",
+      title: "RFQ order created",
+      body: `RFQ ${input.rfqPublicId} was converted into order ${input.orderPublicId}.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: input.orderId,
+    },
+    {
+      recipientUserId: input.acceptedSupplierId,
+      actorUserId: input.requesterId,
+      type: "rfq.bid.accepted",
+      title: "Your RFQ quote was accepted",
+      body: `${requesterLabel(input.source)} accepted your quote for RFQ ${input.rfqPublicId}.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: input.orderId,
+    },
+    ...input.rejectedSupplierIds.map((supplierId) => ({
+      recipientUserId: supplierId,
+      actorUserId: input.requesterId,
+      type: "rfq.bid.rejected",
+      title: "RFQ quote not selected",
+      body: `Another quote was selected for RFQ ${input.rfqPublicId}.`,
+      linkUrl: "/offers",
+      entityType: "rfq",
+      entityId: input.rfqId,
+    })),
+    ...adminIds.map((adminId) => ({
+      recipientAdminId: adminId,
+      actorUserId: input.requesterId,
+      type: "rfq.bid.accepted",
+      title: "RFQ quote accepted",
+      body: `RFQ ${input.rfqPublicId} created order ${input.orderPublicId}.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: input.orderId,
+    })),
+  ]
+
+  await createNotificationsSafely(notifications)
 }
 
 const mapRfqMoney = <T extends {
@@ -264,7 +407,7 @@ export async function createRfq(
     throw new Error("Vehicle year, make, and model are required")
   }
 
-  return db.rfq.create({
+  const rfq = await db.rfq.create({
     data: {
       requesterId,
       fleetVehicleId: fleetVehicle?.id,
@@ -311,6 +454,9 @@ export async function createRfq(
     },
     include: { parts: true, fleetVehicle: true },
   })
+
+  await notifyRfqCreated(rfq)
+  return rfq
 }
 
 export async function listSupplierRfqs(
@@ -519,7 +665,13 @@ export async function submitRfqBid(
 ) {
   const rfq = await db.rfq.findFirst({
     where: { id: rfqId, status: RfqStatus.open },
-    select: { id: true, responseDeadline: true },
+    select: {
+      id: true,
+      publicId: true,
+      requesterId: true,
+      responseDeadline: true,
+      source: true,
+    },
   })
   if (!rfq) throw new Error("This RFQ is not open for quotes")
   if (rfq.responseDeadline <= new Date()) throw new Error("The RFQ response deadline has passed")
@@ -533,6 +685,11 @@ export async function submitRfqBid(
   if (validUntil && (Number.isNaN(validUntil.getTime()) || validUntil <= new Date())) {
     throw new Error("Quote validity date must be in the future")
   }
+
+  const existingBid = await db.rfqBid.findUnique({
+    where: { rfqId_supplierId: { rfqId, supplierId } },
+    select: { id: true },
+  })
 
   const bid = await db.rfqBid.upsert({
     where: { rfqId_supplierId: { rfqId, supplierId } },
@@ -554,6 +711,16 @@ export async function submitRfqBid(
       status: RfqBidStatus.submitted,
     },
   })
+
+  await notifyRfqBidSubmitted({
+    rfqId: rfq.id,
+    rfqPublicId: rfq.publicId,
+    requesterId: rfq.requesterId,
+    supplierId,
+    source: rfq.source,
+    isUpdate: Boolean(existingBid),
+  })
+
   return { ...bid, totalAmount: bid.totalAmount / 100 }
 }
 
@@ -571,7 +738,7 @@ export async function acceptRfqBid(
     throw new Error("Select a delivery address before creating an order")
   }
 
-  return db.$transaction(async (transaction) => {
+  const result = await db.$transaction(async (transaction) => {
     const rfq = await transaction.rfq.findFirst({
       where: { id: rfqId, requesterId, source },
       include: { order: true, parts: true },
@@ -579,7 +746,10 @@ export async function acceptRfqBid(
     if (!rfq) throw new Error("RFQ not found")
     if (rfq.order) {
       if (rfq.order.bidId === bidId) {
-        return { ...rfq.order, totalAmount: rfq.order.totalAmount / 100 }
+        return {
+          order: { ...rfq.order, totalAmount: rfq.order.totalAmount / 100 },
+          notificationContext: null,
+        }
       }
       throw new Error("A quote has already been accepted for this RFQ")
     }
@@ -607,6 +777,11 @@ export async function acceptRfqBid(
       }
       if (quoteExpiry <= now) throw new Error("This supplier quote has expired")
     }
+
+    const submittedBids = await transaction.rfqBid.findMany({
+      where: { rfqId, status: RfqBidStatus.submitted },
+      select: { id: true, supplierId: true },
+    })
 
     const closed = await transaction.rfq.updateMany({
       where: { id: rfqId, requesterId, status: RfqStatus.open },
@@ -648,6 +823,26 @@ export async function acceptRfqBid(
         },
       },
     })
-    return { ...order, totalAmount: order.totalAmount / 100 }
+
+    return {
+      order: { ...order, totalAmount: order.totalAmount / 100 },
+      notificationContext: {
+        rfqId: rfq.id,
+        rfqPublicId: rfq.publicId,
+        requesterId,
+        source,
+        orderId: order.id,
+        orderPublicId: order.publicId,
+        acceptedSupplierId: bid.supplierId,
+        rejectedSupplierIds: submittedBids
+          .filter((submittedBid) => submittedBid.id !== bidId)
+          .map((submittedBid) => submittedBid.supplierId),
+      },
+    }
   })
+
+  if (result.notificationContext) {
+    await notifyRfqBidAccepted(result.notificationContext)
+  }
+  return result.order
 }
