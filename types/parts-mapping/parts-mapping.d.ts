@@ -172,6 +172,14 @@ export type PartMasterSummary = {
   keyFeatures: string[]
 }
 
+export type MappedCatalogPartRecord = PartMasterSummary & {
+  oemNumbers: string[]
+  mpnNumbers: string[]
+  mappedStatus: SupplierPartMappingStatus.mapped
+  supplierPartCount: number
+  latestSupplierPartUpdatedAt: string | null
+}
+
 export type SupplierPartLookupResult = {
   exists: boolean
   requiresProductDetails: boolean

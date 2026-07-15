@@ -23,7 +23,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     )
   }
 
-  const rateLimit = consumeUserAuthRateLimit(
+  const rateLimit = await consumeUserAuthRateLimit(
     `user-refresh:${getClientIp(request) ?? "unknown"}`,
     30,
     5 * 60 * 1_000,

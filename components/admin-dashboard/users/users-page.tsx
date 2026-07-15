@@ -1,15 +1,17 @@
 import { PageHeading } from "@/components/admin-dashboard/shared/page-heading"
+import { USER_TABLE_COLUMNS } from "@/services/admin-dashboard/users/users-data"
 import {
-  USERS,
-  USERS_KPIS,
-  USER_ACTIVITY,
-  USER_TABLE_COLUMNS,
-} from "@/services/admin-dashboard/users/users-data"
+  buildUserActivity,
+  buildUserKpis,
+  listAdminUsers,
+} from "@/services/admin-dashboard/users/user-management-service"
 import { UsersSection } from "./users-section"
 import { UsersStatCards } from "./users-stat-cards"
 import { UsersTable } from "./users-table"
 
-export function UsersPage() {
+export async function UsersPage() {
+  const users = await listAdminUsers()
+
   return (
     <div className="space-y-8">
       <PageHeading
@@ -17,11 +19,11 @@ export function UsersPage() {
         subtitle="Monitor and manage platform users."
       />
 
-      <UsersStatCards items={USERS_KPIS} />
+      <UsersStatCards items={buildUserKpis(users)} />
 
-      <UsersTable rows={USERS} columns={USER_TABLE_COLUMNS} />
+      <UsersTable rows={users} columns={USER_TABLE_COLUMNS} />
 
-      <UsersSection items={USER_ACTIVITY} />
+      <UsersSection items={buildUserActivity(users)} />
     </div>
   )
 }

@@ -1,14 +1,9 @@
 import { createHash } from "node:crypto"
 import type { NextRequest, NextResponse } from "next/server"
 
+import { isApiOriginAllowed, setApiCorsHeaders } from "@/lib/api-cors"
+import { db } from "@/lib/database/prisma"
 import type { UserSessionRequestContext } from "@/types/user-auth/user-auth"
-
-type RateLimitEntry = {
-  count: number
-  resetAt: number
-}
-
-const rateLimitStore = new Map<string, RateLimitEntry>()
 
 export function hashUserIp(ipAddress: string | null): string | null {
   if (!ipAddress) {
@@ -19,12 +14,19 @@ export function hashUserIp(ipAddress: string | null): string | null {
 }
 
 export function getClientIp(request: NextRequest): string | null {
-  const rawIp =
-    request.headers.get("x-forwarded-for") ||
-    request.headers.get("x-real-ip") ||
-    request.headers.get("cf-connecting-ip")
+  const cloudflareIp = request.headers.get("cf-connecting-ip")?.trim()
+  if (cloudflareIp) return cloudflareIp
 
-  return rawIp?.split(",")[0]?.trim() || null
+  const realIp = request.headers.get("x-real-ip")?.trim()
+  if (realIp) return realIp
+
+  const forwarded = request.headers.get("x-forwarded-for")
+  if (!forwarded) return null
+
+  // Trusted reverse proxies append their connecting address to this list.
+  // Reading the final value prevents a caller-controlled first entry from
+  // becoming the rate-limit and audit identity.
+  return forwarded.split(",").at(-1)?.trim() || null
 }
 
 export function getDeviceName(userAgent: string | null): string | null {
@@ -54,81 +56,53 @@ export function getUserRequestContext(
   }
 }
 
-export function isAllowedUserAuthOrigin(request: NextRequest): boolean {
-  const origin = request.headers.get("origin")
-  if (!origin) {
-    return true
-  }
-
-  const configuredOrigins = (process.env.USER_AUTH_ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
-
-  try {
-    const requestOrigin = new URL(request.url).origin
-    if (origin === requestOrigin || configuredOrigins.includes(origin)) {
-      return true
-    }
-
-    if (process.env.NODE_ENV !== "production") {
-      const originUrl = new URL(origin)
-      const requestUrl = new URL(request.url)
-      const localHosts = new Set(["localhost", "127.0.0.1", "::1"])
-      return (
-        localHosts.has(originUrl.hostname) &&
-        localHosts.has(requestUrl.hostname)
-      )
-    }
-
-    return false
-  } catch {
-    return false
-  }
+export function isAllowedUserAuthOrigin(request?: NextRequest): boolean {
+  return request ? isApiOriginAllowed(request) : false
 }
 
 export function setUserAuthCorsHeaders(
   request: NextRequest,
   response: NextResponse,
 ): void {
-  const origin = request.headers.get("origin")
-  if (!origin || !isAllowedUserAuthOrigin(request)) {
-    return
-  }
-
-  response.headers.set("Access-Control-Allow-Origin", origin)
-  response.headers.set("Access-Control-Allow-Credentials", "true")
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type")
-  response.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS")
-  response.headers.append("Vary", "Origin")
+  setApiCorsHeaders(request, response)
 }
 
-export function consumeUserAuthRateLimit(
+export async function consumeUserAuthRateLimit(
   key: string,
   limit: number,
   windowMs: number,
-): { allowed: true } | { allowed: false; retryAfterSeconds: number } {
-  const currentTime = Date.now()
-  const existing = rateLimitStore.get(key)
+): Promise<
+  { allowed: true } | { allowed: false; retryAfterSeconds: number }
+> {
+  const rows = await db.$queryRaw<Array<{ count: number; resetAt: Date }>>`
+    INSERT INTO "api_rate_limits" ("key", "count", "resetAt", "updatedAt")
+    VALUES (${key}, 1, NOW() + (${windowMs} * INTERVAL '1 millisecond'), NOW())
+    ON CONFLICT ("key") DO UPDATE SET
+      "count" = CASE
+        WHEN "api_rate_limits"."resetAt" <= NOW() THEN 1
+        ELSE "api_rate_limits"."count" + 1
+      END,
+      "resetAt" = CASE
+        WHEN "api_rate_limits"."resetAt" <= NOW()
+          THEN NOW() + (${windowMs} * INTERVAL '1 millisecond')
+        ELSE "api_rate_limits"."resetAt"
+      END,
+      "updatedAt" = NOW()
+    RETURNING "count", "resetAt"
+  `
+  const entry = rows[0]
 
-  if (!existing || existing.resetAt <= currentTime) {
-    rateLimitStore.set(key, {
-      count: 1,
-      resetAt: currentTime + windowMs,
-    })
-    return { allowed: true }
-  }
+  if (!entry) throw new Error("Rate limiter did not return a result")
 
-  if (existing.count >= limit) {
+  if (entry.count > limit) {
     return {
       allowed: false,
       retryAfterSeconds: Math.max(
         1,
-        Math.ceil((existing.resetAt - currentTime) / 1_000),
+        Math.ceil((entry.resetAt.getTime() - Date.now()) / 1_000),
       ),
     }
   }
 
-  existing.count += 1
   return { allowed: true }
 }

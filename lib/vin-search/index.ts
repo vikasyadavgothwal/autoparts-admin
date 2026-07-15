@@ -67,10 +67,18 @@ export const normalizeVinSearchResult = (
   }
 
   const data = upstreamResult.data as Record<string, unknown>
+  const modelId =
+    normalizeUpstreamTextField(data.model_id) ||
+    normalizeUpstreamTextField(data.modelId) ||
+    normalizeUpstreamTextField(data.Id) ||
+    normalizeUpstreamTextField(data.id) ||
+    normalizeUpstreamTextField(data.vehicle_id) ||
+    null
   const normalizedData: VinSearchNormalizedResultPayload = {
     VIN: normalizeUpstreamTextField(data.full_vin) || "",
     "Model year": normalizeUpstreamTextField(data.model_year_from_vin) || "",
     "Make name": normalizeUpstreamTextField(data.epc) || "",
+    ...(modelId ? { "Model id": modelId } : {}),
   }
 
   if (

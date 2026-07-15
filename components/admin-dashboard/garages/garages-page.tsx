@@ -3,18 +3,23 @@ import { PageHeading } from "@/components/admin-dashboard/shared/page-heading"
 import {
   GARAGE_ACTIVITIES,
   GARAGE_FILTERS,
-  GARAGE_KPIS,
   GARAGE_LOCATIONS,
   GARAGE_TABLE_COLUMNS,
-  GARAGES,
   GARAGE_VERIFICATION,
 } from "@/services/admin-dashboard/garages/garages-data"
+import {
+  buildGarageKpis,
+  listAdminGarages,
+} from "@/services/admin-dashboard/garages/garage-management-service"
 import { GaragesActivity } from "./garages-section"
 import { GaragesFilters } from "./garages-filters"
 import { GaragesStatCards } from "./garages-stat-cards"
 import { GaragesTable } from "./garages-table"
 
-export function GaragesPage() {
+export async function GaragesPage() {
+  const garages = await listAdminGarages()
+  const kpis = buildGarageKpis(garages)
+
   return (
     <div className="space-y-8">
       <PageHeading
@@ -27,7 +32,7 @@ export function GaragesPage() {
         }
       />
 
-      <GaragesStatCards items={GARAGE_KPIS} />
+      <GaragesStatCards items={kpis} />
 
       <GaragesFilters
         statusOptions={GARAGE_FILTERS}
@@ -35,7 +40,7 @@ export function GaragesPage() {
         verificationOptions={GARAGE_VERIFICATION}
       />
 
-      <GaragesTable rows={GARAGES} columns={GARAGE_TABLE_COLUMNS} />
+      <GaragesTable rows={garages} columns={GARAGE_TABLE_COLUMNS} />
 
       <GaragesActivity items={GARAGE_ACTIVITIES} />
     </div>

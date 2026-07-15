@@ -1,30 +1,29 @@
 import { SuppliersSection } from "./suppliers-section"
 import { SuppliersStatCards } from "./suppliers-stat-cards"
 import { SuppliersTable } from "./suppliers-table"
-import { Button } from "@/components/ui/button"
+import { PageHeading } from "@/components/admin-dashboard/shared/page-heading"
+import { SUPPLIER_COLUMNS } from "@/services/admin-dashboard/suppliers/suppliers-data"
 import {
-  SUPPLIER_ALERTS,
-  SUPPLIER_COLUMNS,
-  SUPPLIER_KPIS,
-  SUPPLIERS,
-} from "@/services/admin-dashboard/suppliers/suppliers-data"
+  buildSupplierAlerts,
+  buildSupplierKpis,
+  listAdminSuppliers,
+} from "@/services/admin-dashboard/suppliers/supplier-management-service"
 
-export function SuppliersPage() {
+export async function SuppliersPage() {
+  const suppliers = await listAdminSuppliers()
+
   return (
     <div className="space-y-8">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white">Supplier Management</h1>
-          <p className="text-[#9CA3AF]">Review and manage supplier applications.</p>
-        </div>
-        <Button type="button">Save</Button>
-      </div>
+      <PageHeading
+        title="Supplier Management"
+        subtitle="Review supplier accounts and control marketplace approval."
+      />
 
-      <SuppliersStatCards items={SUPPLIER_KPIS} />
+      <SuppliersStatCards items={buildSupplierKpis(suppliers)} />
 
-      <SuppliersSection items={SUPPLIER_ALERTS} />
+      <SuppliersSection items={buildSupplierAlerts(suppliers)} />
 
-      <SuppliersTable rows={SUPPLIERS} columns={SUPPLIER_COLUMNS} />
+      <SuppliersTable rows={suppliers} columns={SUPPLIER_COLUMNS} />
     </div>
   )
 }

@@ -24,6 +24,7 @@ export type RfqPartInput = {
 export type CreateRfqInput = {
   source: RfqSource | "fleet" | "user"
   fleetVehicleId?: string | null
+  userVehicleId?: string | null
   projectName: string
   description?: string | null
   responseDeadline: string

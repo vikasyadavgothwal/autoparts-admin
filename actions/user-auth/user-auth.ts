@@ -29,6 +29,8 @@ import type {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const VALID_ROLES = new Set<UserRole>(Object.values(UserRole))
+const VERIFIED_ACCOUNT_ROLE_REQUIRED_MESSAGE =
+  "Choose an account type to finish creating your account"
 
 const readString = (value: unknown): string =>
   typeof value === "string" ? value.trim() : ""
@@ -90,6 +92,10 @@ const mapError = (error: unknown): UserAuthActionResult => {
 
   if (message === "Email address is not verified") {
     return { ok: false, success: false, message, statusCode: 403 }
+  }
+
+  if (message === VERIFIED_ACCOUNT_ROLE_REQUIRED_MESSAGE) {
+    return { ok: false, success: false, message, statusCode: 409 }
   }
 
   if (message.includes("Firebase identity conflicts")) {

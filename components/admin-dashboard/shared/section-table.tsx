@@ -1,4 +1,4 @@
-import type { SectionTableColumn, SectionTableProps } from "@/types/admin-dashboard/shared/section-table"
+import type { SectionTableProps } from "@/types/admin-dashboard/shared/section-table"
 
 export function SectionTable({ columns, children }: SectionTableProps) {
   return (

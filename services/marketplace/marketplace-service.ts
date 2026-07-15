@@ -5,6 +5,7 @@ import {
   getS3ObjectKeyFromUrl,
 } from "@/lib/storage/s3"
 import {
+  SupplierApprovalStatus,
   SupplierPartMappingStatus,
   type Prisma,
 } from "@/lib/generated/prisma/client"
@@ -15,11 +16,12 @@ const DEFAULT_PRODUCT_IMAGE =
 
 const mappedSupplierPartWhere = {
   mappingStatus: SupplierPartMappingStatus.mapped,
-} satisfies Prisma.SupplierPartWhereInput
-
-const activeOfferWhere = {
-  mappingStatus: SupplierPartMappingStatus.mapped,
-  stock: { gt: 0 },
+  supplier: {
+    is: {
+      isActive: true,
+      supplierApprovalStatus: SupplierApprovalStatus.Approved,
+    },
+  },
 } satisfies Prisma.SupplierPartWhereInput
 
 const supplierPartInclude = {
@@ -60,6 +62,7 @@ type MarketplacePart = Prisma.PartMasterGetPayload<{
 type MarketplaceSearchInput = {
   partNumber?: string | null
   vin?: string | null
+  modelId?: string | null
   year?: string | null
   make?: string | null
   model?: string | null
@@ -72,6 +75,11 @@ const normalizeText = (value: unknown): string =>
 
 const normalizeToken = (value: string): string =>
   value.toUpperCase().replace(/[^A-Z0-9]+/g, "")
+
+const containsInsensitive = (value: string) => ({
+  contains: value,
+  mode: "insensitive" as const,
+})
 
 const toMoney = (cents: number | null | undefined): number | null =>
   typeof cents === "number" ? cents / 100 : null
@@ -269,6 +277,118 @@ const uniqueNonEmpty = (values: Array<string | null | undefined>): string[] => {
   return result
 }
 
+const getSearchTokens = (query: string): string[] =>
+  uniqueNonEmpty(query.split(/[^A-Za-z0-9]+/).map(normalizeToken)).filter(
+    (token) => token.length >= 3,
+  )
+
+const partNumberIndexFiltersFor = (
+  query: string,
+  normalizedNumber = normalizePartNumber(query),
+): Prisma.PartNumberIndexWhereInput[] => [
+  ...(normalizedNumber
+    ? [
+        { numberNormalized: normalizedNumber },
+        { numberNormalized: { contains: normalizedNumber } },
+      ]
+    : []),
+  ...(query
+    ? [{ numberOriginal: containsInsensitive(query) }]
+    : []),
+]
+
+const supplierPartFiltersFor = (
+  query: string,
+  normalizedNumber = normalizePartNumber(query),
+): Prisma.SupplierPartWhereInput[] => [
+  ...(normalizedNumber
+    ? [
+        { normalizedMpn: { contains: normalizedNumber } },
+        { normalizedOemNumber: { contains: normalizedNumber } },
+      ]
+    : []),
+  ...(query
+    ? [
+        { vendorSku: containsInsensitive(query) },
+        { originalMpn: containsInsensitive(query) },
+        { originalOemNumber: containsInsensitive(query) },
+        { originalPartName: containsInsensitive(query) },
+        { originalBrand: containsInsensitive(query) },
+        { competitorPartNumber: containsInsensitive(query) },
+        { competitorBrandName: containsInsensitive(query) },
+        { category: containsInsensitive(query) },
+      ]
+    : []),
+]
+
+const partMasterFiltersFor = (
+  query: string,
+  normalizedNumber = normalizePartNumber(query),
+): Prisma.PartMasterWhereInput[] => [
+  ...(normalizedNumber
+    ? [{ normalizedPartNumber: { contains: normalizedNumber } }]
+    : []),
+  ...(query
+    ? [
+        { partNumber: containsInsensitive(query) },
+        { partNumberOriginal: containsInsensitive(query) },
+        { partName: containsInsensitive(query) },
+        { heading: containsInsensitive(query) },
+        { brandName: containsInsensitive(query) },
+        { category: containsInsensitive(query) },
+        { description: containsInsensitive(query) },
+        {
+          numbers: {
+            some: { OR: partNumberIndexFiltersFor(query, normalizedNumber) },
+          },
+        },
+        {
+          supplierParts: {
+            some: {
+              ...mappedSupplierPartWhere,
+              OR: supplierPartFiltersFor(query, normalizedNumber),
+            },
+          },
+        },
+        {
+          fitments: {
+            some: {
+              OR: [
+                { brand: containsInsensitive(query) },
+                { make: containsInsensitive(query) },
+                { model: containsInsensitive(query) },
+                { series: containsInsensitive(query) },
+                { engine: containsInsensitive(query) },
+              ],
+            },
+          },
+        },
+      ]
+    : []),
+]
+
+const tokenizedPartMasterFilter = (
+  tokens: string[],
+): Prisma.PartMasterWhereInput | null =>
+  tokens.length > 0
+    ? {
+        AND: tokens.map((token) => ({
+          OR: partMasterFiltersFor(token, normalizePartNumber(token)),
+        })),
+      }
+    : null
+
+const tokenizedSupplierPartFilter = (
+  tokens: string[],
+): Prisma.SupplierPartWhereInput | null =>
+  tokens.length > 0
+    ? {
+        AND: tokens.map((token) => ({
+          OR: supplierPartFiltersFor(token, normalizePartNumber(token)),
+        })),
+      }
+    : null
+
 const getDisplayImageUrl = async (imageUrl: string): Promise<string> => {
   try {
     const key = getS3ObjectKeyFromUrl(imageUrl)
@@ -277,6 +397,10 @@ const getDisplayImageUrl = async (imageUrl: string): Promise<string> => {
     return imageUrl
   }
 }
+
+const getOptionalDisplayImageUrl = async (
+  imageUrl: string | null | undefined,
+): Promise<string | null> => (imageUrl ? getDisplayImageUrl(imageUrl) : null)
 
 const getDisplayImageUrls = async (imageUrls: string[]): Promise<string[]> =>
   Promise.all(imageUrls.map(getDisplayImageUrl))
@@ -351,7 +475,7 @@ const buildOffer = async (
     id: offer.id,
     supplierId: offer.supplierId,
     supplierName: formatSupplierName(offer),
-    supplierLogo: offer.supplier.avatarUrl,
+    supplierLogo: await getOptionalDisplayImageUrl(offer.supplier.avatarUrl),
     vendorSku: offer.vendorSku,
     price: toMoney(effectivePrice) ?? 0,
     currency: getCurrency(offer),
@@ -373,7 +497,7 @@ const summarizeProduct = async (part: MarketplacePart) => {
     await Promise.all(sellableOffers.map((offer) => buildOffer(offer, false)))
   ).sort((left, right) => left.price - right.price)
   const minOffer = offers[0] ?? null
-  const vendorContentOffers = sellableOffers.filter(hasVendorContent)
+  const vendorContentOffers = part.supplierParts.filter(hasVendorContent)
   const selectedContentOffer =
     vendorContentOffers[
       seededIndex(part.partUid, vendorContentOffers.length)
@@ -425,7 +549,7 @@ const loadPartsByUids = async (
   const parts = await db.partMaster.findMany({
     where: {
       partUid: { in: uniqueUids },
-      supplierParts: { some: activeOfferWhere },
+      supplierParts: { some: mappedSupplierPartWhere },
     },
     include: {
       supplierParts: {
@@ -446,43 +570,57 @@ const loadPartsByUids = async (
   )
 }
 
-const findPartUidsByPartNumber = async (partNumber: string) => {
-  const normalizedNumber = normalizePartNumber(partNumber)
-  if (!normalizedNumber) {
+export async function listMarketplaceProductsByUids(
+  partUids: string[],
+  limit = 100,
+) {
+  const parts = await loadPartsByUids(partUids, Math.min(Math.max(limit, 1), 100))
+  return Promise.all(parts.map(summarizeProduct))
+}
+
+const findPartUidsByPartSearch = async (query: string) => {
+  const normalizedQuery = normalizeText(query)
+  const normalizedNumber = normalizePartNumber(normalizedQuery)
+  const searchTokens = getSearchTokens(normalizedQuery)
+  const tokenPartFilter = tokenizedPartMasterFilter(searchTokens)
+  const tokenSupplierFilter = tokenizedSupplierPartFilter(searchTokens)
+
+  if (!normalizedQuery && !normalizedNumber) {
     return []
   }
 
+  const numberIndexFilters = partNumberIndexFiltersFor(
+    normalizedQuery,
+    normalizedNumber,
+  )
+  const directPartFilters: Prisma.PartMasterWhereInput[] = [
+    ...partMasterFiltersFor(normalizedQuery, normalizedNumber),
+    ...(tokenPartFilter ? [tokenPartFilter] : []),
+  ]
+  const supplierPartFilters: Prisma.SupplierPartWhereInput[] = [
+    ...supplierPartFiltersFor(normalizedQuery, normalizedNumber),
+    ...(tokenSupplierFilter ? [tokenSupplierFilter] : []),
+  ]
+
   const [indexedParts, directParts, supplierParts] = await Promise.all([
     db.partNumberIndex.findMany({
-      where: { numberNormalized: normalizedNumber },
+      where: { OR: numberIndexFilters },
       select: { partUid: true },
-      take: 50,
+      take: 100,
     }),
     db.partMaster.findMany({
-      where: {
-        OR: [
-          { normalizedPartNumber: normalizedNumber },
-          { partNumber: { equals: partNumber, mode: "insensitive" } },
-          { partNumberOriginal: { equals: partNumber, mode: "insensitive" } },
-        ],
-      },
+      where: { OR: directPartFilters },
       select: { partUid: true },
-      take: 50,
+      take: 100,
     }),
     db.supplierPart.findMany({
       where: {
-        mappingStatus: SupplierPartMappingStatus.mapped,
+        ...mappedSupplierPartWhere,
         partUid: { not: null },
-        OR: [
-          { vendorSku: { equals: partNumber, mode: "insensitive" } },
-          { originalMpn: { equals: partNumber, mode: "insensitive" } },
-          { originalOemNumber: { equals: partNumber, mode: "insensitive" } },
-          { normalizedMpn: normalizedNumber },
-          { normalizedOemNumber: normalizedNumber },
-        ],
+        OR: supplierPartFilters,
       },
       select: { partUid: true },
-      take: 50,
+      take: 100,
     }),
   ])
 
@@ -541,6 +679,21 @@ const fitmentYearWhere = (year: number): Prisma.MasterFitmentWhereInput => ({
 })
 
 const findPartUidsByVehicle = async (input: MarketplaceSearchInput) => {
+  const modelId = normalizeText(input.modelId)
+
+  if (modelId) {
+    const fitments = await db.masterFitment.findMany({
+      where: { vin17ModelId: modelId },
+      select: { partUid: true },
+      distinct: ["partUid"],
+      take: 200,
+    })
+
+    if (fitments.length > 0) {
+      return fitments.map((fitment) => fitment.partUid)
+    }
+  }
+
   const year = parseYear(input.year)
   const textWhere = fitmentTextWhere(
     [input.make, input.model].map(normalizeText).filter(Boolean).join(" "),
@@ -575,9 +728,13 @@ const findPartUidsByVehicle = async (input: MarketplaceSearchInput) => {
 
 const searchPartsByText = async (query: string, limit: number) => {
   const normalizedQuery = normalizeText(query)
+  const normalizedNumber = normalizePartNumber(normalizedQuery)
+  const searchTokens = getSearchTokens(normalizedQuery)
+  const tokenPartFilter = tokenizedPartMasterFilter(searchTokens)
+
   if (!normalizedQuery) {
     return db.partMaster.findMany({
-      where: { supplierParts: { some: activeOfferWhere } },
+      where: { supplierParts: { some: mappedSupplierPartWhere } },
       include: {
         supplierParts: {
           where: mappedSupplierPartWhere,
@@ -596,40 +753,11 @@ const searchPartsByText = async (query: string, limit: number) => {
   return db.partMaster.findMany({
     where: {
       AND: [
-        { supplierParts: { some: activeOfferWhere } },
+        { supplierParts: { some: mappedSupplierPartWhere } },
         {
           OR: [
-            { partName: { contains: normalizedQuery, mode: "insensitive" } },
-            { heading: { contains: normalizedQuery, mode: "insensitive" } },
-            { partNumber: { contains: normalizedQuery, mode: "insensitive" } },
-            { brandName: { contains: normalizedQuery, mode: "insensitive" } },
-            { category: { contains: normalizedQuery, mode: "insensitive" } },
-            {
-              supplierParts: {
-                some: {
-                  OR: [
-                    {
-                      vendorSku: {
-                        contains: normalizedQuery,
-                        mode: "insensitive",
-                      },
-                    },
-                    {
-                      originalPartName: {
-                        contains: normalizedQuery,
-                        mode: "insensitive",
-                      },
-                    },
-                    {
-                      originalOemNumber: {
-                        contains: normalizedQuery,
-                        mode: "insensitive",
-                      },
-                    },
-                  ],
-                },
-              },
-            },
+            ...partMasterFiltersFor(normalizedQuery, normalizedNumber),
+            ...(tokenPartFilter ? [tokenPartFilter] : []),
           ],
         },
       ],
@@ -660,7 +788,7 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
   if (partNumber) {
     searchType = "partNumber"
     parts = await loadPartsByUids(
-      await findPartUidsByPartNumber(partNumber),
+      await findPartUidsByPartSearch(partNumber),
       limit,
     )
   } else if (vin || input.year || input.make || input.model) {
@@ -669,9 +797,7 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
   } else {
     parts = await searchPartsByText(textQuery, limit)
   }
-  const products = (await Promise.all(parts.map(summarizeProduct))).filter(
-    (product) => product.offerCount > 0,
-  )
+  const products = await Promise.all(parts.map(summarizeProduct))
 
   return {
     ok: true,
@@ -679,6 +805,7 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
     query: {
       partNumber: partNumber || null,
       vin: vin || null,
+      modelId: normalizeText(input.modelId) || null,
       year: normalizeText(input.year) || null,
       make: normalizeText(input.make) || null,
       model: normalizeText(input.model) || null,
@@ -710,7 +837,7 @@ export async function getMarketplaceProduct(partUid: string) {
     },
   })
 
-  if (!part) {
+  if (!part || part.supplierParts.length === 0) {
     return { ok: false as const, message: "Product was not found" }
   }
 

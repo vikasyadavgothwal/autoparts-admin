@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
     const result = await searchMarketplaceProducts({
       partNumber: searchParams.get("partNumber"),
       vin: searchParams.get("vin"),
+      modelId: searchParams.get("modelId"),
       year: searchParams.get("year"),
       make: searchParams.get("make"),
       model: searchParams.get("model"),

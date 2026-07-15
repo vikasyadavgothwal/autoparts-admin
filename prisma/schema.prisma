@@ -14,6 +14,12 @@ enum UserRole {
   Supplier
 }
 
+enum SupplierApprovalStatus {
+  Pending
+  Approved
+  Rejected
+}
+
 enum SupplierPartMappingStatus {
   uploaded
   processing
@@ -73,45 +79,144 @@ enum OrderSource {
   direct
 }
 
+enum GarageServiceStatus {
+  active
+  inactive
+}
+
+enum GarageVerificationTarget {
+  email
+  mobile
+}
+
+enum GarageBookingStatus {
+  pending
+  confirmed
+  completed
+  cancelled
+}
+
+enum BusinessQueryType {
+  BookDemo
+  ScheduleDemo
+  Contact
+  Sales
+  FleetDemo
+  General
+}
+
+enum BusinessQueryStatus {
+  New
+  Reviewed
+  Archived
+}
+
 model User {
-  id                   String                @id @default(cuid())
-  firebaseUid          String?               @unique
-  email                String?               @unique
-  phone                String?               @unique
-  googleId             String?               @unique
-  passwordHash         String?
-  firstName            String?
-  lastName             String?
-  avatarUrl            String?
-  companyName          String?
-  addressLine1         String?
-  addressLine2         String?
-  city                 String?
-  state                String?
-  postalCode           String?
-  country              String?
-  roles                UserRole[]            @default([User])
-  activeRole           UserRole              @default(User)
-  isActive             Boolean               @default(true)
-  emailVerifiedAt      DateTime?
-  lastLoginAt          DateTime?
-  authVersion          Int                   @default(1)
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  sessions             UserSession[]
-  supplierParts        SupplierPart[]
-  supplierPartStocks   SupplierPartStock[]
-  supplierPartPricings SupplierPartPricing[]
-  fleetVehicles        FleetVehicle[]
-  rfqs                 Rfq[]
-  rfqBids              RfqBid[]
-  buyerOrders          Order[]               @relation("OrderBuyer")
-  supplierOrders       Order[]               @relation("OrderSupplier")
+  id                        String                      @id @default(cuid())
+  publicId                  String                      @unique @default(dbgenerated("next_user_public_id()"))
+  supplierPublicId          String?                     @unique
+  garagePublicId            String?                     @unique
+  firebaseUid               String?                     @unique
+  email                     String?                     @unique
+  phone                     String?                     @unique
+  googleId                  String?                     @unique
+  passwordHash              String?
+  firstName                 String?
+  lastName                  String?
+  avatarUrl                 String?
+  companyName               String?
+  addressLine1              String?
+  addressLine2              String?
+  city                      String?
+  state                     String?
+  postalCode                String?
+  country                   String?
+  roles                     UserRole[]                  @default([User])
+  activeRole                UserRole                    @default(User)
+  isActive                  Boolean                     @default(true)
+  supplierApprovalStatus    SupplierApprovalStatus      @default(Pending)
+  supplierReviewedAt        DateTime?
+  supplierReviewedByAdminId String?
+  emailVerifiedAt           DateTime?
+  lastLoginAt               DateTime?
+  authVersion               Int                         @default(1)
+  createdAt                 DateTime                    @default(now())
+  updatedAt                 DateTime                    @updatedAt
+  sessions                  UserSession[]
+  supplierParts             SupplierPart[]
+  supplierPartStocks        SupplierPartStock[]
+  supplierPartPricings      SupplierPartPricing[]
+  fleetVehicles             FleetVehicle[]
+  rfqs                      Rfq[]
+  rfqBids                   RfqBid[]
+  buyerOrders               Order[]                     @relation("OrderBuyer")
+  supplierOrders            Order[]                     @relation("OrderSupplier")
+  garageServices            GarageService[]
+  garageBookings            GarageBooking[]             @relation("GarageBookingGarage")
+  customerGarageBookings    GarageBooking[]             @relation("GarageBookingCustomer")
+  garageServiceReviews      GarageServiceReview[]       @relation("GarageServiceReviewGarage")
+  customerServiceReviews    GarageServiceReview[]       @relation("GarageServiceReviewCustomer")
+  savedParts                UserSavedPart[]
+  addresses                 UserAddress[]
+  userVehicles              UserVehicle[]
+  garageProfile             GarageProfile?
+  garageVerifications       GarageVerificationRequest[]
+  notifications             Notification[]              @relation("UserNotificationRecipient")
+  sentNotifications         Notification[]              @relation("UserNotificationActor")
+  supplierReviewedBy        admin?                      @relation("SupplierApprovalReviewer", fields: [supplierReviewedByAdminId], references: [id], onDelete: SetNull)
 
   @@index([roles], type: Gin)
   @@index([activeRole])
   @@index([isActive])
+  @@index([supplierApprovalStatus])
+  @@index([supplierReviewedByAdminId])
   @@map("users")
+}
+
+model UserAddress {
+  id            String   @id @default(cuid())
+  userId        String
+  label         String
+  recipientName String
+  phone         String
+  addressLine1  String
+  addressLine2  String?
+  landmark      String?
+  city          String
+  state         String
+  postalCode    String
+  country       String
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@index([userId, isDefault])
+  @@index([userId, createdAt])
+  @@map("user_addresses")
+}
+
+model UserVehicle {
+  id        String   @id @default(cuid())
+  userId    String
+  year      Int
+  make      String
+  model     String
+  vin       String?
+  mileage   Int      @default(0)
+  status    String   @default("Active")
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, vin])
+  @@index([userId, isPrimary])
+  @@index([userId, createdAt])
+  @@map("user_vehicles")
 }
 
 model FleetVehicle {
@@ -186,6 +291,7 @@ model RfqBid {
   supplierId   String
   totalAmount  Int
   deliveryDays Int
+  partType     String       @default("New")
   validUntil   DateTime?
   notes        String?
   status       RfqBidStatus @default(submitted)
@@ -203,26 +309,38 @@ model RfqBid {
 }
 
 model Order {
-  id          String      @id @default(cuid())
-  publicId    String      @unique @default(dbgenerated("next_order_public_id()"))
-  source      OrderSource @default(rfq)
-  rfqId       String?     @unique
-  bidId       String?     @unique
-  buyerId     String
-  supplierId  String
-  totalAmount Int
-  status      OrderStatus @default(pending)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id                    String      @id @default(cuid())
+  publicId              String      @unique @default(dbgenerated("next_order_public_id()"))
+  source                OrderSource @default(rfq)
+  rfqId                 String?     @unique
+  bidId                 String?     @unique
+  buyerId               String
+  supplierId            String
+  deliveryAddressId     String?
+  deliveryRecipientName String?
+  deliveryPhone         String?
+  deliveryAddressLine1  String?
+  deliveryAddressLine2  String?
+  deliveryLandmark      String?
+  deliveryCity          String?
+  deliveryState         String?
+  deliveryPostalCode    String?
+  deliveryCountry       String?
+  totalAmount           Int
+  status                OrderStatus @default(pending)
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
 
-  rfq      Rfq?        @relation(fields: [rfqId], references: [id], onDelete: Restrict)
-  bid      RfqBid?     @relation(fields: [bidId], references: [id], onDelete: Restrict)
-  buyer    User        @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
-  supplier User        @relation("OrderSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
-  items    OrderItem[]
+  rfq             Rfq?         @relation(fields: [rfqId], references: [id], onDelete: Restrict)
+  bid             RfqBid?      @relation(fields: [bidId], references: [id], onDelete: Restrict)
+  buyer           User         @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  supplier        User         @relation("OrderSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
+  deliveryAddress UserAddress? @relation(fields: [deliveryAddressId], references: [id], onDelete: SetNull)
+  items           OrderItem[]
 
   @@index([buyerId, status])
   @@index([supplierId, status])
+  @@index([deliveryAddressId])
   @@map("orders")
 }
 
@@ -265,6 +383,163 @@ model RfqPart {
   @@map("rfq_parts")
 }
 
+model GarageService {
+  id              String              @id @default(cuid())
+  publicId        String              @unique @default(dbgenerated("next_garage_service_public_id()"))
+  garageId        String
+  name            String
+  category        String
+  durationMinutes Int
+  price           Int
+  currency        String              @default("AED")
+  bookingsCount   Int                 @default(0)
+  status          GarageServiceStatus @default(active)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  garage   User                  @relation(fields: [garageId], references: [id], onDelete: Cascade)
+  bookings GarageBooking[]
+  reviews  GarageServiceReview[]
+
+  @@index([garageId, status])
+  @@index([garageId, createdAt])
+  @@map("garage_services")
+}
+
+model GarageBooking {
+  id              String              @id @default(cuid())
+  publicId        String              @unique @default(dbgenerated("next_garage_booking_public_id()"))
+  garageId        String
+  customerId      String?
+  serviceId       String?
+  serviceName     String
+  customerName    String
+  customerEmail   String?
+  customerPhone   String
+  vehicleYear     String?
+  vehicleMake     String?
+  vehicleModel    String?
+  vehicleVin      String?
+  notes           String?
+  bookingDate     DateTime            @db.Date
+  bookingTime     String
+  durationMinutes Int
+  price           Int
+  currency        String              @default("AED")
+  status          GarageBookingStatus @default(confirmed)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  garage   User                 @relation("GarageBookingGarage", fields: [garageId], references: [id], onDelete: Cascade)
+  customer User?                @relation("GarageBookingCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  service  GarageService?       @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  review   GarageServiceReview?
+
+  @@index([garageId, bookingDate, bookingTime])
+  @@index([customerId])
+  @@index([serviceId])
+  @@index([status])
+  @@map("garage_bookings")
+}
+
+model GarageServiceReview {
+  id            String    @id @default(cuid())
+  garageId      String
+  serviceId     String
+  customerId    String
+  bookingId     String?   @unique
+  rating        Int
+  comment       String
+  garageReply   String?
+  garageReplyAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  garage   User           @relation("GarageServiceReviewGarage", fields: [garageId], references: [id], onDelete: Cascade)
+  customer User           @relation("GarageServiceReviewCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  service  GarageService  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  booking  GarageBooking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([garageId, createdAt])
+  @@index([serviceId, rating])
+  @@map("garage_service_reviews")
+}
+
+model GarageProfile {
+  id                     String    @id @default(cuid())
+  garageId               String    @unique
+  contactEmail           String?
+  contactEmailVerifiedAt DateTime?
+  mobile                 String?
+  mobileVerifiedAt       DateTime?
+  workingDays            String[]  @default([])
+  workingHours           String?
+  workingHoursByDay      Json?
+  garageImageUrl         String?
+  garageImageKey         String?
+  address                String?
+  country                String?
+  state                  String?
+  city                   String?
+  pincode                String?
+  jobCompletedNumber     Int       @default(0)
+  yearsExperience        Int       @default(0)
+  responseTime           String?
+  certifications         String[]  @default([])
+  about                  String?
+  galleryImageUrls       String[]  @default([])
+  galleryImageKeys       String[]  @default([])
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  garage User @relation(fields: [garageId], references: [id], onDelete: Cascade)
+
+  @@index([contactEmail])
+  @@index([mobile])
+  @@map("garage_profiles")
+}
+
+model GarageVerificationRequest {
+  id          String                   @id @default(cuid())
+  garageId    String
+  target      GarageVerificationTarget
+  targetValue String
+  tokenHash   String?
+  otpHash     String?
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime                 @default(now())
+
+  garage User @relation(fields: [garageId], references: [id], onDelete: Cascade)
+
+  @@index([garageId, target, consumedAt])
+  @@index([expiresAt])
+  @@map("garage_verification_requests")
+}
+
+model BusinessQuery {
+  id        String              @id @default(cuid())
+  publicId  String              @unique @default(dbgenerated("next_business_query_public_id()"))
+  type      BusinessQueryType   @default(General)
+  source    String
+  name      String
+  email     String
+  phone     String?
+  company   String
+  message   String?
+  pagePath  String?
+  userAgent String?
+  ipHash    String?
+  status    BusinessQueryStatus @default(New)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([type, createdAt])
+  @@index([status, createdAt])
+  @@index([email])
+  @@map("business_queries")
+}
+
 model UserSession {
   id               String    @id @default(cuid())
   userId           String
@@ -298,7 +573,38 @@ model admin {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  sessions adminSession[]
+  sessions          adminSession[]
+  reviewedSuppliers User[]         @relation("SupplierApprovalReviewer")
+  notifications     Notification[] @relation("AdminNotificationRecipient")
+  sentNotifications Notification[] @relation("AdminNotificationActor")
+}
+
+model Notification {
+  id               String    @id @default(cuid())
+  recipientUserId  String?
+  recipientAdminId String?
+  actorUserId      String?
+  actorAdminId     String?
+  type             String
+  title            String
+  body             String
+  linkUrl          String?
+  entityType       String?
+  entityId         String?
+  readAt           DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  recipientUser  User?  @relation("UserNotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  recipientAdmin admin? @relation("AdminNotificationRecipient", fields: [recipientAdminId], references: [id], onDelete: Cascade)
+  actorUser      User?  @relation("UserNotificationActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorAdmin     admin? @relation("AdminNotificationActor", fields: [actorAdminId], references: [id], onDelete: SetNull)
+
+  @@index([recipientUserId, readAt, createdAt])
+  @@index([recipientAdminId, readAt, createdAt])
+  @@index([entityType, entityId])
+  @@index([type, createdAt])
+  @@map("notifications")
 }
 
 model role {
@@ -471,11 +777,28 @@ model PartMaster {
   supplierParts SupplierPart[]
   numbers       PartNumberIndex[]
   fitments      MasterFitment[]
+  savedByUsers  UserSavedPart[]
 
   @@index([normalizedPartNumber])
   @@index([normalizedPartNumber, groupId])
   @@index([groupId])
   @@map("part_master")
+}
+
+model UserSavedPart {
+  id        String   @id @default(cuid())
+  userId    String
+  partUid   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  part PartMaster @relation(fields: [partUid], references: [partUid], onDelete: Cascade)
+
+  @@unique([userId, partUid])
+  @@index([userId, createdAt])
+  @@index([partUid])
+  @@map("user_saved_parts")
 }
 
 model PartNumberIndex {
@@ -542,4 +865,14 @@ model UnmatchedPartSearchLog {
   @@index([normalizedNumber])
   @@index([userId])
   @@map("unmatched_part_search_logs")
+}
+
+model ApiRateLimit {
+  key       String   @id
+  count     Int
+  resetAt   DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([resetAt])
+  @@map("api_rate_limits")
 }

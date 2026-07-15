@@ -9,6 +9,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const body = await readJsonBody<{
     totalAmount?: unknown
     deliveryDays?: unknown
+    partType?: unknown
     validUntil?: unknown
     notes?: unknown
   }>(request)

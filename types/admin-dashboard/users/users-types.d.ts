@@ -1,7 +1,11 @@
 import type { ComponentType } from "react"
 import type { LucideProps } from "lucide-react"
 
-type UserRole = "Buyer" | "Fleet Manager" | "Garage Owner"
+export type UserRoleLabel =
+  | "Buyer"
+  | "Fleet Manager"
+  | "Garage Owner"
+  | "Supplier"
 
 type UserStatus = "Active" | "Suspended"
 
@@ -22,13 +26,24 @@ export type UsersTableColumn = {
 }
 
 export type UserRecord = {
+  internalId: string
   id: string
   name: string
   email: string
-  role: UserRole
+  phone: string
+  companyName: string
+  address: string
+  city: string
+  state: string
+  postalCode: string
+  country: string
+  roles: UserRoleLabel[]
+  role: string
   orders: number
   rfqs: number
   joined: string
+  lastLogin: string
+  emailVerified: boolean
   status: UserStatus
 }
 

@@ -1,8 +1,12 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { buildSwaggerUiHtml, getSwaggerSpec } from "@/lib/swagger"
+import { requireAdminFromRequest } from "@/lib/parts-mapping/auth"
 export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
+  const auth = await requireAdminFromRequest()
+  if (!auth.ok) return auth.response
+
   const shouldRenderUi = request.nextUrl.searchParams.get("ui") === "1"
   const specUrl = "/api/v1/admin/docs?raw=1"
 

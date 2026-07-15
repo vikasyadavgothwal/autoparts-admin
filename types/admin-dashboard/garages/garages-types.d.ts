@@ -1,5 +1,6 @@
 import type { ComponentType } from "react"
 import type { LucideProps } from "lucide-react"
+import type { GarageServiceReviewRecord } from "@/types/garage/reviews"
 
 export type GarageStatus = "Active" | "Pending" | "Suspended"
 export type GarageKpiTone =
@@ -25,11 +26,22 @@ export type GarageTableColumn = {
 }
 
 export type GarageRecord = {
+  internalId: string
   id: string
+  accountId: string
   name: string
   owner: string
+  email?: string
+  phone?: string
   location: string
+  address?: string
+  city?: string
+  state?: string
+  country?: string
+  pincode?: string
   rating: string
+  reviewsCount?: number
+  reviews?: GarageServiceReviewRecord[]
   bookings: number
   revenue: string
   joinDate: string

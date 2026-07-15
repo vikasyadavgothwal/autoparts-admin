@@ -22,12 +22,25 @@ export type SupplierTableColumn = {
 }
 
 export type SupplierRecord = {
+  internalId: string
   id: string
+  accountId: string
   name: string
+  contactName: string
   email: string
   phone: string
+  address: string
+  city: string
+  state: string
+  postalCode: string
+  country: string
   products: number
   rating: string
   joined: string
+  lastLogin: string
+  emailVerified: boolean
+  accountActive: boolean
+  reviewedAt: string
+  reviewedBy: string
   status: SupplierStatus
 }

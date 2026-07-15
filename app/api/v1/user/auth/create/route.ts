@@ -38,7 +38,7 @@ export async function POST(
     )
   }
 
-  const rateLimit = consumeUserAuthRateLimit(
+  const rateLimit = await consumeUserAuthRateLimit(
     `user-create:${getClientIp(request) ?? "unknown"}`,
     10,
     15 * 60 * 1_000,
