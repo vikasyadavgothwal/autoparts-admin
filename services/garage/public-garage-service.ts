@@ -346,10 +346,12 @@ export async function getPublicGarage(
   if (!garage) return null
 
   const summary = await mapSummary(garage)
+  const galleryImageUrls = garage.galleryImageUrls ?? []
   const galleryImageKeys = garage.galleryImageKeys ?? []
+  const galleryImageCount = Math.max(galleryImageUrls.length, galleryImageKeys.length)
   const signedGalleryImages = await Promise.all(
-    galleryImageKeys.map((key, index) =>
-      publicImageUrl(key, garage.galleryImageUrls?.[index] ?? null),
+    Array.from({ length: galleryImageCount }, (_, index) =>
+      publicImageUrl(galleryImageKeys[index] ?? null, galleryImageUrls[index] ?? null),
     ),
   )
 
@@ -359,7 +361,9 @@ export async function getPublicGarage(
     workingDays: garage.workingDays ?? [],
     workingHours: garage.workingHours ?? null,
     workingHoursByDay: workingHoursByDay(garage.workingHoursByDay),
-    galleryImages: signedGalleryImages.filter((url): url is string => Boolean(url)),
+    galleryImages: Array.from(
+      new Set(signedGalleryImages.filter((url): url is string => Boolean(url))),
+    ),
     galleryImageKeys,
     services: mapServices(garage.services),
     reviews: mapReviews(garage.reviews),

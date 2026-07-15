@@ -30,10 +30,10 @@ FIREBASE_CLIENT_EMAIL=
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 ```
 
-For local frontend access, also configure the existing user auth settings:
+For local frontend access, API CORS is handled globally for `/api/*` routes.
+Also configure the existing user auth JWT settings:
 
 ```bash
-USER_AUTH_ALLOWED_ORIGINS=http://localhost:3001
 USER_JWT_ACCESS_SECRET=
 USER_JWT_REFRESH_SECRET=
 ```

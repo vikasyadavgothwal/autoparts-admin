@@ -54,37 +54,9 @@ export function getUserRequestContext(
   }
 }
 
-export function isAllowedUserAuthOrigin(request: NextRequest): boolean {
-  const origin = request.headers.get("origin")
-  if (!origin) {
-    return true
-  }
-
-  const configuredOrigins = (process.env.USER_AUTH_ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
-
-  try {
-    const requestOrigin = new URL(request.url).origin
-    if (origin === requestOrigin || configuredOrigins.includes(origin)) {
-      return true
-    }
-
-    if (process.env.NODE_ENV !== "production") {
-      const originUrl = new URL(origin)
-      const requestUrl = new URL(request.url)
-      const localHosts = new Set(["localhost", "127.0.0.1", "::1"])
-      return (
-        localHosts.has(originUrl.hostname) &&
-        localHosts.has(requestUrl.hostname)
-      )
-    }
-
-    return false
-  } catch {
-    return false
-  }
+export function isAllowedUserAuthOrigin(request?: NextRequest): boolean {
+  void request
+  return true
 }
 
 export function setUserAuthCorsHeaders(
@@ -98,8 +70,15 @@ export function setUserAuthCorsHeaders(
 
   response.headers.set("Access-Control-Allow-Origin", origin)
   response.headers.set("Access-Control-Allow-Credentials", "true")
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type")
-  response.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS")
+  response.headers.set(
+    "Access-Control-Allow-Headers",
+    request.headers.get("access-control-request-headers") ??
+      "Accept, Authorization, Content-Type, Cookie, Origin, X-Requested-With",
+  )
+  response.headers.set(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+  )
   response.headers.append("Vary", "Origin")
 }
 
