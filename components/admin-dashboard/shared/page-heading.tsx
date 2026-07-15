@@ -1,4 +1,3 @@
-import type { ReactNode } from "react"
 import { DashboardPageHeader } from "@/components/dashboard/page-header"
 import type { PageHeadingProps } from "@/types/admin-dashboard/shared/page-heading"
 

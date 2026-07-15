@@ -31,7 +31,6 @@ import type {
   SupplierPartLookupInput,
   SupplierPartLookupResult,
   SupplierOfferUpdateInput,
-  SupplierPartRecord,
 } from "@/types/parts-mapping/parts-mapping"
 
 const DEFAULT_CURRENCY = "AED"

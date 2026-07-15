@@ -61,7 +61,7 @@ export async function POST(
     ))
   }
 
-  const rateLimit = consumeUserAuthRateLimit(
+  const rateLimit = await consumeUserAuthRateLimit(
     `user-login:${getClientIp(request) ?? "unknown"}`,
     10,
     15 * 60 * 1_000,
@@ -131,8 +131,6 @@ export async function POST(
       { status: 500 },
     ))
   }
-  console.log("Login successful for user:", result.user?.id, "Expires at:", result.expiresAt , result)
-
   const response = NextResponse.json(
     {
       ok: true as const,

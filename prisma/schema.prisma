@@ -866,3 +866,13 @@ model UnmatchedPartSearchLog {
   @@index([userId])
   @@map("unmatched_part_search_logs")
 }
+
+model ApiRateLimit {
+  key       String   @id
+  count     Int
+  resetAt   DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([resetAt])
+  @@map("api_rate_limits")
+}

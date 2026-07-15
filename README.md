@@ -31,6 +31,18 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY----
 ```
 
 For local frontend access, API CORS is handled globally for `/api/*` routes.
+Browser origins must be listed explicitly as a comma-separated allowlist. Native
+React Native and server-to-server requests normally omit `Origin` and continue
+to work without being added to this list:
+
+```bash
+USER_AUTH_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3004,http://localhost:4001
+```
+
+Use the real HTTPS origins for every deployed web app in production. Unknown
+browser origins are rejected with `403`; wildcard credentialed CORS is not
+supported.
+
 Also configure the existing user auth JWT settings:
 
 ```bash
@@ -39,6 +51,9 @@ USER_JWT_REFRESH_SECRET=
 ```
 
 Apply the Prisma migration before deploying the Firebase login flow.
+Deploy migration `20260715180000_api_rate_limits` before starting this version;
+login, account creation, token refresh, and public business-query abuse controls
+use its shared database-backed counter.
 Google and phone sign-in from the public website are Firebase Auth providers;
 the backend validates Firebase ID tokens and then issues the app session cookies.
 

@@ -1,5 +1,4 @@
 import type {
-  PublicPageContentResult,
   ProfessionalSectionPage,
 } from "@/types/admin-dashboard/public-pages/public-page-content"
 import type { PublicPageSeoConfig } from "@/types/admin-dashboard/public-pages/seo"

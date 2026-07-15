@@ -7,33 +7,19 @@ export const PUBLIC_PAGES: readonly PublicPageDefinition[] = [
   {
     slug: "home",
     title: "Home",
-    description:
-      "Welcome to the public pages area. Use this section to add quick links and campaign content for your storefront.",
+    description: "Manage the existing public marketplace home-page content.",
     details: [
-      "Track important dashboard entry points.",
-      "Keep quick actions and summaries here.",
-      "Add notices and promotional sections as needed.",
-    ],
-  },
-  {
-    slug: "browse-part",
-    title: "Browse Part",
-    description:
-      "Browse parts, vehicles, and supplier listings from a central catalog page.",
-    details: [
-      "Add product filters and category tabs.",
-      "Add search and sort controls.",
-      "Display part availability and lead times.",
+      "Edit the existing banner and marketplace sections.",
+      "Manage the existing public SEO metadata.",
     ],
   },
   {
     slug: "req",
-    title: "Req",
-    description: "Request history and request management landing page placeholder.",
+    title: "Request for Quote",
+    description: "Manage the existing public RFQ page content.",
     details: [
-      "Show active and completed requests.",
-      "Track request statuses and escalation states.",
-      "Highlight pending response times.",
+      "Edit the existing RFQ heading and supporting content.",
+      "Manage the existing public SEO metadata.",
     ],
   },
   {
@@ -41,53 +27,35 @@ export const PUBLIC_PAGES: readonly PublicPageDefinition[] = [
     title: "For Business",
     description: "Business-focused onboarding and capabilities information.",
     details: [
-      "Add service tiers and business plans.",
-      "Mention support and onboarding SLAs.",
-      "Track enterprise-level capabilities.",
+      "Edit the existing business page sections.",
+      "Manage the existing public SEO metadata.",
     ],
   },
   {
     slug: "privacy-policy",
     title: "Privacy Policy",
-    description:
-      "Privacy policy page content. Replace this copy with your legal policy text.",
+    description: "Manage the published privacy-policy document.",
     details: [
-      "Describe data collection scope.",
-      "Explain data storage and retention.",
-      "Document security and user rights details.",
+      "Edit the existing rich-text legal document.",
+      "Manage the existing public SEO metadata.",
     ],
   },
   {
     slug: "terms-of-services",
     title: "Terms of Services",
-    description:
-      "Terms of Service page placeholder. Use this section for legal policy updates.",
+    description: "Manage the published terms-of-service document.",
     details: [
-      "List platform usage rules.",
-      "Define account and payment terms.",
-      "Mention dispute and service limitation clauses.",
+      "Edit the existing rich-text legal document.",
+      "Manage the existing public SEO metadata.",
     ],
   },
   {
     slug: "cookies-settings",
     title: "Cookies Settings",
-    description:
-      "Cookie settings page for managing consent preferences and tracking controls.",
+    description: "Manage the published cookie-settings document.",
     details: [
-      "Add consent toggles for preferences.",
-      "List third-party analytics tools.",
-      "Expose consent history and revision timestamps.",
-    ],
-  },
-  {
-    slug: "search",
-    title: "Search",
-    description:
-      "Global search page where users can find relevant records and resources.",
-    details: [
-      "Add global search index.",
-      "Show recent search terms and suggestions.",
-      "Render filtered results with clear categories.",
+      "Edit the existing rich-text cookie document.",
+      "Manage the existing public SEO metadata.",
     ],
   },
 ] as const

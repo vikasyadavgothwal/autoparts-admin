@@ -2,7 +2,6 @@ import { randomBytes, randomInt, randomUUID, createHash } from "node:crypto"
 
 import { db } from "@/lib/database/prisma"
 import { verifyFirebaseIdToken } from "@/lib/firebase/admin"
-import { Prisma } from "@/lib/generated/prisma/client"
 import type {
   GarageDayHours,
   GarageProfileInput,
@@ -164,36 +163,6 @@ const mapProfileWithUser = (
   ...mapProfile(row),
   garageName: userGarageName(user),
 })
-
-const profileSelect = Prisma.sql`
-  SELECT
-    "id",
-    "garageId",
-    "contactEmail",
-    "contactEmailVerifiedAt",
-    "mobile",
-    "mobileVerifiedAt",
-    "workingDays",
-    "workingHours",
-    "workingHoursByDay",
-    "garageImageUrl",
-    "garageImageKey",
-    "address",
-    "country",
-    "state",
-    "city",
-    "pincode",
-    "jobCompletedNumber",
-    "yearsExperience",
-    "responseTime",
-    "certifications",
-    "about",
-    "galleryImageUrls",
-    "galleryImageKeys",
-    "createdAt",
-    "updatedAt"
-  FROM "garage_profiles"
-`
 
 export async function getGarageProfile(garageId: string) {
   const user = await db.user.findUnique({

@@ -140,8 +140,8 @@ export const normalizePublicPageSeoConfig = (
     ogImageKey: normalizeText(source.ogImageKey),
     noIndex: normalizeBoolean(source.noIndex),
     noFollow: normalizeBoolean(source.noFollow),
-    customHeadCode: normalizeText(source.customHeadCode),
-    customBodyCode: normalizeText(source.customBodyCode),
+    customHeadCode: "",
+    customBodyCode: "",
   }
 }
 

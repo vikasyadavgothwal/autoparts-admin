@@ -1,7 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import type { ComponentType } from "react"
-import type { LucideProps } from "lucide-react"
 import type { SupplierKpi } from "@/types/admin-dashboard/suppliers/suppliers-types"
 import type { SuppliersCardProps } from "@/types/admin-dashboard/suppliers/suppliers-card"
 
