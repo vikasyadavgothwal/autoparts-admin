@@ -61,6 +61,16 @@ const reviewerName = (supplier: SupplierAccount) =>
   supplier.supplierReviewedBy?.email ||
   "Not reviewed"
 
+const documentUrl = (value: string | null) => {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    return url.protocol === "http:" || url.protocol === "https:" ? value : null
+  } catch {
+    return null
+  }
+}
+
 const mapSupplier = (supplier: SupplierAccount): SupplierRecord => ({
   internalId: supplier.id,
   id: supplier.supplierPublicId ?? supplier.publicId,
@@ -69,6 +79,12 @@ const mapSupplier = (supplier: SupplierAccount): SupplierRecord => ({
   contactName: fullName(supplier),
   email: supplier.email ?? "Not added",
   phone: supplier.phone ?? "Not added",
+  tradeLicenseNumber: supplier.tradeLicenseNumber ?? "Not added",
+  contactPerson: supplier.supplierContactPerson ?? "Not added",
+  designation: supplier.supplierDesignation ?? "Not added",
+  tradeLicenseImageUrl: documentUrl(supplier.tradeLicenseImageUrl),
+  vatTrnNumber: supplier.vatTrnNumber ?? "Not added",
+  vatTrnImageUrl: documentUrl(supplier.vatTrnImageUrl),
   address:
     [supplier.addressLine1, supplier.addressLine2].filter(Boolean).join(", ") ||
     "Not added",

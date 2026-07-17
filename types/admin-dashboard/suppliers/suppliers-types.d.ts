@@ -29,6 +29,12 @@ export type SupplierRecord = {
   contactName: string
   email: string
   phone: string
+  tradeLicenseNumber: string
+  contactPerson: string
+  designation: string
+  tradeLicenseImageUrl: string | null
+  vatTrnNumber: string
+  vatTrnImageUrl: string | null
   address: string
   city: string
   state: string

@@ -58,6 +58,20 @@ const nullableText = (value: unknown, maxLength = 255) => {
   return normalized;
 };
 
+const nullableHttpUrl = (value: unknown) => {
+  const normalized = nullableText(value, 2_048);
+  if (!normalized) return null;
+  try {
+    const url = new URL(normalized);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error();
+    }
+  } catch {
+    throw new Error("Document image URL must be a valid HTTP or HTTPS URL");
+  }
+  return normalized;
+};
+
 const phoneText = (value: unknown) => text(value).replace(/[^\d+]/g, "");
 
 const hashSecret = (value: string) =>
@@ -117,6 +131,12 @@ async function mapSupplierProfile(
       email: true,
       emailVerifiedAt: true,
       phone: true,
+      tradeLicenseNumber: true,
+      supplierContactPerson: true,
+      supplierDesignation: true,
+      tradeLicenseImageUrl: true,
+      vatTrnNumber: true,
+      vatTrnImageUrl: true,
       firebaseUid: true,
       avatarUrl: true,
       addressLine1: true,
@@ -147,6 +167,12 @@ async function mapSupplierProfile(
     email: supplier.email,
     emailVerifiedAt: supplier.emailVerifiedAt?.toISOString() ?? null,
     phone: supplier.phone,
+    tradeLicenseNumber: supplier.tradeLicenseNumber,
+    contactPerson: supplier.supplierContactPerson,
+    designation: supplier.supplierDesignation,
+    tradeLicenseImageUrl: await publicImageUrl(supplier.tradeLicenseImageUrl),
+    vatTrnNumber: supplier.vatTrnNumber,
+    vatTrnImageUrl: await publicImageUrl(supplier.vatTrnImageUrl),
     mobileVerifiedAt: mobileVerifiedAt?.toISOString() ?? null,
     avatarUrl: await publicImageUrl(supplier.avatarUrl),
     addressLine1: supplier.addressLine1,
@@ -175,6 +201,12 @@ export async function updateSupplierProfile(
   const email = nullableText(input.email, 254)?.toLowerCase() ?? null;
   const phone = nullableText(input.phone, 40);
   const postalCode = nullableText(input.postalCode, 40);
+  const tradeLicenseNumber = nullableText(input.tradeLicenseNumber, 100);
+  const contactPerson = nullableText(input.contactPerson, 160);
+  const designation = nullableText(input.designation, 120);
+  const tradeLicenseImageUrl = nullableHttpUrl(input.tradeLicenseImageUrl);
+  const vatTrnNumber = nullableText(input.vatTrnNumber, 100);
+  const vatTrnImageUrl = nullableHttpUrl(input.vatTrnImageUrl);
 
   if (email && !EMAIL_PATTERN.test(email)) {
     throw new Error("Enter a valid email address");
@@ -196,6 +228,12 @@ export async function updateSupplierProfile(
     where: { id: supplierId },
     data: {
       companyName,
+      tradeLicenseNumber,
+      supplierContactPerson: contactPerson,
+      supplierDesignation: designation,
+      tradeLicenseImageUrl,
+      vatTrnNumber,
+      vatTrnImageUrl,
       firstName,
       lastName,
       addressLine1: nullableText(input.addressLine1, 255),

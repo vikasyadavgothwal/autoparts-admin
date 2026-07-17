@@ -111,6 +111,73 @@ enum BusinessQueryStatus {
   Archived
 }
 
+model ProductCategory {
+  id         String                @id @default(cuid())
+  name       String
+  parentId   String?
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+  parent     ProductCategory?      @relation("ProductCategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children   ProductCategory[]     @relation("ProductCategoryHierarchy")
+  brandLinks BrandLookupCategory[]
+
+  @@index([parentId])
+  @@index([name])
+  @@map("product_categories")
+}
+
+model VehicleLookup {
+  id        String      @id @default(cuid())
+  make      String
+  model     String
+  tierId    String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  tier      TierLookup? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+
+  @@index([make, model])
+  @@index([tierId])
+  @@map("vehicle_lookups")
+}
+
+model BrandLookup {
+  id            String                @id @default(cuid())
+  brandName     String
+  tierId        String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  tier          TierLookup?           @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  categoryLinks BrandLookupCategory[]
+
+  @@unique([brandName])
+  @@index([tierId])
+  @@map("brand_lookups")
+}
+
+model BrandLookupCategory {
+  brandId    String
+  categoryId String
+  brand      BrandLookup     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  category   ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([brandId, categoryId])
+  @@index([categoryId])
+  @@map("brand_lookup_categories")
+}
+
+model TierLookup {
+  id                  String          @id @default(cuid())
+  customerFacingLabel String
+  description         String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  vehicles            VehicleLookup[]
+  brands              BrandLookup[]
+
+  @@unique([customerFacingLabel])
+  @@map("tier_lookups")
+}
+
 model User {
   id                        String                      @id @default(cuid())
   publicId                  String                      @unique @default(dbgenerated("next_user_public_id()"))
@@ -125,6 +192,12 @@ model User {
   lastName                  String?
   avatarUrl                 String?
   companyName               String?
+  tradeLicenseNumber        String?
+  supplierContactPerson     String?
+  supplierDesignation       String?
+  tradeLicenseImageUrl      String?
+  vatTrnNumber              String?
+  vatTrnImageUrl            String?
   addressLine1              String?
   addressLine2              String?
   city                      String?
