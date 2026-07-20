@@ -42,6 +42,12 @@ const detailRows = (supplier: SupplierRecord) => [
   ["Contact person", supplier.contactName],
   ["Email", supplier.email],
   ["Mobile", supplier.phone],
+  ["Trade license number", supplier.tradeLicenseNumber],
+  ["Contact person", supplier.contactPerson],
+  ["Designation", supplier.designation],
+  ["Trade license image", supplier.tradeLicenseImageUrl ?? "Not added"],
+  ["VAT TRN number", supplier.vatTrnNumber],
+  ["VAT TRN image", supplier.vatTrnImageUrl ?? "Not added"],
   ["Address", supplier.address],
   ["City", supplier.city],
   ["State", supplier.state],
@@ -218,7 +224,20 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
                   >
                     <dt className="text-xs text-dashboard-muted">{label}</dt>
                     <dd className="mt-1 break-words text-sm font-medium text-dashboard-text">
-                      {value}
+                      {(label === "Trade license image" ||
+                        label === "VAT TRN image") &&
+                      value !== "Not added" ? (
+                        <a
+                          href={value}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-dashboard-accent underline underline-offset-4"
+                        >
+                          View document
+                        </a>
+                      ) : (
+                        value
+                      )}
                     </dd>
                   </div>
                 ))}

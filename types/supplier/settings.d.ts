@@ -4,6 +4,12 @@ export type SupplierProfileInput = {
   lastName?: unknown;
   email?: unknown;
   phone?: unknown;
+  tradeLicenseNumber?: unknown;
+  contactPerson?: unknown;
+  designation?: unknown;
+  tradeLicenseImageUrl?: unknown;
+  vatTrnNumber?: unknown;
+  vatTrnImageUrl?: unknown;
   addressLine1?: unknown;
   addressLine2?: unknown;
   city?: unknown;
@@ -22,6 +28,12 @@ export type SupplierProfileRecord = {
   email: string | null;
   emailVerifiedAt: string | null;
   phone: string | null;
+  tradeLicenseNumber: string | null;
+  contactPerson: string | null;
+  designation: string | null;
+  tradeLicenseImageUrl: string | null;
+  vatTrnNumber: string | null;
+  vatTrnImageUrl: string | null;
   mobileVerifiedAt: string | null;
   avatarUrl: string | null;
   addressLine1: string | null;

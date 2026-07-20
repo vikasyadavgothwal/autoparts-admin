@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import * as XLSX from "xlsx"
 
 import { requireSupplierFromRequest } from "@/lib/parts-mapping/auth"
+import { syncCatalogLookups } from "@/services/catalog/catalog-lookup-service"
 import {
   importSupplierPartsBulk,
   updateSupplierPartPricingBulk,
@@ -14,6 +15,7 @@ import type {
   SupplierBulkProductRow,
   SupplierBulkStockRow,
 } from "@/types/parts-mapping/parts-mapping"
+import type { CatalogLookupWorkbookData } from "@/types/catalog/lookups"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 300
@@ -47,6 +49,18 @@ const splitValues = (value: string) =>
         .filter(Boolean),
     ),
   )
+
+const splitLines = (value: string) =>
+  value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+const normalizeLookupId = (value: string) => {
+  const normalized = value.trim()
+  if (!/^\d+\.\d{8,}$/.test(normalized)) return normalized
+  return Number(normalized).toFixed(10).replace(/0+$/, "").replace(/\.$/, "")
+}
 
 const normalizeImageUrl = (value: string) => {
   const trimmedValue = value.trim()
@@ -257,11 +271,10 @@ const parsePricingRows = async (
   }))
 }
 
-const parseProductRows = async (
-  file: File,
+const parseProductRows = (
+  rows: Record<string, unknown>[],
   imageRows: SupplierBulkImageRow[],
-): Promise<SupplierBulkProductRow[]> => {
-  const rows = await parseSpreadsheet(file)
+): SupplierBulkProductRow[] => {
   const headers = Object.keys(rows[0]).map(normalizeHeader)
   const hasSkuColumn = headers.some((header) =>
     ["sku", "vendorsku", "vendorskunumber"].includes(header),
@@ -310,6 +323,7 @@ const parseProductRows = async (
       "OEM Part Number",
       "OEM Number",
       "OEM",
+      "Cross References | OEM Part Number",
     ])
     const mpn = readCell(row, [
       "Manufacturer Part Number (MPN)",
@@ -342,8 +356,15 @@ const parseProductRows = async (
         "Base Price",
         "Discount Price (AED)",
         "Discount Price",
+        "Product Pricing | Discount Price (AED)",
+        "Product Pricing | Base Price (AED)",
       ]),
-      stock: readCell(row, ["Stock", "Quantity", "Qty"]),
+      stock: readCell(row, [
+        "Stock",
+        "Quantity",
+        "Qty",
+        "Product Inventory | Quantity",
+      ]),
       productName: readCell(row, ["Product Name", "Product"]),
       shortDescription: readCell(row, [
         "Short Description",
@@ -357,25 +378,200 @@ const parseProductRows = async (
       status: readCell(row, ["Status"]),
       grade: readCell(row, ["Grade"]),
       condition: readCell(row, ["Condition"]),
+      category: readCell(row, ["Category Name", "Category"]),
       oemSupersessionNumbers: splitValues(
-        readCell(row, ["OEM Supersession Numbers", "Supersession Numbers"]),
+        readCell(row, [
+          "OEM Supersession Numbers",
+          "Supersession Numbers",
+          "Cross References | OEM Supersession Numbers",
+        ]),
       ),
       competitorPartNumber: readCell(row, [
         "Competitor OEM Part Number",
         "Competitor OEM Number",
         "Competitor Part Number",
+        "Cross References | Competitor Part Number",
       ]),
-      competitorBrandName: readCell(row, ["Competitor Brand Name"]),
-      hsCode: readCell(row, ["HS Code", "Harmonized System Code"]),
-      imageUrls: imagesBySku.get(vendorSku.trim().toUpperCase()) ?? [],
+      competitorBrandName: readCell(row, [
+        "Competitor Brand Name",
+        "Cross References | Competitor Brand Name",
+      ]),
+      hsCode: readCell(row, [
+        "HS Code",
+        "Harmonized System Code",
+        "Cross References | HS Code",
+        "Shipping Logistics | HS Code",
+      ]),
+      imageUrls:
+        imagesBySku.get(vendorSku.trim().toUpperCase()) ??
+        [
+          normalizeImageUrl(
+            readCell(row, [
+              "Product Images | Primary Image URL",
+              "Primary Image URL",
+            ]),
+          ),
+          ...splitValues(
+            readCell(row, [
+              "Product Images | Gallery Image URLs",
+              "Gallery Image URLs",
+            ]),
+          ).map(normalizeImageUrl),
+        ].filter(Boolean),
       rawUploadData,
     }
   })
 }
 
+const rowsFromSheet = (
+  workbook: XLSX.WorkBook,
+  sheetName: string,
+): Record<string, unknown>[] => {
+  const sheet = workbook.Sheets[sheetName]
+  if (!sheet) throw new Error(`The workbook is missing ${sheetName}`)
+  return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+    defval: "",
+    raw: false,
+  })
+}
+
+const parseUnifiedWorkbook = async (file: File) => {
+  if (file.size === 0) throw new Error("The selected workbook is empty")
+  if (file.size > MAX_FILE_BYTES) throw new Error("The workbook exceeds 10 MB")
+  if (file.name.split(".").pop()?.toLowerCase() !== "xlsx") {
+    throw new Error("Upload the Product Master XLSX template")
+  }
+
+  const workbook = XLSX.read(await file.arrayBuffer(), {
+    type: "array",
+    cellDates: false,
+  })
+  const productRows = rowsFromSheet(workbook, "Product_Master")
+  if (productRows.length > MAX_ROWS) {
+    throw new Error(`A single upload can contain at most ${MAX_ROWS} rows`)
+  }
+
+  const categoryRows = rowsFromSheet(workbook, "Lookup_Categories")
+  const vehicleRows = rowsFromSheet(workbook, "Lookup_Vehicles")
+  const brandRows = rowsFromSheet(workbook, "Lookup_Brands")
+  const gradeRows = rowsFromSheet(workbook, "Lookup_Grades")
+
+  const lookups: CatalogLookupWorkbookData = {
+    categories: categoryRows.map((row) => ({
+      id: normalizeLookupId(readCell(row, ["Category ID"])),
+      name: readCell(row, ["Category Name"]),
+      parentId:
+        normalizeLookupId(readCell(row, ["Parent Category"])) || null,
+    })),
+    vehicles: vehicleRows.map((row) => ({
+      id: readCell(row, ["Vehicle ID"]),
+      make: readCell(row, ["Make"]),
+      model: readCell(row, ["Model"]),
+      tierLabel: readCell(row, ["Tier"]) || null,
+    })),
+    brands: brandRows.map((row) => ({
+      id: readCell(row, ["Brand ID"]),
+      brandName: readCell(row, ["Brand Name"]),
+      categoryNames: splitValues(readCell(row, ["Product Categories"])),
+      tierLabel: readCell(row, ["Tier"]) || null,
+    })),
+    grades: gradeRows.map((row) => ({
+      customerFacingLabel: readCell(row, ["Customer-Facing Label"]),
+      description: readCell(row, ["Description"]) || null,
+    })),
+  }
+
+  for (const row of productRows) {
+    const categoryId = normalizeLookupId(readCell(row, ["Category ID"]))
+    const categoryName = readCell(row, ["Category Name"])
+    if (
+      categoryId &&
+      categoryName &&
+      !lookups.categories.some((category) => category.id === categoryId)
+    ) {
+      lookups.categories.push({
+        id: categoryId,
+        name: categoryName,
+        parentId:
+          normalizeLookupId(readCell(row, ["Parent Category"])) || null,
+      })
+    }
+
+    const brandId = readCell(row, ["Brand ID"])
+    const brandName = readCell(row, ["Brand Name"])
+    if (
+      brandId &&
+      brandName &&
+      !lookups.brands.some((brand) => brand.id === brandId)
+    ) {
+      lookups.brands.push({
+        id: brandId,
+        brandName,
+        categoryNames: splitValues(readCell(row, ["Product Categories"])),
+        tierLabel: readCell(row, ["Tier", "Tier 1"]) || null,
+      })
+    }
+
+    const ids = splitLines(readCell(row, ["Vehicle ID"]))
+    const makes = splitLines(readCell(row, ["Vehicle Fitment | Make"]))
+    const models = splitLines(readCell(row, ["Vehicle Fitment | Model"]))
+    ids.forEach((id, index) => {
+      if (!lookups.vehicles.some((vehicle) => vehicle.id === id)) {
+        lookups.vehicles.push({
+          id,
+          make: makes[index] ?? makes[0] ?? "Unknown",
+          model: models[index] ?? models[0] ?? "Unknown",
+          tierLabel: readCell(row, ["Tier", "Tier 1"]) || null,
+        })
+      }
+    })
+  }
+
+  return { productRows, lookups }
+}
+
 const getUploadedFile = (formData: FormData, key: string) => {
   const value = formData.get(key)
   return value instanceof File && value.size > 0 ? value : null
+}
+
+const createUnmappedWorkbookBase64 = (
+  rows: Array<{
+    rowNumber: number
+    vendorSku: string
+    oemNumber?: string | null
+    brand?: string | null
+    competitorPartNumber?: string | null
+    competitorBrandName?: string | null
+    reason: string
+  }>,
+) => {
+  if (rows.length === 0) return null
+  const sheet = XLSX.utils.json_to_sheet(
+    rows.map((row) => ({
+      "Source Row": row.rowNumber,
+      "Vendor SKU": row.vendorSku,
+      "OEM Part Number": row.oemNumber ?? "",
+      "Brand Name": row.brand ?? "",
+      "Competitor Part Number": row.competitorPartNumber ?? "",
+      "Competitor Brand Name": row.competitorBrandName ?? "",
+      "Mapping Status": "Unmapped",
+      "Reason": row.reason,
+    })),
+  )
+  sheet["!cols"] = [
+    { wch: 12 },
+    { wch: 20 },
+    { wch: 22 },
+    { wch: 20 },
+    { wch: 24 },
+    { wch: 24 },
+    { wch: 16 },
+    { wch: 60 },
+  ]
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, sheet, "Unmapped_Products")
+  return XLSX.write(workbook, { type: "base64", bookType: "xlsx" })
 }
 
 export async function POST(request: NextRequest) {
@@ -386,6 +582,92 @@ export async function POST(request: NextRequest) {
 
   try {
     const formData = await request.formData()
+    const workbookFile = getUploadedFile(formData, "workbookFile")
+
+    if (workbookFile) {
+      const parsed = await parseUnifiedWorkbook(workbookFile)
+      const lookupSummary = await syncCatalogLookups(parsed.lookups)
+      const catalogRows = parsed.productRows.filter((row) =>
+        Boolean(
+          readCell(row, ["Product Name"]) ||
+            readCell(row, ["Manufacturer Part Number (MPN)"]) ||
+            readCell(row, ["Cross References | OEM Part Number"]),
+        ),
+      )
+      if (catalogRows.length === 0) {
+        throw new Error("Product_Master does not contain product rows")
+      }
+
+      const products = parseProductRows(catalogRows, [])
+      const summary = await importSupplierPartsBulk(auth.user.id, products)
+
+      const stockRows: SupplierBulkStockRow[] = catalogRows
+        .map((row, index) => ({
+          rowNumber: index + 2,
+          vendorSku: readCell(row, ["SKU"]),
+          warehouseId: readCell(row, [
+            "Product Inventory | Warehouse ID",
+          ]),
+          quantity: readCell(row, ["Product Inventory | Quantity"]),
+          leadTime: readCell(row, ["Product Inventory | Lead Time"]),
+          lowStockThreshold: readCell(row, [
+            "Product Inventory | Low Stock Threshold",
+          ]),
+          rawUploadData: { ...row },
+        }))
+        .filter((row) => row.vendorSku && row.warehouseId && row.quantity !== "")
+      const pricingRows: SupplierBulkPricingRow[] = catalogRows
+        .map((row, index) => ({
+          rowNumber: index + 2,
+          vendorSku: readCell(row, ["SKU"]),
+          basePrice: readCell(row, [
+            "Product Pricing | Base Price (AED)",
+          ]),
+          discountPrice: readCell(row, [
+            "Product Pricing | Discount Price (AED)",
+          ]),
+          currency: readCell(row, ["Product Pricing | Currency"]),
+          taxClass: readCell(row, ["Product Pricing | Tax Class"]),
+          vat: readCell(row, ["Product Pricing | VAT"]),
+          maxRetailPrice: readCell(row, [
+            "Product Pricing | Max Retail Price",
+          ]),
+          wholesaleDistributorPrice: readCell(row, [
+            "Product Pricing | Wholesale/Distributor Pricing",
+          ]),
+          fleetPrice: readCell(row, ["Product Pricing | Fleet Pricing"]),
+          rawUploadData: { ...row },
+        }))
+        .filter(
+          (row) =>
+            row.vendorSku &&
+            (row.basePrice !== "" || row.discountPrice !== ""),
+        )
+
+      const stockSummary = stockRows.length
+        ? await updateSupplierPartStockBulk(auth.user.id, stockRows)
+        : null
+      const pricingSummary = pricingRows.length
+        ? await updateSupplierPartPricingBulk(auth.user.id, pricingRows)
+        : null
+
+      return NextResponse.json({
+        ok: true,
+        mode: "products",
+        summary: {
+          ...summary,
+          lookupSummary,
+          stockUpdatedCount: stockSummary?.updatedCount ?? 0,
+          pricingUpdatedCount: pricingSummary?.updatedCount ?? 0,
+          ignoredBundleRows: parsed.productRows.length - catalogRows.length,
+          unmatchedImageRows: [],
+          unmappedWorkbookBase64: createUnmappedWorkbookBase64(
+            summary.unmapped,
+          ),
+        },
+      })
+    }
+
     const mode = String(formData.get("mode") ?? "products")
     const imageFile = getUploadedFile(formData, "imageFile")
     const stockFile = getUploadedFile(formData, "stockFile")
@@ -442,7 +724,10 @@ export async function POST(request: NextRequest) {
     }
 
     const imageRows = imageFile ? await parseImageRows(imageFile) : []
-    const productRows = await parseProductRows(productFile, imageRows)
+    const productRows = parseProductRows(
+      await parseSpreadsheet(productFile),
+      imageRows,
+    )
     const summary = await importSupplierPartsBulk(auth.user.id, productRows)
     const productSkus = new Set(
       productRows.map((row) => row.vendorSku.trim().toUpperCase()),

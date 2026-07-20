@@ -111,6 +111,83 @@ enum BusinessQueryStatus {
   Archived
 }
 
+model ProductCategory {
+  id         String                @id @default(cuid())
+  name       String
+  parentId   String?
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+  parent     ProductCategory?      @relation("ProductCategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children   ProductCategory[]     @relation("ProductCategoryHierarchy")
+  brandLinks BrandLookupCategory[]
+
+  @@index([parentId])
+  @@index([name])
+  @@map("product_categories")
+}
+
+model VehicleLookup {
+  id        String      @id @default(cuid())
+  make      String
+  model     String
+  tierId    String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  tier      TierLookup? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+
+  @@index([make, model])
+  @@index([tierId])
+  @@map("vehicle_lookups")
+}
+
+model BrandLookup {
+  id            String                @id @default(cuid())
+  brandName     String
+  tierId        String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  tier          TierLookup?           @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  categoryLinks BrandLookupCategory[]
+
+  @@unique([brandName])
+  @@index([tierId])
+  @@map("brand_lookups")
+}
+
+model BrandLookupCategory {
+  brandId    String
+  categoryId String
+  brand      BrandLookup     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  category   ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([brandId, categoryId])
+  @@index([categoryId])
+  @@map("brand_lookup_categories")
+}
+
+model TierLookup {
+  id                  String          @id @default(cuid())
+  customerFacingLabel String
+  description         String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  vehicles            VehicleLookup[]
+  brands              BrandLookup[]
+
+  @@unique([customerFacingLabel])
+  @@map("tier_lookups")
+}
+
+model GradeLookup {
+  id                  String   @id @default(cuid())
+  customerFacingLabel String   @unique
+  description         String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("grade_lookups")
+}
+
 model User {
   id                        String                      @id @default(cuid())
   publicId                  String                      @unique @default(dbgenerated("next_user_public_id()"))
@@ -125,6 +202,12 @@ model User {
   lastName                  String?
   avatarUrl                 String?
   companyName               String?
+  tradeLicenseNumber        String?
+  supplierContactPerson     String?
+  supplierDesignation       String?
+  tradeLicenseImageUrl      String?
+  vatTrnNumber              String?
+  vatTrnImageUrl            String?
   addressLine1              String?
   addressLine2              String?
   city                      String?
@@ -298,14 +381,33 @@ model RfqBid {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
-  rfq      Rfq    @relation(fields: [rfqId], references: [id], onDelete: Cascade)
-  supplier User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  rfq      Rfq          @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplier User         @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   order    Order?
+  items    RfqBidItem[]
 
   @@unique([rfqId, supplierId])
   @@index([supplierId, status])
   @@index([rfqId, status])
   @@map("rfq_bids")
+}
+
+model RfqBidItem {
+  id        String   @id @default(cuid())
+  bidId     String
+  rfqPartId String
+  unitPrice Int
+  lineTotal Int
+  partType  String   @default("New")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bid     RfqBid  @relation(fields: [bidId], references: [id], onDelete: Cascade)
+  rfqPart RfqPart @relation(fields: [rfqPartId], references: [id], onDelete: Cascade)
+
+  @@unique([bidId, rfqPartId])
+  @@index([rfqPartId])
+  @@map("rfq_bid_items")
 }
 
 model Order {
@@ -376,7 +478,8 @@ model RfqPart {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  rfq Rfq @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  rfq      Rfq          @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  bidItems RfqBidItem[]
 
   @@index([rfqId])
   @@index([partNumber])

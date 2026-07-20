@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { readJsonBody, requireSupplierFromRequest } from "@/lib/parts-mapping/auth"
 import { updateSupplierPartOffer } from "@/services/parts-mapping/parts-mapping-service"
 import type { SupplierOfferUpdateInput } from "@/types/parts-mapping/parts-mapping"
+import type { SupplierProductMasterInput } from "@/types/parts-mapping/parts-mapping"
+import { updateSupplierProductMaster } from "@/actions/supplier/parts/supplier-product-master"
 
 export const dynamic = "force-dynamic"
 
@@ -15,7 +17,7 @@ export async function PATCH(
     return auth.response
   }
 
-  const parsed = await readJsonBody<SupplierOfferUpdateInput>(request)
+  const parsed = await readJsonBody<SupplierOfferUpdateInput | SupplierProductMasterInput>(request)
   if (!parsed.ok) {
     return NextResponse.json(
       { ok: false, message: parsed.message },
@@ -25,7 +27,9 @@ export async function PATCH(
 
   const { id } = await params
   try {
-    const part = await updateSupplierPartOffer(auth.user.id, id, parsed.body)
+    const part = parsed.body && "mode" in parsed.body && parsed.body.mode === "product_master_form"
+      ? await updateSupplierProductMaster(auth.user.id, id, parsed.body)
+      : await updateSupplierPartOffer(auth.user.id, id, parsed.body as SupplierOfferUpdateInput)
     return NextResponse.json({ ok: true, part }, { status: 200 })
   } catch (error) {
     return NextResponse.json(
