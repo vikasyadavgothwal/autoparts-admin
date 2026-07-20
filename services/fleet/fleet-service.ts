@@ -204,7 +204,10 @@ async function notifyRfqBidAccepted(input: {
 
 const mapRfqMoney = <T extends {
   parts: Array<{ targetPrice: number | null }>
-  bids?: Array<{ totalAmount: number }>
+  bids?: Array<{
+    totalAmount: number
+    items?: Array<{ unitPrice: number; lineTotal: number }>
+  }>
   order?: { totalAmount: number } | null
 }>(rfq: T) => ({
   ...rfq,
@@ -213,7 +216,17 @@ const mapRfqMoney = <T extends {
     targetPrice: part.targetPrice === null ? null : part.targetPrice / 100,
   })),
   ...(rfq.bids
-    ? { bids: rfq.bids.map((bid) => ({ ...bid, totalAmount: bid.totalAmount / 100 })) }
+    ? { bids: rfq.bids.map((bid) => ({
+        ...bid,
+        totalAmount: bid.totalAmount / 100,
+        ...(bid.items ? {
+          items: bid.items.map((item) => ({
+            ...item,
+            unitPrice: item.unitPrice / 100,
+            lineTotal: item.lineTotal / 100,
+          })),
+        } : {}),
+      })) }
     : {}),
   ...(rfq.order
     ? { order: { ...rfq.order, totalAmount: rfq.order.totalAmount / 100 } }
@@ -490,7 +503,11 @@ export async function listSupplierRfqs(
       include: {
         parts: true,
         fleetVehicle: true,
-        bids: { where: { supplierId }, orderBy: { updatedAt: "desc" } },
+        bids: {
+          where: { supplierId },
+          include: { items: { orderBy: { createdAt: "asc" } } },
+          orderBy: { updatedAt: "desc" },
+        },
       },
       orderBy: { createdAt: "desc" },
       skip: (safePage - 1) * safePageSize,
@@ -541,6 +558,7 @@ export async function listFleetRfqs(
         fleetVehicle: true,
         bids: {
           include: {
+            items: { orderBy: { createdAt: "asc" } },
             supplier: {
               select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
             },
@@ -597,6 +615,7 @@ export async function listUserRfqs(
         parts: true,
         bids: {
           include: {
+            items: { orderBy: { createdAt: "asc" } },
             supplier: {
               select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
             },
@@ -635,6 +654,7 @@ export async function listAdminRfqs(page = 1, pageSize = 100) {
         },
         bids: {
           include: {
+            items: { orderBy: { createdAt: "asc" } },
             supplier: {
               select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
             },
@@ -656,11 +676,10 @@ export async function submitRfqBid(
   supplierId: string,
   rfqId: string,
   input: {
-    totalAmount?: unknown
     deliveryDays?: unknown
-    partType?: unknown
     validUntil?: unknown
     notes?: unknown
+    items?: unknown
   },
 ) {
   const rfq = await db.rfq.findFirst({
@@ -671,6 +690,7 @@ export async function submitRfqBid(
       requesterId: true,
       responseDeadline: true,
       source: true,
+      parts: { select: { id: true, quantity: true, partName: true } },
     },
   })
   if (!rfq) throw new Error("This RFQ is not open for quotes")
@@ -686,30 +706,73 @@ export async function submitRfqBid(
     throw new Error("Quote validity date must be in the future")
   }
 
+  if (!Array.isArray(input.items)) {
+    throw new Error("Add a quote for every requested part")
+  }
+  const submittedItems = input.items as Array<{
+    rfqPartId?: unknown
+    unitPrice?: unknown
+    partType?: unknown
+  }>
+  if (submittedItems.length !== rfq.parts.length) {
+    throw new Error("A unit price is required for every requested part")
+  }
+  const submittedByPartId = new Map(submittedItems.map((item) => [text(item.rfqPartId), item]))
+  if (submittedByPartId.size !== rfq.parts.length) {
+    throw new Error("Each requested part must be quoted exactly once")
+  }
+  const bidItems = rfq.parts.map((part) => {
+    const submitted = submittedByPartId.get(part.id)
+    if (!submitted) throw new Error(`Add a quote for ${part.partName}`)
+    const unitPrice = requiredMoneyToCents(submitted.unitPrice, `${part.partName} unit price`)
+    return {
+      rfqPartId: part.id,
+      unitPrice,
+      lineTotal: unitPrice * part.quantity,
+      partType: rfqBidPartType(submitted.partType),
+    }
+  })
+  const totalAmount = bidItems.reduce((sum, item) => sum + item.lineTotal, 0)
+  if (!Number.isSafeInteger(totalAmount)) throw new Error("Quote total is too large")
+
   const existingBid = await db.rfqBid.findUnique({
     where: { rfqId_supplierId: { rfqId, supplierId } },
     select: { id: true },
   })
 
-  const bid = await db.rfqBid.upsert({
-    where: { rfqId_supplierId: { rfqId, supplierId } },
-    create: {
-      rfqId,
-      supplierId,
-      totalAmount: requiredMoneyToCents(input.totalAmount, "Total quote"),
-      deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
-      partType: rfqBidPartType(input.partType),
-      validUntil,
-      notes: text(input.notes) || null,
-    },
-    update: {
-      totalAmount: requiredMoneyToCents(input.totalAmount, "Total quote"),
-      deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
-      partType: rfqBidPartType(input.partType),
-      validUntil,
-      notes: text(input.notes) || null,
-      status: RfqBidStatus.submitted,
-    },
+  const bid = await db.$transaction(async (transaction) => {
+    const savedBid = await transaction.rfqBid.upsert({
+      where: { rfqId_supplierId: { rfqId, supplierId } },
+      create: {
+        rfqId,
+        supplierId,
+        totalAmount,
+        deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
+        partType: bidItems.every((item) => item.partType === bidItems[0]?.partType)
+          ? bidItems[0].partType
+          : "Mixed",
+        validUntil,
+        notes: text(input.notes) || null,
+      },
+      update: {
+        totalAmount,
+        deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
+        partType: bidItems.every((item) => item.partType === bidItems[0]?.partType)
+          ? bidItems[0].partType
+          : "Mixed",
+        validUntil,
+        notes: text(input.notes) || null,
+        status: RfqBidStatus.submitted,
+      },
+    })
+    await transaction.rfqBidItem.deleteMany({ where: { bidId: savedBid.id } })
+    await transaction.rfqBidItem.createMany({
+      data: bidItems.map((item) => ({ ...item, bidId: savedBid.id })),
+    })
+    return transaction.rfqBid.findUniqueOrThrow({
+      where: { id: savedBid.id },
+      include: { items: { orderBy: { createdAt: "asc" } } },
+    })
   })
 
   await notifyRfqBidSubmitted({
@@ -721,7 +784,15 @@ export async function submitRfqBid(
     isUpdate: Boolean(existingBid),
   })
 
-  return { ...bid, totalAmount: bid.totalAmount / 100 }
+  return {
+    ...bid,
+    totalAmount: bid.totalAmount / 100,
+    items: bid.items.map((item) => ({
+      ...item,
+      unitPrice: item.unitPrice / 100,
+      lineTotal: item.lineTotal / 100,
+    })),
+  }
 }
 
 export async function acceptRfqBid(
@@ -762,8 +833,13 @@ export async function acceptRfqBid(
 
     const bid = await transaction.rfqBid.findFirst({
       where: { id: bidId, rfqId, status: RfqBidStatus.submitted },
+      include: { items: true },
     })
     if (!bid) throw new Error("Quote not found or no longer available")
+    const quotedByPartId = new Map(bid.items.map((item) => [item.rfqPartId, item]))
+    if (bid.items.length !== rfq.parts.length || rfq.parts.some((part) => !quotedByPartId.has(part.id))) {
+      throw new Error("The supplier must update this quote with pricing for every part")
+    }
     if (bid.validUntil) {
       const quoteExpiry = new Date(bid.validUntil)
       // Older date-only quotes were stored at midnight; treat them as valid through that day.
@@ -815,11 +891,16 @@ export async function acceptRfqBid(
         deliveryCountry: deliveryAddress?.country,
         totalAmount: bid.totalAmount,
         items: {
-          create: rfq.parts.map((part) => ({
-            partName: part.partName,
-            partNumber: part.partNumber,
-            quantity: part.quantity,
-          })),
+          create: rfq.parts.map((part) => {
+            const quotedItem = quotedByPartId.get(part.id)!
+            return {
+              partName: part.partName,
+              partNumber: part.partNumber,
+              quantity: part.quantity,
+              unitPrice: quotedItem.unitPrice,
+              lineTotal: quotedItem.lineTotal,
+            }
+          }),
         },
       },
     })

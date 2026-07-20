@@ -178,6 +178,16 @@ model TierLookup {
   @@map("tier_lookups")
 }
 
+model GradeLookup {
+  id                  String   @id @default(cuid())
+  customerFacingLabel String   @unique
+  description         String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("grade_lookups")
+}
+
 model User {
   id                        String                      @id @default(cuid())
   publicId                  String                      @unique @default(dbgenerated("next_user_public_id()"))
@@ -371,14 +381,33 @@ model RfqBid {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
-  rfq      Rfq    @relation(fields: [rfqId], references: [id], onDelete: Cascade)
-  supplier User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  rfq      Rfq          @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplier User         @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   order    Order?
+  items    RfqBidItem[]
 
   @@unique([rfqId, supplierId])
   @@index([supplierId, status])
   @@index([rfqId, status])
   @@map("rfq_bids")
+}
+
+model RfqBidItem {
+  id        String   @id @default(cuid())
+  bidId     String
+  rfqPartId String
+  unitPrice Int
+  lineTotal Int
+  partType  String   @default("New")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bid     RfqBid  @relation(fields: [bidId], references: [id], onDelete: Cascade)
+  rfqPart RfqPart @relation(fields: [rfqPartId], references: [id], onDelete: Cascade)
+
+  @@unique([bidId, rfqPartId])
+  @@index([rfqPartId])
+  @@map("rfq_bid_items")
 }
 
 model Order {
@@ -449,7 +478,8 @@ model RfqPart {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  rfq Rfq @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  rfq      Rfq          @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  bidItems RfqBidItem[]
 
   @@index([rfqId])
   @@index([partNumber])

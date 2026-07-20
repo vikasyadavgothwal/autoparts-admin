@@ -28,6 +28,7 @@ export type SupplierOfferUpdateInput = {
   status?: string | null
   grade?: string | null
   condition?: string | null
+  category?: string | null
   basePrice?: number | string | null
   discountPrice?: number | string | null
   currency?: string | null
@@ -59,6 +60,97 @@ export type SupplierPartCreateInput = SupplierPartLookupInput & {
   rawUploadData?: unknown
 }
 
+export type SupplierProductMasterInput = {
+  mode: "product_master_form"
+  identity: {
+    sku: string
+    productName: string
+    shortDescription?: string | null
+    longDescription?: string | null
+    mpn?: string | null
+    status?: string | null
+    grade?: string | null
+    condition?: string | null
+  }
+  category: { id?: string | null; name: string; parentId?: string | null }
+  brand: {
+    id?: string | null
+    name: string
+    productCategories?: string[]
+    tier?: string | null
+  }
+  attributes?: {
+    name?: string | null
+    value?: string | null
+    detailed?: string | null
+    nameB?: string | null
+    nameC?: string | null
+  }
+  vehicle?: {
+    id?: string | null
+    make?: string | null
+    model?: string | null
+    yearStart?: number | string | null
+    yearEnd?: number | string | null
+    engine?: string | null
+    trim?: string | null
+    driveType?: string | null
+    notes?: string | null
+  }
+  pricing: {
+    basePrice?: number | string | null
+    discountPrice?: number | string | null
+    currency?: string | null
+    taxClass?: string | null
+    vat?: string | null
+    maxRetailPrice?: number | string | null
+    wholesaleDistributorPrice?: number | string | null
+    fleetPrice?: number | string | null
+  }
+  inventory: {
+    warehouseId: string
+    quantity: number | string
+    leadTime?: string | null
+    lowStockThreshold?: number | string | null
+  }
+  images?: {
+    primaryUrl?: string | null
+    galleryUrls?: string[]
+    storedUrls?: string[]
+  }
+  document?: { type?: string | null; url?: string | null }
+  crossReferences: {
+    oemNumber?: string | null
+    oemSupersessionNumbers?: string[]
+    competitorPartNumber?: string | null
+    competitorBrandName?: string | null
+    hsCode?: string | null
+  }
+  bundle?: {
+    componentSku?: string | null
+    quantityInBundle?: number | string | null
+    parentBundleSku?: string | null
+    quantityAsComponent?: number | string | null
+  }
+  shipping?: {
+    weightKg?: number | string | null
+    lengthCm?: number | string | null
+    widthCm?: number | string | null
+    heightCm?: number | string | null
+    hsCode?: string | null
+    countryOfOrigin?: string | null
+  }
+  compliance?: {
+    warrantyMonths?: number | string | null
+    certification?: string | null
+  }
+  marketplace?: {
+    allowBackorders?: boolean
+    maxOrderQuantity?: number | string | null
+    isActive?: boolean
+  }
+}
+
 export type SupplierPartBulkRow = SupplierPartCreateInput
 
 export type SupplierBulkProductRow = {
@@ -75,6 +167,7 @@ export type SupplierBulkProductRow = {
   status?: string | null
   grade?: string | null
   condition?: string | null
+  category?: string | null
   oemSupersessionNumbers?: string[]
   competitorPartNumber?: string | null
   competitorBrandName?: string | null

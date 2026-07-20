@@ -7,11 +7,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const auth = await requireSupplierFromRequest(request)
   if (!auth.ok) return auth.response
   const body = await readJsonBody<{
-    totalAmount?: unknown
     deliveryDays?: unknown
-    partType?: unknown
     validUntil?: unknown
     notes?: unknown
+    items?: unknown
   }>(request)
   if (!body.ok) return NextResponse.json({ ok: false, message: body.message }, { status: 400 })
   try {

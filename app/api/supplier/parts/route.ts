@@ -6,6 +6,8 @@ import {
 } from "@/services/parts-mapping/parts-mapping-service"
 import { readJsonBody, requireSupplierFromRequest } from "@/lib/parts-mapping/auth"
 import type { SupplierPartCreateInput } from "@/types/parts-mapping/parts-mapping"
+import type { SupplierProductMasterInput } from "@/types/parts-mapping/parts-mapping"
+import { createSupplierProductMaster } from "@/actions/supplier/parts/supplier-product-master"
 
 export const dynamic = "force-dynamic"
 
@@ -37,7 +39,7 @@ export async function POST(request: NextRequest) {
     return auth.response
   }
 
-  const parsed = await readJsonBody<SupplierPartCreateInput>(request)
+  const parsed = await readJsonBody<SupplierPartCreateInput | SupplierProductMasterInput>(request)
   if (!parsed.ok) {
     return NextResponse.json(
       { ok: false, message: parsed.message },
@@ -46,7 +48,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const part = await createSupplierPart(auth.user.id, parsed.body)
+    const part = parsed.body && "mode" in parsed.body && parsed.body.mode === "product_master_form"
+      ? await createSupplierProductMaster(auth.user.id, parsed.body)
+      : await createSupplierPart(auth.user.id, parsed.body as SupplierPartCreateInput)
     return NextResponse.json({ ok: true, part }, { status: 201 })
   } catch (error) {
     return NextResponse.json(
