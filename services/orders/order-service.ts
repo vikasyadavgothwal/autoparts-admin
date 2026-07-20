@@ -55,6 +55,7 @@ const orderInclude = {
       firstName: true,
       lastName: true,
       email: true,
+      phone: true,
       activeRole: true,
     },
   },

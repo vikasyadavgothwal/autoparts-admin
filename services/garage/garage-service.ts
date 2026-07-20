@@ -153,7 +153,7 @@ export async function createGarageService(
   const durationMinutes = wholeNumber(input.durationMinutes, "Duration", 1, 1440)
   const price = moneyToCents(input.price, "Price")
   const currency = (text(input.currency) || "AED").toUpperCase().slice(0, 3)
-  const bookingsCount = wholeNumber(input.bookingsCount ?? 0, "Bookings", 0)
+  const bookingsCount = 0
   const status = serviceStatus(input.status)
   const [service] = await db.$queryRaw<GarageServiceRow[]>`
     INSERT INTO "garage_services" (
@@ -210,7 +210,6 @@ export async function updateGarageService(
   const durationMinutes = wholeNumber(input.durationMinutes, "Duration", 1, 1440)
   const price = moneyToCents(input.price, "Price")
   const currency = (text(input.currency) || "AED").toUpperCase().slice(0, 3)
-  const bookingsCount = wholeNumber(input.bookingsCount ?? 0, "Bookings", 0)
   const status = serviceStatus(input.status)
   const rows = await db.$queryRaw<GarageServiceRow[]>`
     UPDATE "garage_services"
@@ -220,7 +219,6 @@ export async function updateGarageService(
       "durationMinutes" = ${durationMinutes},
       "price" = ${price},
       "currency" = ${currency},
-      "bookingsCount" = ${bookingsCount},
       "status" = ${status}::"GarageServiceStatus",
       "updatedAt" = CURRENT_TIMESTAMP
     WHERE "id" = ${serviceId} AND "garageId" = ${garageId}

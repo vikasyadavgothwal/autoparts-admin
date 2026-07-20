@@ -23,12 +23,21 @@ export const USER_AUTH = {
   ),
 }
 
-export const getUserCookieOptions = () => ({
-  secure: process.env.NODE_ENV === "production",
-  httpOnly: true,
-  sameSite: "strict" as const,
-  path: "/",
-})
+export const getUserCookieOptions = () => {
+  const configuredDomain = process.env.USER_COOKIE_DOMAIN?.trim()
+  const domain = configuredDomain ||
+    (process.env.NODE_ENV === "production"
+      ? ".websitedesignersdubai.ae"
+      : undefined)
+
+  return {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "strict" as const,
+    path: "/",
+    ...(domain ? { domain } : {}),
+  }
+}
 
 export const isUserAuthConfigured = () =>
   Boolean(USER_AUTH.accessTokenSecret && USER_AUTH.refreshTokenSecret)

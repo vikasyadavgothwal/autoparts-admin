@@ -48,7 +48,12 @@ Also configure the existing user auth JWT settings:
 ```bash
 USER_JWT_ACCESS_SECRET=
 USER_JWT_REFRESH_SECRET=
+USER_COOKIE_DOMAIN=.websitedesignersdubai.ae
 ```
+
+`USER_COOKIE_DOMAIN` allows the main website and role dashboards on sibling
+subdomains to receive the same HttpOnly user session after authentication. It
+should remain unset for localhost development.
 
 Apply the Prisma migration before deploying the Firebase login flow.
 Deploy migration `20260715180000_api_rate_limits` before starting this version;
