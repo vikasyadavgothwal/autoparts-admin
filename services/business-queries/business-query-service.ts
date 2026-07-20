@@ -16,11 +16,18 @@ const VALID_TYPES = new Set<string>(Object.values(BusinessQueryType))
 const VALID_STATUSES = new Set<string>(Object.values(BusinessQueryStatus))
 const PAGE_SIZES = [50, 100, 250, 500, 1000] as const
 const MESSAGE_LIMIT = 1500
-const PHONE_PATTERN = /^\d{7,15}$/
+const PHONE_PATTERN = /^\+[1-9]\d{6,14}$/
 
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : "")
 
 const limitedText = (value: unknown, limit: number) => text(value).slice(0, limit)
+
+export const normalizeBusinessQueryPhone = (value: unknown) => {
+  const raw = text(value)
+  const compact = raw.replace(/[\s().-]/g, "")
+  const international = compact.startsWith("+") ? compact : `+${compact}`
+  return PHONE_PATTERN.test(international) ? international : null
+}
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -113,7 +120,7 @@ const searchWhere = (search: string): Prisma.BusinessQueryWhereInput => {
 export async function createBusinessQuery(input: BusinessQueryInput) {
   const name = limitedText(input.name, 120)
   const email = limitedText(input.email, 180).toLowerCase()
-  const phone = text(input.phone)
+  const phone = normalizeBusinessQueryPhone(input.phone)
   const company = limitedText(input.company, 160)
   const message = text(input.message)
   const source = limitedText(input.source, 120) || "Business page"
@@ -123,7 +130,7 @@ export async function createBusinessQuery(input: BusinessQueryInput) {
 
   if (name.length < 2) throw new Error("Name must be at least 2 characters")
   if (!emailPattern.test(email)) throw new Error("A valid email is required")
-  if (!PHONE_PATTERN.test(phone)) throw new Error("Phone must contain 7 to 15 digits only")
+  if (!phone) throw new Error("Enter a valid international phone number with country code")
   if (company.length < 2) throw new Error("Company must be at least 2 characters")
   if (message.length < 5) throw new Error("Message must be at least 5 characters")
   if (message.length > MESSAGE_LIMIT) {
