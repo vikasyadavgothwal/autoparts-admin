@@ -8,7 +8,7 @@ import {
   updateSupplierPartPricingBulk,
   updateSupplierPartImagesBulk,
   updateSupplierPartStockBulk,
-} from "@/services/parts-mapping/parts-mapping-service"
+} from "@/services/parts-mapping"
 import type {
   SupplierBulkImageRow,
   SupplierBulkPricingRow,

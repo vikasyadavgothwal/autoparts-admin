@@ -4,7 +4,7 @@ import { requireAdminFromRequest } from "@/lib/parts-mapping/auth"
 import {
   getSupplierPartById,
   runSupplierPartMapping,
-} from "@/services/parts-mapping/parts-mapping-service"
+} from "@/services/parts-mapping"
 
 export const dynamic = "force-dynamic"
 

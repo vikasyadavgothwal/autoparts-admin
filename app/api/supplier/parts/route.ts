@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   createSupplierPart,
   listSupplierPartsPage,
-} from "@/services/parts-mapping/parts-mapping-service"
+} from "@/services/parts-mapping"
 import { readJsonBody, requireSupplierFromRequest } from "@/lib/parts-mapping/auth"
 import type { SupplierPartCreateInput } from "@/types/parts-mapping/parts-mapping"
 import type { SupplierProductMasterInput } from "@/types/parts-mapping/parts-mapping"

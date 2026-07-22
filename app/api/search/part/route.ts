@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { searchPartsFromLocalDb } from "@/services/parts-mapping/parts-mapping-service"
+import { searchPartsFromLocalDb } from "@/services/parts-mapping"
 
 export const dynamic = "force-dynamic"
 

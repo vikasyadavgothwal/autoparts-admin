@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireAdminFromRequest } from "@/lib/parts-mapping/auth"
-import { listMappedCatalogPartsPage } from "@/services/parts-mapping/parts-mapping-service"
+import { listMappedCatalogPartsPage } from "@/services/parts-mapping"
 
 export const dynamic = "force-dynamic"
 

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getCurrentAdminSession } from "@/actions/admin-auth/me"
 import { requireUserAuth } from "@/actions/user-auth/user-auth"
 import { USER_AUTH } from "@/lib/user-auth/config"
-import { isSupplierUser } from "@/services/parts-mapping/parts-mapping-service"
+import { isSupplierUser } from "@/services/parts-mapping"
 
 export async function requireSupplierFromRequest(request: NextRequest) {
   const accessToken =

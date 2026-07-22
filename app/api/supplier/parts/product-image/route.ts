@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireSupplierFromRequest } from "@/lib/parts-mapping/auth"
-import { db } from "@/lib/database/prisma"
 import { createSignedS3ObjectUrl } from "@/lib/storage/s3"
+import { supplierOwnsCatalogProductImage } from "@/services/parts/product-image-service"
 
 export const dynamic = "force-dynamic"
 
@@ -20,12 +20,9 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const ownsImage = await db.supplierPart.findFirst({
-    where: {
-      supplierId: auth.user.id,
-      part: { imageKeys: { has: key } },
-    },
-    select: { id: true },
+  const ownsImage = await supplierOwnsCatalogProductImage({
+    supplierId: auth.user.id,
+    key,
   })
   if (!ownsImage) {
     return NextResponse.json(

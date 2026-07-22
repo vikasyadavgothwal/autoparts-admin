@@ -1,6 +1,6 @@
 "use server"
 
-import { saveSupplierProductMaster } from "@/services/parts-mapping/parts-mapping-service"
+import { saveSupplierProductMaster } from "@/services/parts-mapping"
 import type { SupplierProductMasterInput } from "@/types/parts-mapping/parts-mapping"
 
 export async function createSupplierProductMaster(

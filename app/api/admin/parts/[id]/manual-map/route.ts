@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { readJsonBody, requireAdminFromRequest } from "@/lib/parts-mapping/auth"
-import { manuallyMapSupplierPart } from "@/services/parts-mapping/parts-mapping-service"
+import { manuallyMapSupplierPart } from "@/services/parts-mapping"
 import type { ManualMapInput } from "@/types/parts-mapping/parts-mapping"
 
 export const dynamic = "force-dynamic"

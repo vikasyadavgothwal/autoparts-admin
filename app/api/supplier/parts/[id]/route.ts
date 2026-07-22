@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { readJsonBody, requireSupplierFromRequest } from "@/lib/parts-mapping/auth"
-import { updateSupplierPartOffer } from "@/services/parts-mapping/parts-mapping-service"
+import { updateSupplierPartOffer } from "@/services/parts-mapping"
 import type { SupplierOfferUpdateInput } from "@/types/parts-mapping/parts-mapping"
 import type { SupplierProductMasterInput } from "@/types/parts-mapping/parts-mapping"
 import { updateSupplierProductMaster } from "@/actions/supplier/parts/supplier-product-master"

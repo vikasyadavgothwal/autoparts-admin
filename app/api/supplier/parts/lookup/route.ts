@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { readJsonBody, requireSupplierFromRequest } from "@/lib/parts-mapping/auth"
-import { lookupSupplierPart } from "@/services/parts-mapping/parts-mapping-service"
+import { lookupSupplierPart } from "@/services/parts-mapping"
 import type { SupplierPartLookupInput } from "@/types/parts-mapping/parts-mapping"
 
 export const dynamic = "force-dynamic"
