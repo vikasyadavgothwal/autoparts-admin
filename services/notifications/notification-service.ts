@@ -6,6 +6,7 @@ import {
   notificationChannel,
   publishNotification,
 } from "@/services/notifications/notification-events"
+import { sendNotificationPush } from "@/services/notifications/push-service"
 import type {
   DashboardNotification,
   NotificationListResult,
@@ -134,6 +135,7 @@ export async function createNotification(input: CreateNotificationInput) {
 
   const notification = serializeNotification(row)
   publishNotification(notificationChannel(row), notification)
+  await sendNotificationPush(row, notification)
   return notification
 }
 

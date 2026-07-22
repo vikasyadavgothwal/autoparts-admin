@@ -3,10 +3,28 @@ import { NextRequest, NextResponse } from "next/server"
 import { readJsonBody } from "@/lib/parts-mapping/auth"
 import { requireUserAuth } from "@/actions/user-auth/user-auth"
 import { USER_AUTH } from "@/lib/user-auth/config"
-import { createPublicGarageBooking } from "@/services/garage/garage-booking-service"
+import {
+  createPublicGarageBooking,
+  getPublicGarageBookingAvailability,
+} from "@/services/garage/garage-booking-service"
 import type { GarageBookingInput } from "@/types/garage/bookings"
 
 export const dynamic = "force-dynamic"
+
+export async function GET(request: NextRequest) {
+  try {
+    return NextResponse.json({
+      ok: true,
+      ...(await getPublicGarageBookingAvailability({
+        garageId: request.nextUrl.searchParams.get("garageId") ?? "",
+        serviceId: request.nextUrl.searchParams.get("serviceId") ?? "",
+        bookingDate: request.nextUrl.searchParams.get("bookingDate") ?? "",
+      })),
+    })
+  } catch (error) {
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Unable to load availability" }, { status: 400 })
+  }
+}
 
 export async function POST(request: NextRequest) {
   const accessToken =
@@ -36,8 +54,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const booking = await createPublicGarageBooking(auth.user, parsed.body)
-    return NextResponse.json({ ok: true, booking }, { status: 201 })
+    const result = await createPublicGarageBooking(auth.user, parsed.body)
+    return NextResponse.json({ ok: true, ...result }, { status: 201 })
   } catch (error) {
     return NextResponse.json(
       {

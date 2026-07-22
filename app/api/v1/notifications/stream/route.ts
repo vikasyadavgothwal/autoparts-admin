@@ -36,7 +36,15 @@ export async function GET(request: NextRequest) {
 
       const unsubscribe = subscribeToNotifications(
         notificationScopeChannel(auth.scope),
-        (notification) => send("notification", { notification }),
+        (notification) => {
+          void (async () => {
+            const snapshot = await listNotifications(auth.scope)
+            send("notification", {
+              notification,
+              unreadCount: snapshot.unreadCount,
+            })
+          })()
+        },
       )
 
       const heartbeat = setInterval(() => {

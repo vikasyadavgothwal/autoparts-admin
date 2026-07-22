@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { registerFirebasePushNotifications } from "@/lib/notifications/firebase-push"
 import {
   notificationFetch,
   notificationHref,
@@ -69,6 +70,10 @@ export function NotificationPopup({ onUnreadChange }: NotificationPopupProps) {
   useEffect(() => {
     onUnreadChange?.(unreadCount)
   }, [onUnreadChange, unreadCount])
+
+  useEffect(() => {
+    void registerFirebasePushNotifications()
+  }, [])
 
   const applyPayload = useCallback((payload: NotificationsPayload) => {
     if (!payload.ok) return

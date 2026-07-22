@@ -2,6 +2,7 @@ import { db } from "@/lib/database/prisma";
 import {
   OrderSource,
   OrderStatus,
+  PaymentStatus,
   Prisma,
   SupplierApprovalStatus,
   SupplierPartMappingStatus,
@@ -21,6 +22,33 @@ const normalizePaging = (page: number, pageSize: number) => ({
     Math.max(1, Number.isFinite(pageSize) ? pageSize : 10),
   ),
 });
+
+const leadTimeDays = (value: string | null | undefined) => {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return null;
+
+  const numbers = Array.from(normalized.matchAll(/\d+(?:\.\d+)?/g), (match) =>
+    Number.parseFloat(match[0]),
+  ).filter(Number.isFinite);
+  if (!numbers.length) return null;
+
+  const longestValue = Math.max(...numbers);
+  const multiplier = /month/.test(normalized)
+    ? 30
+    : /week/.test(normalized)
+      ? 7
+      : /hour/.test(normalized)
+        ? 1 / 24
+        : 1;
+
+  return Math.max(1, Math.ceil(longestValue * multiplier));
+};
+
+const addCalendarDays = (date: Date, days: number) => {
+  const result = new Date(date);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+};
 
 const searchWhere = (search: string): Prisma.OrderWhereInput => {
   const query = search.trim();
@@ -224,6 +252,142 @@ export function listAllOrders(page: number, pageSize: number, search: string) {
   return listOrders(searchWhere(search), page, pageSize);
 }
 
+export async function confirmSupplierOrder(supplierId: string, orderId: string) {
+  const confirmedAt = new Date();
+  const expectedDeliveryAt = await db.$transaction(async (transaction) => {
+    const pendingOrder = await transaction.order.findFirst({
+      where: {
+        id: orderId,
+        supplierId,
+        status: OrderStatus.pending,
+        paymentStatus: PaymentStatus.succeeded,
+      },
+      select: {
+        items: {
+          select: {
+            supplierPart: {
+              select: {
+                stockRows: { select: { leadTime: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!pendingOrder) {
+      throw new Error("Only a paid pending order can be confirmed");
+    }
+
+    let deliveryDays: number | null = null;
+    if (pendingOrder.items.length > 0) {
+      const itemLeadTimes = pendingOrder.items.map((item) => {
+        const warehouseLeadTimes =
+          item.supplierPart?.stockRows
+            .map((row) => leadTimeDays(row.leadTime))
+            .filter((days): days is number => days !== null) ?? [];
+        return warehouseLeadTimes.length
+          ? Math.max(...warehouseLeadTimes)
+          : null;
+      });
+      if (itemLeadTimes.every((days): days is number => days !== null)) {
+        deliveryDays = Math.max(...itemLeadTimes);
+      }
+    }
+
+    const calculatedDate = deliveryDays
+      ? addCalendarDays(confirmedAt, deliveryDays)
+      : null;
+    const updated = await transaction.order.updateMany({
+      where: {
+        id: orderId,
+        supplierId,
+        status: OrderStatus.pending,
+        paymentStatus: PaymentStatus.succeeded,
+      },
+      data: {
+        status: OrderStatus.confirmed,
+        supplierConfirmedAt: confirmedAt,
+        expectedDeliveryAt: calculatedDate,
+      },
+    });
+    if (updated.count !== 1) {
+      throw new Error("Only a paid pending order can be confirmed");
+    }
+    return calculatedDate;
+  });
+
+  const order = await db.order.findUniqueOrThrow({
+    where: { id: orderId },
+    include: orderInclude,
+  });
+  await createNotificationsSafely([
+    {
+      recipientUserId: order.buyerId,
+      actorUserId: supplierId,
+      type: "order.confirmed",
+      title: "Order confirmed",
+      body: expectedDeliveryAt
+        ? `Your order ${order.publicId} has been confirmed. Expected delivery: ${expectedDeliveryAt.toLocaleDateString("en-AE", { timeZone: "Asia/Dubai" })}.`
+        : `Your order ${order.publicId} has been confirmed.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: order.id,
+    },
+  ]);
+  return mapOrder(order);
+}
+
+export async function submitOrderProofOfDelivery(
+  supplierId: string,
+  orderId: string,
+  input: {
+    proofUrl: string;
+    proofKey: string;
+    recipientName?: string;
+    note?: string;
+  },
+) {
+  const order = await db.order.findFirst({
+    where: { id: orderId, supplierId },
+    select: { id: true, publicId: true, buyerId: true, status: true },
+  });
+  if (!order) throw new Error("Order not found");
+  const proofEligibleStatuses = new Set<OrderStatus>([
+    OrderStatus.confirmed,
+    OrderStatus.processing,
+    OrderStatus.shipped,
+  ]);
+  if (!proofEligibleStatuses.has(order.status)) {
+    throw new Error("Confirm the order before submitting proof of delivery");
+  }
+
+  const saved = await db.order.update({
+    where: { id: order.id },
+    data: {
+      status: OrderStatus.delivered,
+      proofOfDeliveryUrl: input.proofUrl,
+      proofOfDeliveryKey: input.proofKey,
+      proofRecipientName: input.recipientName?.trim() || null,
+      proofOfDeliveryNote: input.note?.trim() || null,
+      proofSubmittedAt: new Date(),
+    },
+    include: orderInclude,
+  });
+  await createNotificationsSafely([
+    {
+      recipientUserId: order.buyerId,
+      actorUserId: supplierId,
+      type: "order.delivered",
+      title: "Order delivered",
+      body: `Proof of delivery was submitted for ${order.publicId}.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: order.id,
+    },
+  ]);
+  return mapOrder(saved);
+}
+
 export async function createDirectOrder(
   buyerId: string,
   input: DirectOrderLineInput,
@@ -328,7 +492,9 @@ export async function createDirectOrders(
             deliveryPostalCode: deliveryAddress.postalCode,
             deliveryCountry: deliveryAddress.country,
             totalAmount: group.totalAmount,
-            status: OrderStatus.confirmed,
+            status: OrderStatus.pending,
+            paymentStatus: PaymentStatus.succeeded,
+            paidAt: new Date(),
             items: { create: group.items },
           },
           include: orderInclude,
@@ -364,8 +530,8 @@ export async function createDirectOrders(
     notifications.push({
       recipientUserId: buyerId,
       type: "order.created",
-      title: "Order confirmed",
-      body: `Order ${order.publicId} has been created and sent to the supplier.`,
+      title: "Payment successful",
+      body: `Payment for ${order.publicId} was successful. Your order has been created.`,
       linkUrl: "/orders",
       entityType: "order",
       entityId: order.id,

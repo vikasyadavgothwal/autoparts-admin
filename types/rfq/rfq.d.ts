@@ -14,6 +14,7 @@ export type FleetVehicleInput = {
 }
 
 export type RfqPartInput = {
+  vehicleVin?: string | null
   partName: string
   partNumber?: string | null
   quantity: number | string

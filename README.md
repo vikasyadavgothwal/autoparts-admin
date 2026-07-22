@@ -30,6 +30,22 @@ FIREBASE_CLIENT_EMAIL=
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 ```
 
+Firebase Cloud Messaging browser push uses the same Firebase Admin credentials
+on the backend and the dashboard web config on each frontend. Configure:
+
+```bash
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+NEXT_PUBLIC_FIREBASE_VAPID_KEY=
+```
+
+Deploy migration `20260721110000_notification_devices` before enabling push
+registration in production.
+
 For local frontend access, API CORS is handled globally for `/api/*` routes.
 Browser origins must be listed explicitly as a comma-separated allowlist. Native
 React Native and server-to-server requests normally omit `Origin` and continue

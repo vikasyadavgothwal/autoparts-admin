@@ -84,8 +84,11 @@ const mapOffer = (offer: SupplierOfferPayload): SupplierOfferRecord => ({
   deliveryRequirement: offer.rfq.deliveryRequirement,
   paymentTerms: offer.rfq.paymentTerms,
   parts: offer.rfq.parts.map((part) => ({
-    ...part,
-    targetPrice: part.targetPrice === null ? null : part.targetPrice / 100,
+    id: part.id,
+    partName: part.partName,
+    partNumber: part.partNumber,
+    quantity: part.quantity,
+    notes: part.notes,
   })),
   totalAmount: offer.totalAmount / 100,
   deliveryDays: offer.deliveryDays,

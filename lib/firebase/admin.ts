@@ -7,6 +7,7 @@ import {
   type ServiceAccount,
 } from "firebase-admin/app"
 import { getAuth, type DecodedIdToken } from "firebase-admin/auth"
+import { getMessaging, type Messaging } from "firebase-admin/messaging"
 
 type ServiceAccountJson = {
   project_id?: unknown
@@ -94,4 +95,8 @@ export async function verifyFirebaseIdToken(
     console.error("Firebase ID token verification failed", error)
     throw new Error("Firebase authentication is unavailable")
   }
+}
+
+export function getFirebaseMessaging(): Messaging {
+  return getMessaging(getFirebaseAdminApp())
 }

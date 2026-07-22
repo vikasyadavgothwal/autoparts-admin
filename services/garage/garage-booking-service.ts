@@ -7,6 +7,7 @@ import {
   createNotificationsSafely,
   type CreateNotificationInput,
 } from "@/services/notifications/notification-service"
+import { getGarageBookingAdvancePercentage } from "@/services/platform-settings/platform-settings-service"
 import type {
   GarageBookingInput,
   GarageOfflineBookingInput,
@@ -128,6 +129,80 @@ const bookingDate = (value: unknown) => {
     throw new Error("Booking date must use YYYY-MM-DD")
   }
   return normalized
+}
+
+const timeToMinutes = (value: unknown) => {
+  const normalized = requiredText(value, "Booking time", 20).toUpperCase()
+  const match = normalized.match(/^(1[0-2]|[1-9]):([0-5]\d)\s*(AM|PM)$/)
+  if (!match) throw new Error("Booking time must use h:mm AM/PM")
+  const minute = Number(match[2])
+  if (minute % 15 !== 0) throw new Error("Booking time must use a 15-minute slot")
+  const hour = Number(match[1]) % 12 + (match[3] === "PM" ? 12 : 0)
+  return hour * 60 + minute
+}
+
+const minutesToTime = (minutes: number) => {
+  const hour24 = Math.floor(minutes / 60)
+  const minute = minutes % 60
+  const suffix = hour24 >= 12 ? "PM" : "AM"
+  const hour = hour24 % 12 || 12
+  return `${hour}:${String(minute).padStart(2, "0")} ${suffix}`
+}
+
+async function assertGarageSlotAvailable(
+  tx: Prisma.TransactionClient,
+  garageId: string,
+  date: string,
+  time: string,
+) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${garageId}:${date}`}))`
+  const existing = await tx.$queryRaw<Array<{ bookingTime: string; durationMinutes: number }>>`
+    SELECT "bookingTime", "durationMinutes"
+    FROM "garage_bookings"
+    WHERE "garageId" = ${garageId}
+      AND "bookingDate" = ${date}::date
+      AND "status" <> 'cancelled'::"GarageBookingStatus"
+  `
+  const requestedStart = timeToMinutes(time)
+  const requestedEnd = requestedStart + 15
+  const overlaps = existing.some((booking) => {
+    const existingStart = timeToMinutes(booking.bookingTime)
+    const existingEnd = existingStart + 15
+    return requestedStart < existingEnd && requestedEnd > existingStart
+  })
+  if (overlaps) throw new Error("This appointment slot is no longer available")
+}
+
+export async function getPublicGarageBookingAvailability(input: {
+  garageId: string
+  serviceId: string
+  bookingDate: string
+}) {
+  const garageId = requiredText(input.garageId, "Garage")
+  const serviceId = requiredText(input.serviceId, "Service")
+  const date = bookingDate(input.bookingDate)
+  const service = await db.garageService.findFirst({
+    where: { id: serviceId, garageId, status: "active" },
+    select: { durationMinutes: true },
+  })
+  if (!service) throw new Error("Service not found for this garage")
+  const bookings = await db.garageBooking.findMany({
+    where: { garageId, bookingDate: new Date(`${date}T00:00:00.000Z`), status: { not: "cancelled" } },
+    select: { bookingTime: true, durationMinutes: true },
+  })
+  const unavailableTimes: string[] = []
+  for (let start = 9 * 60; start <= 17 * 60 + 30; start += 15) {
+    const end = start + 15
+    if (bookings.some((booking) => {
+      const bookedStart = timeToMinutes(booking.bookingTime)
+      return start < bookedStart + 15 && end > bookedStart
+    })) unavailableTimes.push(minutesToTime(start))
+  }
+  return {
+    unavailableTimes,
+    slotIntervalMinutes: 15,
+    advancePercentage: await getGarageBookingAdvancePercentage(),
+  }
 }
 
 const offlineBookingDate = (value: unknown) => {
@@ -283,7 +358,7 @@ export async function createPublicGarageBooking(
   const vehicleVin = optionalText(input.vehicleVin, "VIN", 40)?.toUpperCase() ?? null
   const notes = optionalText(input.notes, "Notes", 500)
   const date = bookingDate(input.bookingDate)
-  const time = requiredText(input.bookingTime, "Booking time", 40)
+  const time = minutesToTime(timeToMinutes(input.bookingTime))
 
   const [garage] = await db.$queryRaw<Array<{ id: string }>>`
     SELECT "id"
@@ -307,7 +382,11 @@ export async function createPublicGarageBooking(
 
   if (!service) throw new Error("Service not found for this garage")
 
+  const advancePercentage = await getGarageBookingAdvancePercentage()
+  const advanceAmount = Math.round((service.price * advancePercentage) / 100)
+
   const [booking] = await db.$transaction(async (tx) => {
+    await assertGarageSlotAvailable(tx, garageId, date, time)
     const rows = await tx.$queryRaw<GarageBookingRow[]>`
       INSERT INTO "garage_bookings" (
         "id",
@@ -328,6 +407,10 @@ export async function createPublicGarageBooking(
         "durationMinutes",
         "price",
         "currency",
+        "advancePercentage",
+        "advanceAmount",
+        "advancePaymentStatus",
+        "advancePaidAt",
         "status",
         "updatedAt"
       )
@@ -350,6 +433,10 @@ export async function createPublicGarageBooking(
         ${service.durationMinutes},
         ${service.price},
         ${service.currency},
+        ${advancePercentage},
+        ${advanceAmount},
+        'succeeded',
+        CURRENT_TIMESTAMP,
         'confirmed'::"GarageBookingStatus",
         CURRENT_TIMESTAMP
       )
@@ -390,7 +477,15 @@ export async function createPublicGarageBooking(
 
   const mappedBooking = mapBooking(booking)
   await notifyGarageBookingCreated(mappedBooking)
-  return mappedBooking
+  return {
+    booking: mappedBooking,
+    payment: {
+      percentage: advancePercentage,
+      amount: advanceAmount / 100,
+      currency: service.currency,
+      status: "succeeded" as const,
+    },
+  }
 }
 
 export async function createGarageOfflineBooking(
@@ -407,7 +502,7 @@ export async function createGarageOfflineBooking(
   const vehicleVinValue = vehicleVin(input.vehicleVin)
   const notes = optionalText(input.notes, "Notes", 500)
   const date = offlineBookingDate(input.bookingDate)
-  const time = requiredText(input.bookingTime, "Booking time", 40)
+  const time = minutesToTime(timeToMinutes(input.bookingTime))
 
   const [service] = await db.$queryRaw<ServiceRow[]>`
     SELECT "id", "name", "durationMinutes", "price", "currency"
@@ -421,6 +516,7 @@ export async function createGarageOfflineBooking(
   if (!service) throw new Error("Active service not found for this garage")
 
   const [booking] = await db.$transaction(async (tx) => {
+    await assertGarageSlotAvailable(tx, garageId, date, time)
     const rows = await tx.$queryRaw<GarageBookingRow[]>`
       INSERT INTO "garage_bookings" (
         "id",

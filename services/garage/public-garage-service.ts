@@ -113,6 +113,10 @@ const mapSummary = async (
   const specialties = Array.from(
     new Set(services.map((service) => service.category || service.name).filter(Boolean)),
   )
+  const schedule = workingHoursByDay(garage.workingHoursByDay)
+  const todayName = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "Asia/Dubai" }).format(new Date())
+  const availableToday = Boolean(schedule[todayName]?.enabled || garage.workingDays?.includes(todayName))
+  const availableThisWeek = Object.values(schedule).some((hours) => hours?.enabled) || Boolean(garage.workingDays?.length)
 
   return {
     id: garage.id,
@@ -135,6 +139,8 @@ const mapSummary = async (
     currency: firstPricedService?.currency ?? DEFAULT_CURRENCY,
     ratingAverage: Number(garage.ratingAverage ?? 0),
     reviewCount: Number(garage.reviewCount ?? 0),
+    availableToday,
+    availableThisWeek,
   }
 }
 

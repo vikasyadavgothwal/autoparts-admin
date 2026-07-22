@@ -1,6 +1,8 @@
 import { db } from "@/lib/database/prisma"
 import {
   FleetVehicleStatus,
+  OrderStatus,
+  PaymentStatus,
   Prisma,
   RfqBidStatus,
   RfqSource,
@@ -161,8 +163,8 @@ async function notifyRfqBidAccepted(input: {
     {
       recipientUserId: input.requesterId,
       type: "rfq.bid.accepted",
-      title: "RFQ order created",
-      body: `RFQ ${input.rfqPublicId} was converted into order ${input.orderPublicId}.`,
+      title: "Payment successful",
+      body: `Payment for ${input.orderPublicId} was successful. Your order has been created.`,
       linkUrl: "/orders",
       entityType: "order",
       entityId: input.orderId,
@@ -172,7 +174,7 @@ async function notifyRfqBidAccepted(input: {
       actorUserId: input.requesterId,
       type: "rfq.bid.accepted",
       title: "Your RFQ quote was accepted",
-      body: `${requesterLabel(input.source)} accepted your quote for RFQ ${input.rfqPublicId}.`,
+      body: `${requesterLabel(input.source)} placed order ${input.orderPublicId}. Please confirm it.`,
       linkUrl: "/orders",
       entityType: "order",
       entityId: input.orderId,
@@ -367,11 +369,13 @@ export async function createRfq(
     : null
   if (source === RfqSource.fleet) {
     if (!requesterId) throw new Error("Fleet authentication is required")
-    const vehicleId = requiredText(input.fleetVehicleId, "Fleet vehicle")
-    fleetVehicle = await db.fleetVehicle.findFirst({
-      where: { id: vehicleId, fleetId: requesterId },
-    })
-    if (!fleetVehicle) throw new Error("Select a vehicle owned by this fleet")
+    if (input.fleetVehicleId) {
+      const vehicleId = requiredText(input.fleetVehicleId, "Fleet vehicle")
+      fleetVehicle = await db.fleetVehicle.findFirst({
+        where: { id: vehicleId, fleetId: requesterId },
+      })
+      if (!fleetVehicle) throw new Error("Select a vehicle owned by this fleet")
+    }
   }
   if (source === RfqSource.user && input.userVehicleId) {
     if (!requesterId) throw new Error("User authentication is required")
@@ -383,11 +387,19 @@ export async function createRfq(
   }
   if (input.parts.length > 100) throw new Error("An RFQ can contain at most 100 parts")
 
+  const partVehicleVins = input.parts.map((part) => text(part.vehicleVin).toUpperCase()).filter(Boolean)
+  const invalidPartVin = partVehicleVins.find((vin) => !/^[A-HJ-NPR-Z0-9]{17}$/.test(vin))
+  if (invalidPartVin) throw new Error(`VIN ${invalidPartVin} must contain exactly 17 valid characters`)
+
   const deadline = new Date(input.responseDeadline)
   if (Number.isNaN(deadline.getTime()) || deadline <= new Date()) {
     throw new Error("Response deadline must be in the future")
   }
   const vehicle = input.vehicle ?? {}
+  const inlineVin = text(vehicle.vin).toUpperCase()
+  const cachedVehicle = !fleetVehicle && !userVehicle && inlineVin
+    ? await db.vinLookupCache.findUnique({ where: { vin: inlineVin } })
+    : null
   const email = requiredText(
     source === RfqSource.fleet ? requester?.email || input.email : input.email,
     "Email",
@@ -403,19 +415,20 @@ export async function createRfq(
     throw new Error("Enter a valid phone number")
   }
   const vehicleVin =
-    fleetVehicle?.vin ?? userVehicle?.vin ?? (text(vehicle.vin).toUpperCase() || null)
+    fleetVehicle?.vin ?? userVehicle?.vin ?? cachedVehicle?.vin ?? (inlineVin || null)
   if (vehicleVin && !/^[A-HJ-NPR-Z0-9]{17}$/.test(vehicleVin)) {
     throw new Error("VIN must contain exactly 17 valid characters")
   }
   const vehicleYear =
     fleetVehicle?.year ??
     userVehicle?.year ??
+    cachedVehicle?.year ??
     (vehicle.year ? wholeNumber(vehicle.year, "Vehicle year", 1886) : null)
   if (vehicleYear && vehicleYear > new Date().getFullYear() + 1) {
     throw new Error("Vehicle year cannot be in the future")
   }
-  const vehicleMake = fleetVehicle?.make ?? userVehicle?.make ?? (text(vehicle.make) || null)
-  const vehicleModel = fleetVehicle?.model ?? userVehicle?.model ?? (text(vehicle.model) || null)
+  const vehicleMake = fleetVehicle?.make ?? userVehicle?.make ?? cachedVehicle?.make ?? (text(vehicle.make) || null)
+  const vehicleModel = fleetVehicle?.model ?? userVehicle?.model ?? cachedVehicle?.model ?? (text(vehicle.model) || null)
   if (source === RfqSource.user && (!vehicleYear || !vehicleMake || !vehicleModel)) {
     throw new Error("Vehicle year, make, and model are required")
   }
@@ -462,6 +475,7 @@ export async function createRfq(
           quantity: wholeNumber(part.quantity, "Quantity", 1),
           targetPrice: moneyToCents(part.targetPrice),
           notes: text(part.notes) || null,
+          vehicleVin: text(part.vehicleVin).toUpperCase() || vehicleVin,
         })),
       },
     },
@@ -516,7 +530,16 @@ export async function listSupplierRfqs(
     db.rfq.count({ where }),
   ])
   return {
-    rfqs: rfqs.map(mapRfqMoney),
+    rfqs: rfqs.map(mapRfqMoney).map((rfq) => ({
+      ...rfq,
+      parts: rfq.parts.map((part) => ({
+        id: part.id,
+        partName: part.partName,
+        partNumber: part.partNumber,
+        quantity: part.quantity,
+        notes: part.notes,
+      })),
+    })),
     pagination: {
       page: safePage,
       pageSize: safePageSize,
@@ -707,23 +730,20 @@ export async function submitRfqBid(
   }
 
   if (!Array.isArray(input.items)) {
-    throw new Error("Add a quote for every requested part")
+    throw new Error("Add at least one product quote")
   }
   const submittedItems = input.items as Array<{
     rfqPartId?: unknown
     unitPrice?: unknown
     partType?: unknown
   }>
-  if (submittedItems.length !== rfq.parts.length) {
-    throw new Error("A unit price is required for every requested part")
-  }
+  if (!submittedItems.length) throw new Error("Add at least one complete product quote")
   const submittedByPartId = new Map(submittedItems.map((item) => [text(item.rfqPartId), item]))
-  if (submittedByPartId.size !== rfq.parts.length) {
-    throw new Error("Each requested part must be quoted exactly once")
-  }
-  const bidItems = rfq.parts.map((part) => {
-    const submitted = submittedByPartId.get(part.id)
-    if (!submitted) throw new Error(`Add a quote for ${part.partName}`)
+  if (submittedByPartId.size !== submittedItems.length) throw new Error("Each submitted product must appear only once")
+  const requestedById = new Map(rfq.parts.map((part) => [part.id, part]))
+  const bidItems = submittedItems.map((submitted) => {
+    const part = requestedById.get(text(submitted.rfqPartId))
+    if (!part) throw new Error("A submitted product does not belong to this RFQ")
     const unitPrice = requiredMoneyToCents(submitted.unitPrice, `${part.partName} unit price`)
     return {
       rfqPartId: part.id,
@@ -732,43 +752,30 @@ export async function submitRfqBid(
       partType: rfqBidPartType(submitted.partType),
     }
   })
-  const totalAmount = bidItems.reduce((sum, item) => sum + item.lineTotal, 0)
-  if (!Number.isSafeInteger(totalAmount)) throw new Error("Quote total is too large")
-
   const existingBid = await db.rfqBid.findUnique({
     where: { rfqId_supplierId: { rfqId, supplierId } },
     select: { id: true },
   })
+  if (existingBid) throw new Error("This RFQ has already been quoted and cannot be updated")
 
   const bid = await db.$transaction(async (transaction) => {
-    const savedBid = await transaction.rfqBid.upsert({
-      where: { rfqId_supplierId: { rfqId, supplierId } },
-      create: {
+    const quoteDetails = {
+      deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
+      validUntil,
+      notes: text(input.notes) || null,
+    }
+    const totalAmount = bidItems.reduce((sum, item) => sum + item.lineTotal, 0)
+    if (!Number.isSafeInteger(totalAmount)) throw new Error("Quote total is too large")
+    const savedBid = await transaction.rfqBid.create({ data: {
         rfqId,
         supplierId,
         totalAmount,
-        deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
-        partType: bidItems.every((item) => item.partType === bidItems[0]?.partType)
-          ? bidItems[0].partType
-          : "Mixed",
-        validUntil,
-        notes: text(input.notes) || null,
-      },
-      update: {
-        totalAmount,
-        deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
-        partType: bidItems.every((item) => item.partType === bidItems[0]?.partType)
-          ? bidItems[0].partType
-          : "Mixed",
-        validUntil,
-        notes: text(input.notes) || null,
-        status: RfqBidStatus.submitted,
-      },
-    })
-    await transaction.rfqBidItem.deleteMany({ where: { bidId: savedBid.id } })
-    await transaction.rfqBidItem.createMany({
-      data: bidItems.map((item) => ({ ...item, bidId: savedBid.id })),
-    })
+        deliveryDays: quoteDetails.deliveryDays,
+        partType: bidItems.every((item) => item.partType === bidItems[0]?.partType) ? bidItems[0]?.partType ?? "Mixed" : "Mixed",
+        validUntil: quoteDetails.validUntil,
+        notes: quoteDetails.notes,
+      } })
+    await transaction.rfqBidItem.createMany({ data: bidItems.map((item) => ({ ...item, bidId: savedBid.id })) })
     return transaction.rfqBid.findUniqueOrThrow({
       where: { id: savedBid.id },
       include: { items: { orderBy: { createdAt: "asc" } } },
@@ -781,7 +788,7 @@ export async function submitRfqBid(
     requesterId: rfq.requesterId,
     supplierId,
     source: rfq.source,
-    isUpdate: Boolean(existingBid),
+    isUpdate: false,
   })
 
   return {
@@ -837,9 +844,6 @@ export async function acceptRfqBid(
     })
     if (!bid) throw new Error("Quote not found or no longer available")
     const quotedByPartId = new Map(bid.items.map((item) => [item.rfqPartId, item]))
-    if (bid.items.length !== rfq.parts.length || rfq.parts.some((part) => !quotedByPartId.has(part.id))) {
-      throw new Error("The supplier must update this quote with pricing for every part")
-    }
     if (bid.validUntil) {
       const quoteExpiry = new Date(bid.validUntil)
       // Older date-only quotes were stored at midnight; treat them as valid through that day.
@@ -890,8 +894,11 @@ export async function acceptRfqBid(
         deliveryPostalCode: deliveryAddress?.postalCode,
         deliveryCountry: deliveryAddress?.country,
         totalAmount: bid.totalAmount,
+        status: OrderStatus.pending,
+        paymentStatus: PaymentStatus.succeeded,
+        paidAt: new Date(),
         items: {
-          create: rfq.parts.map((part) => {
+          create: rfq.parts.filter((part) => quotedByPartId.has(part.id)).map((part) => {
             const quotedItem = quotedByPartId.get(part.id)!
             return {
               partName: part.partName,

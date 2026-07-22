@@ -74,6 +74,13 @@ enum OrderStatus {
   cancelled
 }
 
+enum PaymentStatus {
+  pending
+  succeeded
+  failed
+  refunded
+}
+
 enum OrderSource {
   rfq
   direct
@@ -138,6 +145,22 @@ model VehicleLookup {
   @@index([make, model])
   @@index([tierId])
   @@map("vehicle_lookups")
+}
+
+model VinLookupCache {
+  id          String   @id @default(cuid())
+  vin         String   @unique
+  year        Int
+  make        String
+  model       String
+  vehicleName String?
+  trim        String?
+  rawData     Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([vin])
+  @@map("vin_lookup_cache")
 }
 
 model BrandLookup {
@@ -246,6 +269,7 @@ model User {
   garageVerifications       GarageVerificationRequest[]
   notifications             Notification[]              @relation("UserNotificationRecipient")
   sentNotifications         Notification[]              @relation("UserNotificationActor")
+  notificationDevices       NotificationDevice[]        @relation("UserNotificationDevice")
   supplierReviewedBy        admin?                      @relation("SupplierApprovalReviewer", fields: [supplierReviewedByAdminId], references: [id], onDelete: SetNull)
 
   @@index([roles], type: Gin)
@@ -430,6 +454,15 @@ model Order {
   deliveryCountry       String?
   totalAmount           Int
   status                OrderStatus @default(pending)
+  paymentStatus         PaymentStatus @default(pending)
+  paidAt                DateTime?
+  supplierConfirmedAt   DateTime?
+  expectedDeliveryAt    DateTime?
+  proofOfDeliveryUrl    String?
+  proofOfDeliveryKey    String?
+  proofOfDeliveryNote   String?
+  proofRecipientName    String?
+  proofSubmittedAt      DateTime?
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
 
@@ -475,6 +508,7 @@ model RfqPart {
   quantity    Int
   targetPrice Int?
   notes       String?
+  vehicleVin  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -483,6 +517,7 @@ model RfqPart {
 
   @@index([rfqId])
   @@index([partNumber])
+  @@index([vehicleVin])
   @@map("rfq_parts")
 }
 
@@ -529,6 +564,10 @@ model GarageBooking {
   durationMinutes Int
   price           Int
   currency        String              @default("AED")
+  advancePercentage Int?
+  advanceAmount     Int?
+  advancePaymentStatus String?
+  advancePaidAt      DateTime?
   status          GarageBookingStatus @default(confirmed)
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
@@ -543,6 +582,15 @@ model GarageBooking {
   @@index([serviceId])
   @@index([status])
   @@map("garage_bookings")
+}
+
+model PlatformSetting {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("platform_settings")
 }
 
 model GarageServiceReview {
@@ -676,10 +724,11 @@ model admin {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  sessions          adminSession[]
-  reviewedSuppliers User[]         @relation("SupplierApprovalReviewer")
-  notifications     Notification[] @relation("AdminNotificationRecipient")
-  sentNotifications Notification[] @relation("AdminNotificationActor")
+  sessions            adminSession[]
+  reviewedSuppliers   User[]               @relation("SupplierApprovalReviewer")
+  notifications       Notification[]       @relation("AdminNotificationRecipient")
+  sentNotifications   Notification[]       @relation("AdminNotificationActor")
+  notificationDevices NotificationDevice[] @relation("AdminNotificationDevice")
 }
 
 model Notification {
@@ -708,6 +757,29 @@ model Notification {
   @@index([entityType, entityId])
   @@index([type, createdAt])
   @@map("notifications")
+}
+
+model NotificationDevice {
+  id               String    @id @default(cuid())
+  recipientUserId  String?
+  recipientAdminId String?
+  role             String
+  platform         String
+  fcmToken         String    @unique
+  deviceName       String?
+  userAgent        String?
+  lastSeenAt       DateTime  @default(now())
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  recipientUser  User?  @relation("UserNotificationDevice", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  recipientAdmin admin? @relation("AdminNotificationDevice", fields: [recipientAdminId], references: [id], onDelete: Cascade)
+
+  @@index([recipientUserId, revokedAt, lastSeenAt])
+  @@index([recipientAdminId, revokedAt, lastSeenAt])
+  @@index([platform, revokedAt])
+  @@map("notification_devices")
 }
 
 model role {
