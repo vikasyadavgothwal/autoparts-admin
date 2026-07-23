@@ -20,8 +20,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { loginUserViaApi } from "@/actions/user-auth/user-auth"
 import { setUserAuthCookies } from "@/lib/user-auth/cookies"
 import {
-  consumeUserAuthRateLimit,
-  getClientIp,
   getUserRequestContext,
   isAllowedUserAuthOrigin,
   setUserAuthCorsHeaders,
@@ -61,20 +59,21 @@ export async function POST(
     ))
   }
 
-  const rateLimit = await consumeUserAuthRateLimit(
-    `user-login:${getClientIp(request) ?? "unknown"}`,
-    10,
-    15 * 60 * 1_000,
-  )
-  if (!rateLimit.allowed) {
-    return withCors(request, NextResponse.json(
-      { ok: false, success: false, message: "Too many login attempts" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
-      },
-    ))
-  }
+  // Temporarily disabled while mobile login is being stabilized.
+  // const rateLimit = await consumeUserAuthRateLimit(
+  //   `user-login:${getClientIp(request) ?? "unknown"}`,
+  //   10,
+  //   15 * 60 * 1_000,
+  // )
+  // if (!rateLimit.allowed) {
+  //   return withCors(request, NextResponse.json(
+  //     { ok: false, success: false, message: "Too many login attempts" },
+  //     {
+  //       status: 429,
+  //       headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+  //     },
+  //   ))
+  // }
 
   let body: LoginUserApiBody
 
@@ -136,7 +135,10 @@ export async function POST(
       ok: true as const,
       success: true as const,
       user: result.user,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
       expiresAt: result.expiresAt,
+      refreshExpiresAt: result.refreshExpiresAt,
     },
     { status: result.statusCode },
   )

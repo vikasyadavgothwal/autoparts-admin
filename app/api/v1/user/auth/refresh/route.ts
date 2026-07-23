@@ -57,7 +57,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const response = NextResponse.json({
     ok: true,
     success: true,
+    accessToken: result.issued.accessToken,
+    refreshToken: result.issued.refreshToken,
     expiresAt: result.issued.accessExpiresAt.toISOString(),
+    refreshExpiresAt: result.issued.refreshExpiresAt.toISOString(),
   })
   setUserAuthCookies(response, result.issued)
   return response
