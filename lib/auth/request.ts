@@ -8,13 +8,15 @@ export type AuthRequestContext = {
 export const getRequestContext = async (): Promise<AuthRequestContext> => {
   const requestHeaders = await headers()
 
-  const rawIp =
-    requestHeaders.get("x-forwarded-for") ||
-    requestHeaders.get("x-real-ip") ||
-    requestHeaders.get("cf-connecting-ip") ||
-    requestHeaders.get("x-client-ip")
-
-  const ipAddress = rawIp ? rawIp.split(",")[0]?.trim() ?? null : null
+  const cloudflareIp = requestHeaders.get("cf-connecting-ip")?.trim()
+  const realIp = requestHeaders.get("x-real-ip")?.trim()
+  const forwarded = requestHeaders.get("x-forwarded-for")
+  const ipAddress =
+    cloudflareIp ||
+    realIp ||
+    forwarded?.split(",").at(-1)?.trim() ||
+    requestHeaders.get("x-client-ip")?.trim() ||
+    null
   const userAgent = requestHeaders.get("user-agent")
 
   return {
