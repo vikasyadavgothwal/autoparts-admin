@@ -65,6 +65,7 @@ export async function POST(request: NextRequest) {
     supplierPartId?: unknown;
     quantity?: unknown;
     items?: unknown;
+    services?: unknown;
     addressId?: unknown;
   }>(request);
   if (!body.ok)

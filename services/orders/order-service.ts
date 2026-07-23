@@ -13,6 +13,10 @@ import {
   createNotificationsSafely,
   type CreateNotificationInput,
 } from "@/services/notifications/notification-service";
+import {
+  calculateGarageBookingAdvanceAmount,
+  getGarageBookingAdvanceSetting,
+} from "@/services/platform-settings/platform-settings-service";
 import { getSupplierPartEffectivePriceCents } from "@/services/supplier-part-pricing";
 import { getUserAddressForCheckout } from "@/services/user-addresses/user-address-service";
 
@@ -143,6 +147,31 @@ const orderInclude = {
     },
   },
   deliveryAddress: true,
+  garageBookings: {
+    orderBy: { createdAt: "asc" as const },
+    select: {
+      id: true,
+      publicId: true,
+      serviceName: true,
+      garageId: true,
+      serviceId: true,
+      bookingDate: true,
+      bookingTime: true,
+      durationMinutes: true,
+      price: true,
+      currency: true,
+      status: true,
+      linkedOrderId: true,
+      garage: {
+        select: {
+          companyName: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      },
+    },
+  },
 } satisfies Prisma.OrderInclude;
 
 type DirectOrderLineInput = {
@@ -150,8 +179,20 @@ type DirectOrderLineInput = {
   quantity?: unknown;
 };
 
+type DirectServiceBookingInput = {
+  garageId?: unknown;
+  serviceId?: unknown;
+  quantity?: unknown;
+  vehicleYear?: unknown;
+  vehicleMake?: unknown;
+  vehicleModel?: unknown;
+  vehicleVin?: unknown;
+  notes?: unknown;
+};
+
 type DirectOrderCheckoutInput = DirectOrderLineInput & {
   items?: unknown;
+  services?: unknown;
   addressId?: unknown;
 };
 
@@ -202,6 +243,61 @@ const normalizeDirectOrderLines = (input: DirectOrderCheckoutInput) => {
   }));
 };
 
+const normalizeText = (value: unknown, maxLength = 160) => {
+  const normalized =
+    typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  if (!normalized) return null;
+  return normalized.slice(0, maxLength);
+};
+
+const normalizeDirectServiceBookings = (input: DirectOrderCheckoutInput) => {
+  const rawServices = Array.isArray(input.services) ? input.services : [];
+  if (rawServices.length > 20) {
+    throw new Error("Checkout supports up to 20 garage services at a time");
+  }
+
+  const services: Array<{
+    garageId: string;
+    serviceId: string;
+    quantity: number;
+    vehicleYear: string | null;
+    vehicleMake: string | null;
+    vehicleModel: string | null;
+    vehicleVin: string | null;
+    notes: string | null;
+  }> = [];
+
+  for (const rawService of rawServices) {
+    const service =
+      rawService && typeof rawService === "object"
+        ? (rawService as DirectServiceBookingInput)
+        : {};
+    const garageId =
+      typeof service.garageId === "string" ? service.garageId.trim() : "";
+    const serviceId =
+      typeof service.serviceId === "string" ? service.serviceId.trim() : "";
+    const quantity = parseDirectOrderQuantity(service.quantity ?? 1);
+    if (!garageId || !serviceId) {
+      throw new Error("Garage and service are required for service checkout");
+    }
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
+      throw new Error("Service quantity must be between 1 and 20");
+    }
+    services.push({
+      garageId,
+      serviceId,
+      quantity,
+      vehicleYear: normalizeText(service.vehicleYear, 20),
+      vehicleMake: normalizeText(service.vehicleMake, 80),
+      vehicleModel: normalizeText(service.vehicleModel, 80),
+      vehicleVin: normalizeText(service.vehicleVin, 40)?.toUpperCase() ?? null,
+      notes: normalizeText(service.notes, 500),
+    });
+  }
+
+  return services;
+};
+
 const normalizeAddressId = (value: unknown) =>
   typeof value === "string" ? value.trim() : "";
 
@@ -213,6 +309,11 @@ const mapOrder = <
       unitPrice: number | null;
       lineTotal: number | null;
       deliveredAt?: Date | string | null;
+    }>;
+    garageBookings?: Array<{
+      price: number;
+      status: string;
+      linkedOrderId: string | null;
     }>;
   },
 >(
@@ -236,6 +337,15 @@ const mapOrder = <
     unitPrice: item.unitPrice === null ? null : item.unitPrice / 100,
     lineTotal: item.lineTotal === null ? null : item.lineTotal / 100,
   })),
+  garageBookings: order.garageBookings?.map((booking) => ({
+    ...booking,
+    price: booking.price / 100,
+    canSelectSlot:
+      booking.status === "pending_slot_selection" &&
+      Boolean(booking.linkedOrderId) &&
+      order.items.length > 0 &&
+      order.items.every((item) => Boolean(item.deliveredAt)),
+  })) ?? [],
 });
 
 async function listOrders(
@@ -566,8 +676,12 @@ export async function createDirectOrders(
   input: DirectOrderCheckoutInput,
 ) {
   const lines = normalizeDirectOrderLines(input);
+  const serviceBookings = normalizeDirectServiceBookings(input);
   const addressId = normalizeAddressId(input.addressId);
   if (!addressId) throw new Error("Select a delivery address before checkout");
+  if (serviceBookings.length && !lines.length) {
+    throw new Error("Add at least one product before adding a delayed service slot");
+  }
   const deliveryAddress = await getUserAddressForCheckout(buyerId, addressId);
   const supplierPartIds = lines.map((line) => line.supplierPartId);
 
@@ -666,13 +780,85 @@ export async function createDirectOrders(
       );
     }
 
+    const firstLinkedOrder = orders[0];
+    let serviceTotalAmount = 0;
+    let serviceBookingCount = 0;
+    if (serviceBookings.length && firstLinkedOrder) {
+      const advanceSetting = await getGarageBookingAdvanceSetting();
+      const services = await transaction.garageService.findMany({
+        where: {
+          OR: serviceBookings.map((service) => ({
+            id: service.serviceId,
+            garageId: service.garageId,
+            status: "active",
+          })),
+        },
+      });
+      const serviceByKey = new Map(
+        services.map((service) => [`${service.garageId}:${service.id}`, service]),
+      );
+      for (const line of serviceBookings) {
+        const service = serviceByKey.get(`${line.garageId}:${line.serviceId}`);
+        if (!service) {
+          throw new Error("One or more garage services are no longer available");
+        }
+        const advanceAmount = calculateGarageBookingAdvanceAmount(
+          service.price,
+          advanceSetting,
+        );
+        for (let index = 0; index < line.quantity; index += 1) {
+          await transaction.garageBooking.create({
+            data: {
+              garageId: service.garageId,
+              customerId: buyerId,
+              serviceId: service.id,
+              serviceName: service.name,
+              customerName: deliveryAddress.recipientName,
+              customerEmail: null,
+              customerPhone: deliveryAddress.phone,
+              vehicleYear: line.vehicleYear,
+              vehicleMake: line.vehicleMake,
+              vehicleModel: line.vehicleModel,
+              vehicleVin: line.vehicleVin,
+              notes:
+                line.notes ??
+                "Paid with product checkout. Customer will select slot after part delivery.",
+              bookingDate: null,
+              bookingTime: null,
+              durationMinutes: service.durationMinutes,
+              price: service.price,
+              currency: service.currency,
+              advancePercentage:
+                advanceSetting.mode === "percentage"
+                  ? advanceSetting.value
+                  : null,
+              advanceAmount,
+              advancePaymentStatus: "succeeded",
+              advancePaidAt: new Date(),
+              status: "pending_slot_selection",
+              linkedOrderId: firstLinkedOrder.id,
+            },
+          });
+          serviceBookingCount += 1;
+          serviceTotalAmount += advanceAmount;
+        }
+        await transaction.garageService.update({
+          where: { id: service.id },
+          data: { bookingsCount: { increment: line.quantity } },
+        });
+      }
+    }
+
     return {
       orders: orders.map(mapOrder),
       summary: {
         orderCount: orders.length,
         itemCount: lines.reduce((total, line) => total + line.quantity, 0),
+        serviceBookingCount,
         totalAmount:
-          orders.reduce((total, order) => total + order.totalAmount, 0) / 100,
+          (orders.reduce((total, order) => total + order.totalAmount, 0) +
+            serviceTotalAmount) /
+          100,
       },
     };
   });

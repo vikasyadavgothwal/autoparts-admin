@@ -5,9 +5,9 @@ import {
   getS3ObjectKeyFromUrl,
 } from "@/lib/storage/s3"
 import {
+  Prisma,
   SupplierApprovalStatus,
   SupplierPartMappingStatus,
-  type Prisma,
 } from "@/lib/generated/prisma/client"
 import {
   getPartReviewSummary,
@@ -65,6 +65,11 @@ type MarketplacePart = Prisma.PartMasterGetPayload<{
   }
 }>
 
+type SupplierPerformanceSummary = {
+  completedOrders: number
+  deliveryRate: number
+}
+
 type MarketplaceSearchInput = {
   partNumber?: string | null
   vin?: string | null
@@ -118,6 +123,91 @@ const getUniqueSellableOfferModels = (offers: MarketplaceSupplierPart[]) => {
   }
 
   return Array.from(offerBySupplier.values())
+}
+
+const getSupplierPerformanceSummaries = async (supplierIds: string[]) => {
+  const uniqueSupplierIds = Array.from(new Set(supplierIds.filter(Boolean)))
+  if (!uniqueSupplierIds.length) return new Map<string, SupplierPerformanceSummary>()
+
+  const rows = await db.$queryRaw<
+    Array<{
+      supplierId: string
+      completedOrders: bigint | number
+      deliveredItems: bigint | number
+      totalItems: bigint | number
+    }>
+  >`
+    SELECT
+      o."supplierId",
+      COUNT(DISTINCT o."id") FILTER (
+        WHERE o."status" = 'delivered'::"OrderStatus"
+      ) AS "completedOrders",
+      COUNT(oi."id") FILTER (WHERE oi."deliveredAt" IS NOT NULL) AS "deliveredItems",
+      COUNT(oi."id") AS "totalItems"
+    FROM "orders" o
+    LEFT JOIN "order_items" oi ON oi."orderId" = o."id"
+    WHERE o."supplierId" IN (${Prisma.join(uniqueSupplierIds)})
+    GROUP BY o."supplierId"
+  `
+
+  return new Map(
+    rows.map((row) => {
+      const deliveredItems = Number(row.deliveredItems ?? 0)
+      const totalItems = Number(row.totalItems ?? 0)
+      return [
+        row.supplierId,
+        {
+          completedOrders: Number(row.completedOrders ?? 0),
+          deliveryRate: totalItems ? deliveredItems / totalItems : 0,
+        },
+      ]
+    }),
+  )
+}
+
+const rankedOfferModels = async (
+  offerModels: ReturnType<typeof getUniqueSellableOfferModels>,
+) => {
+  const supplierIds = offerModels.map(({ offer }) => offer.supplierId)
+  const [reviewSummaries, performanceSummaries] = await Promise.all([
+    getSupplierReviewSummaries(supplierIds),
+    getSupplierPerformanceSummaries(supplierIds),
+  ])
+  const cheapestPrice = Math.min(
+    ...offerModels.map(({ offer }) => getSupplierPartEffectivePriceCents(offer)),
+  )
+
+  return [...offerModels].sort((left, right) => {
+    const leftReview = reviewSummaries.get(left.offer.supplierId)
+    const rightReview = reviewSummaries.get(right.offer.supplierId)
+    const leftPerf = performanceSummaries.get(left.offer.supplierId)
+    const rightPerf = performanceSummaries.get(right.offer.supplierId)
+    const score = (
+      model: (typeof offerModels)[number],
+      review?: SupplierProductReviewSummary,
+      performance?: SupplierPerformanceSummary,
+    ) => {
+      const price = getSupplierPartEffectivePriceCents(model.offer)
+      const priceScore = price > 0 && Number.isFinite(cheapestPrice)
+        ? Math.min(1, cheapestPrice / price)
+        : 0
+      return (
+        (review?.ratingAverage ?? 0) * 20 +
+        Math.min(20, (review?.reviewCount ?? 0) * 2) +
+        Math.min(25, (performance?.completedOrders ?? 0) * 2.5) +
+        (performance?.deliveryRate ?? 0) * 20 +
+        priceScore * 10 +
+        Math.min(5, model.offer.stock / 10)
+      )
+    }
+    return (
+      score(right, rightReview, rightPerf) -
+        score(left, leftReview, leftPerf) ||
+      getSupplierPartEffectivePriceCents(left.offer) -
+        getSupplierPartEffectivePriceCents(right.offer) ||
+      right.offer.updatedAt.getTime() - left.offer.updatedAt.getTime()
+    )
+  })
 }
 
 const getCurrency = (offer: MarketplaceSupplierPart): string =>
@@ -494,7 +584,9 @@ const buildOffer = async (
 }
 
 const summarizeProduct = async (part: MarketplacePart) => {
-  const offerModels = getUniqueSellableOfferModels(part.supplierParts)
+  const offerModels = (await rankedOfferModels(
+    getUniqueSellableOfferModels(part.supplierParts),
+  )).slice(0, 5)
   const sellableOffers = offerModels.map(({ offer }) => offer)
   const offers = (
     await Promise.all(sellableOffers.map((offer) => buildOffer(offer, false)))
@@ -847,7 +939,9 @@ export async function getMarketplaceProduct(partUid: string) {
     return { ok: false as const, message: "Product was not found" }
   }
 
-  const offerModels = getUniqueSellableOfferModels(part.supplierParts)
+  const offerModels = (await rankedOfferModels(
+    getUniqueSellableOfferModels(part.supplierParts),
+  )).slice(0, 5)
   const recommendedOfferId = offerModels[0]?.offer.id ?? null
   const supplierReviewSummaries = await getSupplierReviewSummaries(
     offerModels.map(({ offer }) => offer.supplierId),

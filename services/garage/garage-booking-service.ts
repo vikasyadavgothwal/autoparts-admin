@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 
 import { db } from "@/lib/database/prisma"
-import { Prisma } from "@/lib/generated/prisma/client"
+import { OrderStatus, Prisma } from "@/lib/generated/prisma/client"
 import {
   activeAdminRecipientIds,
   createNotificationsSafely,
@@ -34,12 +34,14 @@ type GarageBookingRow = {
   vehicleModel: string | null
   vehicleVin: string | null
   notes: string | null
-  bookingDate: Date | string
-  bookingTime: string
+  bookingDate: Date | string | null
+  bookingTime: string | null
   durationMinutes: number
   price: number
   currency: string
   status: GarageBookingStatus
+  linkedOrderId: string | null
+  slotSelectedAt: Date | null
   createdAt: Date
   updatedAt: Date
 }
@@ -54,6 +56,8 @@ type ServiceRow = {
 
 type UserGarageBookingRow = GarageBookingRow & {
   garageName: string | null
+  linkedOrderPublicId: string | null
+  linkedOrderDelivered: boolean | null
   reviewId: string | null
   reviewRating: number | null
   reviewComment: string | null
@@ -223,6 +227,7 @@ const bookingStatus = (value: unknown) => {
   const normalized = text(value).toLowerCase()
   if (
     normalized !== "pending" &&
+    normalized !== "pending_slot_selection" &&
     normalized !== "confirmed" &&
     normalized !== "completed" &&
     normalized !== "cancelled"
@@ -234,10 +239,12 @@ const bookingStatus = (value: unknown) => {
 
 const mapBooking = (row: GarageBookingRow): GarageBookingRecord => ({
   ...row,
-  bookingDate:
-    row.bookingDate instanceof Date
+  bookingDate: row.bookingDate
+    ? row.bookingDate instanceof Date
       ? row.bookingDate.toISOString().slice(0, 10)
-      : String(row.bookingDate).slice(0, 10),
+      : String(row.bookingDate).slice(0, 10)
+    : null,
+  bookingTime: row.bookingTime,
   createdAt: row.createdAt.toISOString(),
   updatedAt: row.updatedAt.toISOString(),
 })
@@ -462,11 +469,13 @@ export async function createPublicGarageBooking(
         "bookingTime",
         "durationMinutes",
         "price",
-        "currency",
-        "status",
-        "createdAt",
-        "updatedAt"
-    `
+    "currency",
+    "status",
+    "linkedOrderId",
+    "slotSelectedAt",
+    "createdAt",
+    "updatedAt"
+`
 
     await tx.$executeRaw`
       UPDATE "garage_services"
@@ -588,6 +597,8 @@ export async function createGarageOfflineBooking(
         "price",
         "currency",
         "status",
+        "linkedOrderId",
+        "slotSelectedAt",
         "createdAt",
         "updatedAt"
     `
@@ -603,6 +614,112 @@ export async function createGarageOfflineBooking(
   })
 
   return mapBooking(booking)
+}
+
+export async function scheduleUserGarageBookingSlot(
+  customerId: string,
+  bookingId: string,
+  input: {
+    bookingDate?: unknown
+    bookingTime?: unknown
+    vehicleYear?: unknown
+    vehicleMake?: unknown
+    vehicleModel?: unknown
+    vehicleVin?: unknown
+  },
+) {
+  const trimmedBookingId = requiredText(bookingId, "Booking")
+  const date = offlineBookingDate(input.bookingDate)
+  const time = minutesToTime(timeToMinutes(input.bookingTime))
+  const selectedVehicleYear = optionalText(input.vehicleYear, "Vehicle year", 20)
+  const selectedVehicleMake = optionalText(input.vehicleMake, "Vehicle make", 80)
+  const selectedVehicleModel = optionalText(input.vehicleModel, "Vehicle model", 80)
+  const selectedVehicleVin =
+    optionalText(input.vehicleVin, "VIN", 40)?.toUpperCase() ?? null
+
+  const [booking] = await db.$transaction(async (tx) => {
+    const [existing] = await tx.$queryRaw<Array<{
+      id: string
+      garageId: string
+      linkedOrderId: string | null
+      status: GarageBookingStatus
+    }>>`
+      SELECT "id", "garageId", "linkedOrderId", "status"
+      FROM "garage_bookings"
+      WHERE "customerId" = ${customerId}
+        AND ("id" = ${trimmedBookingId} OR "publicId" = ${trimmedBookingId})
+      LIMIT 1
+    `
+
+    if (!existing) throw new Error("Booking not found")
+    if (existing.status !== "pending_slot_selection") {
+      throw new Error("This service booking already has a slot")
+    }
+    if (!existing.linkedOrderId) {
+      throw new Error("This booking is not linked to a delivered product order")
+    }
+
+    const order = await tx.order.findFirst({
+      where: {
+        id: existing.linkedOrderId,
+        buyerId: customerId,
+        status: OrderStatus.delivered,
+      },
+      select: {
+        id: true,
+        items: { select: { deliveredAt: true } },
+      },
+    })
+    if (!order || order.items.some((item) => !item.deliveredAt)) {
+      throw new Error("Select a service slot after all linked parts are delivered")
+    }
+
+    await assertGarageSlotAvailable(tx, existing.garageId, date, time)
+
+    return tx.$queryRaw<GarageBookingRow[]>`
+      UPDATE "garage_bookings"
+      SET "bookingDate" = ${date}::date,
+          "bookingTime" = ${time},
+          "vehicleYear" = COALESCE(${selectedVehicleYear}, "vehicleYear"),
+          "vehicleMake" = COALESCE(${selectedVehicleMake}, "vehicleMake"),
+          "vehicleModel" = COALESCE(${selectedVehicleModel}, "vehicleModel"),
+          "vehicleVin" = COALESCE(${selectedVehicleVin}, "vehicleVin"),
+          "status" = 'confirmed'::"GarageBookingStatus",
+          "slotSelectedAt" = CURRENT_TIMESTAMP,
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${existing.id}
+      RETURNING
+        "id",
+        "publicId",
+        "garageId",
+        "customerId",
+        "serviceId",
+        "serviceName",
+        "customerName",
+        "customerEmail",
+        "customerPhone",
+        "vehicleYear",
+        "vehicleMake",
+        "vehicleModel",
+        "vehicleVin",
+        "notes",
+        "bookingDate",
+        "bookingTime",
+        "durationMinutes",
+        "price",
+        "currency",
+        "status",
+        "linkedOrderId",
+        "slotSelectedAt",
+        "createdAt",
+        "updatedAt"
+    `
+  })
+
+  if (!booking) throw new Error("Unable to schedule booking")
+  const mappedBooking = mapBooking(booking)
+  await notifyGarageBookingCreated(mappedBooking)
+  return mappedBooking
 }
 
 export async function listGarageBookings(garageId: string) {
@@ -647,6 +764,8 @@ export async function updateGarageBookingStatus(
       "price",
       "currency",
       "status",
+      "linkedOrderId",
+      "slotSelectedAt",
       "createdAt",
       "updatedAt"
   `
@@ -680,6 +799,8 @@ export async function listUserGarageBookings(customerId: string) {
       gb."price",
       gb."currency",
       gb."status",
+      gb."linkedOrderId",
+      gb."slotSelectedAt",
       gb."createdAt",
       gb."updatedAt",
       COALESCE(
@@ -691,9 +812,23 @@ export async function listUserGarageBookings(customerId: string) {
       gsr."id" AS "reviewId",
       gsr."rating" AS "reviewRating",
       gsr."comment" AS "reviewComment",
-      gsr."garageReply" AS "reviewGarageReply"
+      gsr."garageReply" AS "reviewGarageReply",
+      o."publicId" AS "linkedOrderPublicId",
+      CASE
+        WHEN o."id" IS NULL THEN NULL
+        WHEN o."status" = 'delivered'::"OrderStatus"
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "order_items" oi
+            WHERE oi."orderId" = o."id"
+              AND oi."deliveredAt" IS NULL
+          )
+        THEN TRUE
+        ELSE FALSE
+      END AS "linkedOrderDelivered"
     FROM "garage_bookings" gb
     LEFT JOIN "users" g ON g."id" = gb."garageId"
+    LEFT JOIN "orders" o ON o."id" = gb."linkedOrderId"
     LEFT JOIN LATERAL (
       SELECT r."id", r."rating", r."comment", r."garageReply"
       FROM "garage_service_reviews" r
@@ -715,6 +850,9 @@ export async function listUserGarageBookings(customerId: string) {
   return rows.map((row): UserGarageBookingRecord => ({
     ...mapBooking(row),
     garageName: row.garageName,
+    canSelectSlot:
+      row.status === "pending_slot_selection" &&
+      Boolean(row.linkedOrderId && row.linkedOrderDelivered),
     reviewId: row.reviewId,
     reviewRating: row.reviewRating,
     reviewComment: row.reviewComment,

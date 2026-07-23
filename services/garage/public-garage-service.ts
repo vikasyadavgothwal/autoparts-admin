@@ -10,8 +10,8 @@ import type {
 } from "@/types/garage/public"
 import type { GarageDayHours } from "@/types/garage/settings"
 
-const DEFAULT_PAGE_SIZE = 6
-const MAX_PAGE_SIZE = 24
+const DEFAULT_PAGE_SIZE = 5
+const MAX_PAGE_SIZE = 5
 const DEFAULT_CURRENCY = "AED"
 
 type PublicGarageRow = {
@@ -321,7 +321,51 @@ export async function listPublicGarages(params: {
   const garages = await db.$queryRaw<PublicGarageRow[]>`
     ${garageSelect}
     ${whereClause}
-    ORDER BY u."createdAt" DESC
+    ORDER BY
+      (
+        COALESCE(
+          (
+            SELECT AVG(gsr."rating")
+            FROM "garage_service_reviews" gsr
+            WHERE gsr."garageId" = u."id"
+          ),
+          0
+        ) * 20
+        + LEAST(
+          20,
+          COALESCE(
+            (
+              SELECT COUNT(*)
+              FROM "garage_service_reviews" gsr
+              WHERE gsr."garageId" = u."id"
+            ),
+            0
+          ) * 2
+        )
+        + LEAST(
+          30,
+          (
+            COALESCE(gp."jobCompletedNumber", 0)
+            + COALESCE(
+              (
+                SELECT COUNT(*)
+                FROM "garage_bookings" gb
+                WHERE gb."garageId" = u."id"
+                  AND gb."status" = 'completed'::"GarageBookingStatus"
+              ),
+              0
+            )
+          ) * 2
+        )
+        + LEAST(10, COALESCE(gp."yearsExperience", 0))
+        + CASE
+          WHEN gp."workingDays" IS NOT NULL
+            AND array_length(gp."workingDays", 1) > 0
+          THEN 10
+          ELSE 0
+        END
+      ) DESC,
+      u."createdAt" DESC
     OFFSET ${(page - 1) * pageSize}
     LIMIT ${pageSize}
   `

@@ -1,4 +1,9 @@
-export type GarageBookingStatus = "pending" | "confirmed" | "completed" | "cancelled"
+export type GarageBookingStatus =
+  | "pending"
+  | "pending_slot_selection"
+  | "confirmed"
+  | "completed"
+  | "cancelled"
 
 export type GarageBookingInput = {
   garageId?: unknown
@@ -32,12 +37,14 @@ export type GarageBookingRecord = {
   vehicleModel: string | null
   vehicleVin: string | null
   notes: string | null
-  bookingDate: string
-  bookingTime: string
+  bookingDate: string | null
+  bookingTime: string | null
   durationMinutes: number
   price: number
   currency: string
   status: GarageBookingStatus
+  linkedOrderId: string | null
+  canSelectSlot?: boolean
   createdAt: string
   updatedAt: string
 }

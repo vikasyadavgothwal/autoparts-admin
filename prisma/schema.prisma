@@ -98,6 +98,7 @@ enum GarageVerificationTarget {
 
 enum GarageBookingStatus {
   pending
+  pending_slot_selection
   confirmed
   completed
   cancelled
@@ -479,12 +480,13 @@ model Order {
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 
-  rfq             Rfq?         @relation(fields: [rfqId], references: [id], onDelete: Restrict)
-  bid             RfqBid?      @relation(fields: [bidId], references: [id], onDelete: Restrict)
-  buyer           User         @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
-  supplier        User         @relation("OrderSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
-  deliveryAddress UserAddress? @relation(fields: [deliveryAddressId], references: [id], onDelete: SetNull)
+  rfq             Rfq?            @relation(fields: [rfqId], references: [id], onDelete: Restrict)
+  bid             RfqBid?         @relation(fields: [bidId], references: [id], onDelete: Restrict)
+  buyer           User            @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  supplier        User            @relation("OrderSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
+  deliveryAddress UserAddress?    @relation(fields: [deliveryAddressId], references: [id], onDelete: SetNull)
   items           OrderItem[]
+  garageBookings  GarageBooking[]
 
   @@index([buyerId, status])
   @@index([supplierId, status])
@@ -584,8 +586,8 @@ model GarageBooking {
   vehicleModel         String?
   vehicleVin           String?
   notes                String?
-  bookingDate          DateTime            @db.Date
-  bookingTime          String
+  bookingDate          DateTime?           @db.Date
+  bookingTime          String?
   durationMinutes      Int
   price                Int
   currency             String              @default("AED")
@@ -596,16 +598,20 @@ model GarageBooking {
   status               GarageBookingStatus @default(confirmed)
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
+  linkedOrderId        String?
+  slotSelectedAt       DateTime?
 
-  garage   User                 @relation("GarageBookingGarage", fields: [garageId], references: [id], onDelete: Cascade)
-  customer User?                @relation("GarageBookingCustomer", fields: [customerId], references: [id], onDelete: SetNull)
-  service  GarageService?       @relation(fields: [serviceId], references: [id], onDelete: SetNull)
-  review   GarageServiceReview?
+  garage      User                 @relation("GarageBookingGarage", fields: [garageId], references: [id], onDelete: Cascade)
+  customer    User?                @relation("GarageBookingCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  service     GarageService?       @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  linkedOrder Order?               @relation(fields: [linkedOrderId], references: [id], onDelete: SetNull)
+  review      GarageServiceReview?
 
   @@index([garageId, bookingDate, bookingTime])
   @@index([customerId])
   @@index([serviceId])
   @@index([status])
+  @@index([linkedOrderId])
   @@map("garage_bookings")
 }
 
