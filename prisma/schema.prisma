@@ -262,6 +262,8 @@ model User {
   customerGarageBookings    GarageBooking[]             @relation("GarageBookingCustomer")
   garageServiceReviews      GarageServiceReview[]       @relation("GarageServiceReviewGarage")
   customerServiceReviews    GarageServiceReview[]       @relation("GarageServiceReviewCustomer")
+  supplierProductReviews    SupplierProductReview[]     @relation("SupplierProductReviewSupplier")
+  customerSupplierReviews   SupplierProductReview[]     @relation("SupplierProductReviewCustomer")
   savedParts                UserSavedPart[]
   addresses                 UserAddress[]
   userVehicles              UserVehicle[]
@@ -417,14 +419,15 @@ model RfqBid {
 }
 
 model RfqBidItem {
-  id        String   @id @default(cuid())
-  bidId     String
-  rfqPartId String
-  unitPrice Int
-  lineTotal Int
-  partType  String   @default("New")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(cuid())
+  bidId          String
+  rfqPartId      String
+  unitPrice      Int
+  lineTotal      Int
+  partType       String   @default("New")
+  deliveryOption String   @default("24_hours")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   bid     RfqBid  @relation(fields: [bidId], references: [id], onDelete: Cascade)
   rfqPart RfqPart @relation(fields: [rfqPartId], references: [id], onDelete: Cascade)
@@ -435,11 +438,11 @@ model RfqBidItem {
 }
 
 model Order {
-  id                    String      @id @default(cuid())
-  publicId              String      @unique @default(dbgenerated("next_order_public_id()"))
-  source                OrderSource @default(rfq)
-  rfqId                 String?     @unique
-  bidId                 String?     @unique
+  id                    String        @id @default(cuid())
+  publicId              String        @unique @default(dbgenerated("next_order_public_id()"))
+  source                OrderSource   @default(rfq)
+  rfqId                 String?       @unique
+  bidId                 String?       @unique
   buyerId               String
   supplierId            String
   deliveryAddressId     String?
@@ -453,7 +456,7 @@ model Order {
   deliveryPostalCode    String?
   deliveryCountry       String?
   totalAmount           Int
-  status                OrderStatus @default(pending)
+  status                OrderStatus   @default(pending)
   paymentStatus         PaymentStatus @default(pending)
   paidAt                DateTime?
   supplierConfirmedAt   DateTime?
@@ -463,8 +466,8 @@ model Order {
   proofOfDeliveryNote   String?
   proofRecipientName    String?
   proofSubmittedAt      DateTime?
-  createdAt             DateTime    @default(now())
-  updatedAt             DateTime    @updatedAt
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
 
   rfq             Rfq?         @relation(fields: [rfqId], references: [id], onDelete: Restrict)
   bid             RfqBid?      @relation(fields: [bidId], references: [id], onDelete: Restrict)
@@ -480,23 +483,35 @@ model Order {
 }
 
 model OrderItem {
-  id             String   @id @default(cuid())
-  orderId        String
-  supplierPartId String?
-  partName       String
-  partNumber     String?
-  quantity       Int
-  unitPrice      Int?
-  lineTotal      Int?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                  String    @id @default(cuid())
+  orderId             String
+  supplierPartId      String?
+  partName            String
+  partNumber          String?
+  quantity            Int
+  unitPrice           Int?
+  lineTotal           Int?
+  deliveryOption      String?
+  expectedDeliveryAt  DateTime?
+  deliveredAt         DateTime?
+  proofOfDeliveryUrl  String?
+  proofOfDeliveryKey  String?
+  proofOfDeliveryNote String?
+  proofRecipientName  String?
+  proofSubmittedAt    DateTime?
+  buyerConfirmedAt    DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  supplierPart SupplierPart? @relation(fields: [supplierPartId], references: [id], onDelete: SetNull)
+  order        Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplierPart SupplierPart?          @relation(fields: [supplierPartId], references: [id], onDelete: SetNull)
+  review       SupplierProductReview?
 
   @@index([orderId])
   @@index([supplierPartId])
   @@index([partNumber])
+  @@index([deliveredAt])
+  @@index([buyerConfirmedAt])
   @@map("order_items")
 }
 
@@ -545,32 +560,32 @@ model GarageService {
 }
 
 model GarageBooking {
-  id              String              @id @default(cuid())
-  publicId        String              @unique @default(dbgenerated("next_garage_booking_public_id()"))
-  garageId        String
-  customerId      String?
-  serviceId       String?
-  serviceName     String
-  customerName    String
-  customerEmail   String?
-  customerPhone   String
-  vehicleYear     String?
-  vehicleMake     String?
-  vehicleModel    String?
-  vehicleVin      String?
-  notes           String?
-  bookingDate     DateTime            @db.Date
-  bookingTime     String
-  durationMinutes Int
-  price           Int
-  currency        String              @default("AED")
-  advancePercentage Int?
-  advanceAmount     Int?
+  id                   String              @id @default(cuid())
+  publicId             String              @unique @default(dbgenerated("next_garage_booking_public_id()"))
+  garageId             String
+  customerId           String?
+  serviceId            String?
+  serviceName          String
+  customerName         String
+  customerEmail        String?
+  customerPhone        String
+  vehicleYear          String?
+  vehicleMake          String?
+  vehicleModel         String?
+  vehicleVin           String?
+  notes                String?
+  bookingDate          DateTime            @db.Date
+  bookingTime          String
+  durationMinutes      Int
+  price                Int
+  currency             String              @default("AED")
+  advancePercentage    Int?
+  advanceAmount        Int?
   advancePaymentStatus String?
-  advancePaidAt      DateTime?
-  status          GarageBookingStatus @default(confirmed)
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  advancePaidAt        DateTime?
+  status               GarageBookingStatus @default(confirmed)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
 
   garage   User                 @relation("GarageBookingGarage", fields: [garageId], references: [id], onDelete: Cascade)
   customer User?                @relation("GarageBookingCustomer", fields: [customerId], references: [id], onDelete: SetNull)
@@ -861,11 +876,12 @@ model SupplierPart {
   createdAt              DateTime                   @default(now())
   updatedAt              DateTime                   @updatedAt
 
-  supplier   User                 @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  part       PartMaster?          @relation(fields: [partUid], references: [partUid], onDelete: SetNull)
+  supplier   User                    @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  part       PartMaster?             @relation(fields: [partUid], references: [partUid], onDelete: SetNull)
   orderItems OrderItem[]
   stockRows  SupplierPartStock[]
   pricing    SupplierPartPricing?
+  reviews    SupplierProductReview[]
 
   @@unique([supplierId, vendorSku])
   @@index([supplierId])
@@ -953,6 +969,7 @@ model PartMaster {
   numbers       PartNumberIndex[]
   fitments      MasterFitment[]
   savedByUsers  UserSavedPart[]
+  reviews       SupplierProductReview[]
 
   @@index([normalizedPartNumber])
   @@index([normalizedPartNumber, groupId])
@@ -974,6 +991,32 @@ model UserSavedPart {
   @@index([userId, createdAt])
   @@index([partUid])
   @@map("user_saved_parts")
+}
+
+model SupplierProductReview {
+  id             String   @id @default(cuid())
+  supplierId     String
+  customerId     String
+  supplierPartId String
+  partUid        String
+  orderItemId    String   @unique
+  rating         Int
+  comment        String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  supplier     User         @relation("SupplierProductReviewSupplier", fields: [supplierId], references: [id], onDelete: Cascade)
+  customer     User         @relation("SupplierProductReviewCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  supplierPart SupplierPart @relation(fields: [supplierPartId], references: [id], onDelete: Cascade)
+  part         PartMaster   @relation(fields: [partUid], references: [partUid], onDelete: Cascade)
+  orderItem    OrderItem    @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, supplierId, partUid])
+  @@index([supplierId, createdAt])
+  @@index([partUid, createdAt])
+  @@index([supplierPartId, createdAt])
+  @@index([customerId, createdAt])
+  @@map("supplier_product_reviews")
 }
 
 model PartNumberIndex {

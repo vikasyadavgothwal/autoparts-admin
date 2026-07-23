@@ -1,12 +1,14 @@
 "use server";
 
 import {
-  getGarageBookingAdvancePercentage,
-  setGarageBookingAdvancePercentage,
+  getGarageBookingAdvanceSetting,
+  setGarageBookingAdvanceSetting,
 } from "@/services/platform-settings/platform-settings-service";
 
-export const readGarageBookingAdvancePercentage = async () =>
-  getGarageBookingAdvancePercentage();
+export const readGarageBookingAdvanceSetting = async () =>
+  getGarageBookingAdvanceSetting();
 
-export const updateGarageBookingAdvancePercentage = async (value: unknown) =>
-  setGarageBookingAdvancePercentage(value);
+export const updateGarageBookingAdvanceSetting = async (input: {
+  mode?: unknown;
+  value?: unknown;
+}) => setGarageBookingAdvanceSetting(input);

@@ -7,7 +7,10 @@ import {
   createNotificationsSafely,
   type CreateNotificationInput,
 } from "@/services/notifications/notification-service"
-import { getGarageBookingAdvancePercentage } from "@/services/platform-settings/platform-settings-service"
+import {
+  calculateGarageBookingAdvanceAmount,
+  getGarageBookingAdvanceSetting,
+} from "@/services/platform-settings/platform-settings-service"
 import type {
   GarageBookingInput,
   GarageOfflineBookingInput,
@@ -201,7 +204,7 @@ export async function getPublicGarageBookingAvailability(input: {
   return {
     unavailableTimes,
     slotIntervalMinutes: 15,
-    advancePercentage: await getGarageBookingAdvancePercentage(),
+    advance: await getGarageBookingAdvanceSetting(),
   }
 }
 
@@ -382,8 +385,8 @@ export async function createPublicGarageBooking(
 
   if (!service) throw new Error("Service not found for this garage")
 
-  const advancePercentage = await getGarageBookingAdvancePercentage()
-  const advanceAmount = Math.round((service.price * advancePercentage) / 100)
+  const advance = await getGarageBookingAdvanceSetting()
+  const advanceAmount = calculateGarageBookingAdvanceAmount(service.price, advance)
 
   const [booking] = await db.$transaction(async (tx) => {
     await assertGarageSlotAvailable(tx, garageId, date, time)
@@ -433,7 +436,7 @@ export async function createPublicGarageBooking(
         ${service.durationMinutes},
         ${service.price},
         ${service.currency},
-        ${advancePercentage},
+        ${advance.mode === "percentage" ? advance.value : null},
         ${advanceAmount},
         'succeeded',
         CURRENT_TIMESTAMP,
@@ -480,7 +483,9 @@ export async function createPublicGarageBooking(
   return {
     booking: mappedBooking,
     payment: {
-      percentage: advancePercentage,
+      mode: advance.mode,
+      value: advance.value,
+      percentage: advance.mode === "percentage" ? advance.value : null,
       amount: advanceAmount / 100,
       currency: service.currency,
       status: "succeeded" as const,

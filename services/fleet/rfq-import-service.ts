@@ -5,7 +5,10 @@ import { fetchVinSearchResult, getVinSearchApiBaseUrl, normalizeVinSearchResult 
 import type { ImportedRfqWorkbook } from "@/types/rfq/rfq-import"
 
 const maxRows = 20
-const requiredHeaders = ["vinno", "quantity", "price", "partnumber", "partname"] as const
+const requiredHeaders = ["vinno", "quantity", "targetprice", "partnumber", "partname"] as const
+const headerAliases: Partial<Record<(typeof requiredHeaders)[number], string[]>> = {
+  targetprice: ["price"],
+}
 const normalizeHeader = (value: unknown) => String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "")
 const cellText = (value: unknown) => String(value ?? "").trim().replace(/\s+/g, " ")
 const titleCase = (value: string) => value.replace(/\b\w/g, (letter) => letter.toUpperCase())
@@ -42,8 +45,13 @@ export function parseRfqWorkbook(buffer: Buffer): ParsedRfqWorkbook {
   const [headerRow, ...dataRows] = rows
   if (!headerRow) throw new Error("The uploaded file is empty")
   const indexes = new Map(headerRow.map((header, index) => [normalizeHeader(header), index]))
-  const missing = requiredHeaders.filter((header) => !indexes.has(header))
-  if (missing.length) throw new Error("Use exactly these columns: VIN No, Quantity, Price, Part Number, Part Name")
+  const columnIndex = new Map<(typeof requiredHeaders)[number], number>()
+  for (const header of requiredHeaders) {
+    const index = indexes.get(header) ?? headerAliases[header]?.map((alias) => indexes.get(alias)).find((aliasIndex) => aliasIndex !== undefined)
+    if (index !== undefined) columnIndex.set(header, index)
+  }
+  const missing = requiredHeaders.filter((header) => !columnIndex.has(header))
+  if (missing.length) throw new Error("Use exactly these columns: VIN No, Quantity, Target Price, Part Number, Part Name")
 
   const populatedRows = dataRows.filter((row) => row.some((cell) => cellText(cell)))
   if (!populatedRows.length) throw new Error("Add at least one part row")
@@ -52,17 +60,17 @@ export function parseRfqWorkbook(buffer: Buffer): ParsedRfqWorkbook {
   const vins = new Set<string>()
   const parts = populatedRows.map((row, index) => {
     const rowNumber = index + 2
-    const value = (header: (typeof requiredHeaders)[number]) => cellText(row[indexes.get(header)!])
+    const value = (header: (typeof requiredHeaders)[number]) => cellText(row[columnIndex.get(header)!])
     const vin = value("vinno").toUpperCase()
     const partName = value("partname")
     const partNumber = value("partnumber")
     const quantity = Number(value("quantity"))
-    const price = value("price").replace(/[^\d.]/g, "")
+    const price = value("targetprice").replace(/[^\d.]/g, "")
     if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) throw new Error(`Row ${rowNumber}: VIN must contain 17 valid characters`)
     if (!partName) throw new Error(`Row ${rowNumber}: Part Name is required`)
     if (!partNumber) throw new Error(`Row ${rowNumber}: Part Number is required`)
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) throw new Error(`Row ${rowNumber}: Quantity must be between 1 and 999`)
-    if (!/^\d+(\.\d{1,2})?$/.test(price) || Number(price) > 999999.99) throw new Error(`Row ${rowNumber}: Price must be a valid AED amount`)
+    if (!/^\d+(\.\d{1,2})?$/.test(price) || Number(price) > 999999.99) throw new Error(`Row ${rowNumber}: Target Price must be a valid AED amount`)
     vins.add(vin)
     return { vin, partName, partNumber, quantity, targetPrice: price }
   })

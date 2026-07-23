@@ -40,6 +40,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const formData = await request.formData();
   const proof = formData.get("proof");
+  const rawItemIds = formData.get("itemIds");
   if (!(proof instanceof File) || !PROOF_EXTENSIONS[proof.type] || proof.size > MAX_PROOF_SIZE) {
     return NextResponse.json(
       { ok: false, message: "Proof must be a JPG, PNG, or WebP image no larger than 5 MB" },
@@ -47,6 +48,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
     );
   }
   try {
+    const itemIds = typeof rawItemIds === "string"
+      ? JSON.parse(rawItemIds)
+      : [];
+    if (!Array.isArray(itemIds) || itemIds.some((itemId) => typeof itemId !== "string")) {
+      return NextResponse.json(
+        { ok: false, message: "Select valid order items for this delivery batch" },
+        { status: 400 },
+      );
+    }
     const extension = PROOF_EXTENSIONS[proof.type];
     const uploaded = await uploadObjectToS3({
       key: `order-delivery-proofs/${auth.user.id}/${id}/${Date.now()}-${crypto.randomUUID()}.${extension}`,
@@ -57,6 +67,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({
       ok: true,
       order: await submitOrderProofOfDelivery(auth.user.id, id, {
+        itemIds,
         proofUrl: uploaded.objectUrl,
         proofKey: uploaded.key,
         recipientName: String(formData.get("recipientName") ?? ""),

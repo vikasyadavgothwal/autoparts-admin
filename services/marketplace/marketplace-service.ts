@@ -9,6 +9,11 @@ import {
   SupplierPartMappingStatus,
   type Prisma,
 } from "@/lib/generated/prisma/client"
+import {
+  getPartReviewSummary,
+  getSupplierReviewSummaries,
+} from "@/services/supplier-product-reviews/supplier-product-review-service"
+import type { SupplierProductReviewSummary } from "@/types/supplier-product-reviews/reviews"
 
 const DEFAULT_CURRENCY = "AED"
 const DEFAULT_PRODUCT_IMAGE =
@@ -463,6 +468,7 @@ const buildKeyFeatures = (
 const buildOffer = async (
   offer: MarketplaceSupplierPart,
   recommended: boolean,
+  reviewSummary?: SupplierProductReviewSummary,
 ) => {
   const content = extractVendorContent(offer)
   const effectivePrice = getEffectivePriceCents(offer)
@@ -483,6 +489,8 @@ const buildOffer = async (
     stockLabel: offer.stock > 0 ? "In Stock" : "Out of Stock",
     leadTime: stockLeadTime,
     condition: content.condition,
+    ratingAverage: reviewSummary?.ratingAverage ?? 0,
+    reviewCount: reviewSummary?.reviewCount ?? 0,
     recommended,
     images,
     content,
@@ -506,6 +514,7 @@ const summarizeProduct = async (part: MarketplacePart) => {
     ? extractVendorContent(selectedContentOffer)
     : null
   const images = await collectProductImages(part)
+  const reviewSummary = await getPartReviewSummary(part.partUid)
 
   return {
     partUid: part.partUid,
@@ -521,6 +530,8 @@ const summarizeProduct = async (part: MarketplacePart) => {
     totalStock: offers.reduce((total, offer) => total + offer.stock, 0),
     minPrice: minOffer?.price ?? null,
     currency: minOffer?.currency ?? DEFAULT_CURRENCY,
+    ratingAverage: reviewSummary.ratingAverage,
+    reviewCount: reviewSummary.reviewCount,
     badge: "Confirmed Fit",
     badgeType: "fit" as const,
     fitments: part.fitments.slice(0, 20).map((fitment) => ({
@@ -843,9 +854,16 @@ export async function getMarketplaceProduct(partUid: string) {
 
   const offerModels = getUniqueSellableOfferModels(part.supplierParts)
   const recommendedOfferId = offerModels[0]?.offer.id ?? null
+  const supplierReviewSummaries = await getSupplierReviewSummaries(
+    offerModels.map(({ offer }) => offer.supplierId),
+  )
   const offers = await Promise.all(
     offerModels.map(({ offer }) =>
-      buildOffer(offer, offer.id === recommendedOfferId),
+      buildOffer(
+        offer,
+        offer.id === recommendedOfferId,
+        supplierReviewSummaries.get(offer.supplierId),
+      ),
     ),
   )
   const sellableOffers = offerModels.map(({ offer }) => offer)
@@ -859,6 +877,7 @@ export async function getMarketplaceProduct(partUid: string) {
     : null
   const images = await collectProductImages(part)
   const summary = await summarizeProduct(part)
+  const reviewSummary = await getPartReviewSummary(part.partUid)
 
   return {
     ok: true as const,
@@ -873,6 +892,8 @@ export async function getMarketplaceProduct(partUid: string) {
       selectedVendorContent: selectedContentOffer
         ? buildSelectedVendorContent(selectedContentOffer)
         : null,
+      ratingAverage: reviewSummary.ratingAverage,
+      reviewCount: reviewSummary.reviewCount,
       offers,
     },
   }

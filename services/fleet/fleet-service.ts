@@ -56,6 +56,16 @@ const requiredMoneyToCents = (value: unknown, label: string) => {
 
 const allowedRfqBidPartTypes = ["New", "Used", "Refurbished", "Remanufactured", "Salvage"] as const
 
+const rfqBidDeliveryOptions = {
+  "24_hours": { label: "24 hours", days: 1 },
+  "48_hours": { label: "48 hours", days: 2 },
+  "72_hours": { label: "72 hours", days: 3 },
+  one_month: { label: "One month", days: 30 },
+  more_than_one_month: { label: "More than one month", days: 31 },
+} as const
+
+type RfqBidDeliveryOption = keyof typeof rfqBidDeliveryOptions
+
 const rfqBidPartType = (value: unknown) => {
   const normalized = text(value)
   const match = allowedRfqBidPartTypes.find(
@@ -65,6 +75,24 @@ const rfqBidPartType = (value: unknown) => {
     throw new Error(`Part type must be one of: ${allowedRfqBidPartTypes.join(", ")}`)
   }
   return match
+}
+
+const rfqBidDeliveryOption = (value: unknown): RfqBidDeliveryOption => {
+  const normalized = text(value).toLowerCase().replace(/[\s-]+/g, "_")
+  if (normalized in rfqBidDeliveryOptions) {
+    return normalized as RfqBidDeliveryOption
+  }
+
+  const match = Object.entries(rfqBidDeliveryOptions).find(
+    ([, option]) => option.label.toLowerCase() === text(value).toLowerCase(),
+  )
+  if (match) return match[0] as RfqBidDeliveryOption
+
+  throw new Error(
+    `Delivery time must be one of: ${Object.values(rfqBidDeliveryOptions)
+      .map((option) => option.label)
+      .join(", ")}`,
+  )
 }
 
 const requesterLabel = (source: RfqSource) =>
@@ -736,6 +764,7 @@ export async function submitRfqBid(
     rfqPartId?: unknown
     unitPrice?: unknown
     partType?: unknown
+    deliveryOption?: unknown
   }>
   if (!submittedItems.length) throw new Error("Add at least one complete product quote")
   const submittedByPartId = new Map(submittedItems.map((item) => [text(item.rfqPartId), item]))
@@ -750,6 +779,7 @@ export async function submitRfqBid(
       unitPrice,
       lineTotal: unitPrice * part.quantity,
       partType: rfqBidPartType(submitted.partType),
+      deliveryOption: rfqBidDeliveryOption(submitted.deliveryOption),
     }
   })
   const existingBid = await db.rfqBid.findUnique({
@@ -760,7 +790,9 @@ export async function submitRfqBid(
 
   const bid = await db.$transaction(async (transaction) => {
     const quoteDetails = {
-      deliveryDays: wholeNumber(input.deliveryDays, "Delivery days", 1),
+      deliveryDays: Math.max(
+        ...bidItems.map((item) => rfqBidDeliveryOptions[item.deliveryOption].days),
+      ),
       validUntil,
       notes: text(input.notes) || null,
     }
@@ -906,6 +938,7 @@ export async function acceptRfqBid(
               quantity: part.quantity,
               unitPrice: quotedItem.unitPrice,
               lineTotal: quotedItem.lineTotal,
+              deliveryOption: quotedItem.deliveryOption,
             }
           }),
         },

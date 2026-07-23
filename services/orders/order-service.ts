@@ -50,6 +50,22 @@ const addCalendarDays = (date: Date, days: number) => {
   return result;
 };
 
+const deliveryOptions = {
+  "24_hours": { label: "24 hours", days: 1 },
+  "48_hours": { label: "48 hours", days: 2 },
+  "72_hours": { label: "72 hours", days: 3 },
+  one_week: { label: "One week", days: 7 },
+  one_month: { label: "One month", days: 30 },
+  more_than_one_month: { label: "More than one month", days: 31 },
+} as const;
+
+type DeliveryOption = keyof typeof deliveryOptions;
+
+const expectedDeliveryForOption = (confirmedAt: Date, value: string | null) =>
+  value && value in deliveryOptions
+    ? addCalendarDays(confirmedAt, deliveryOptions[value as DeliveryOption].days)
+    : null;
+
 const searchWhere = (search: string): Prisma.OrderWhereInput => {
   const query = search.trim();
   if (!query) return {};
@@ -97,7 +113,20 @@ const orderInclude = {
       email: true,
     },
   },
-  items: { orderBy: { createdAt: "asc" as const } },
+  items: {
+    orderBy: { createdAt: "asc" as const },
+    include: {
+      review: {
+        select: {
+          id: true,
+          rating: true,
+          comment: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
+    },
+  },
   rfq: {
     select: {
       id: true,
@@ -178,13 +207,29 @@ const normalizeAddressId = (value: unknown) =>
 const mapOrder = <
   T extends {
     totalAmount: number;
-    items: Array<{ unitPrice: number | null; lineTotal: number | null }>;
+    items: Array<{
+      quantity: number;
+      unitPrice: number | null;
+      lineTotal: number | null;
+      deliveredAt?: Date | string | null;
+    }>;
   },
 >(
   order: T,
 ) => ({
   ...order,
   totalAmount: order.totalAmount / 100,
+  deliveryProgress: (() => {
+    const totalUnits = order.items.reduce((sum, item) => sum + item.quantity, 0);
+    if (!totalUnits) return 0;
+    const deliveredUnits = order.items.reduce(
+      (sum, item) => sum + (item.deliveredAt ? item.quantity : 0),
+      0,
+    );
+    return Math.round((deliveredUnits / totalUnits) * 100);
+  })(),
+  deliveredItemCount: order.items.filter((item) => item.deliveredAt).length,
+  totalItemCount: order.items.length,
   items: order.items.map((item) => ({
     ...item,
     unitPrice: item.unitPrice === null ? null : item.unitPrice / 100,
@@ -252,7 +297,10 @@ export function listAllOrders(page: number, pageSize: number, search: string) {
   return listOrders(searchWhere(search), page, pageSize);
 }
 
-export async function confirmSupplierOrder(supplierId: string, orderId: string) {
+export async function confirmSupplierOrder(
+  supplierId: string,
+  orderId: string,
+) {
   const confirmedAt = new Date();
   const expectedDeliveryAt = await db.$transaction(async (transaction) => {
     const pendingOrder = await transaction.order.findFirst({
@@ -263,8 +311,11 @@ export async function confirmSupplierOrder(supplierId: string, orderId: string) 
         paymentStatus: PaymentStatus.succeeded,
       },
       select: {
+        id: true,
         items: {
           select: {
+            id: true,
+            deliveryOption: true,
             supplierPart: {
               select: {
                 stockRows: { select: { leadTime: true } },
@@ -278,24 +329,35 @@ export async function confirmSupplierOrder(supplierId: string, orderId: string) 
       throw new Error("Only a paid pending order can be confirmed");
     }
 
-    let deliveryDays: number | null = null;
-    if (pendingOrder.items.length > 0) {
-      const itemLeadTimes = pendingOrder.items.map((item) => {
+    const expectedDates: Date[] = [];
+    for (const item of pendingOrder.items) {
+      let itemExpectedDeliveryAt: Date | null = null;
+      if (item.deliveryOption) {
+        itemExpectedDeliveryAt = expectedDeliveryForOption(
+          confirmedAt,
+          item.deliveryOption,
+        );
+      } else {
         const warehouseLeadTimes =
           item.supplierPart?.stockRows
             .map((row) => leadTimeDays(row.leadTime))
             .filter((days): days is number => days !== null) ?? [];
-        return warehouseLeadTimes.length
-          ? Math.max(...warehouseLeadTimes)
-          : null;
-      });
-      if (itemLeadTimes.every((days): days is number => days !== null)) {
-        deliveryDays = Math.max(...itemLeadTimes);
+        if (warehouseLeadTimes.length) {
+          itemExpectedDeliveryAt = addCalendarDays(
+            confirmedAt,
+            Math.max(...warehouseLeadTimes),
+          );
+        }
       }
+      if (itemExpectedDeliveryAt) expectedDates.push(itemExpectedDeliveryAt);
+      await transaction.orderItem.update({
+        where: { id: item.id },
+        data: { expectedDeliveryAt: itemExpectedDeliveryAt },
+      });
     }
 
-    const calculatedDate = deliveryDays
-      ? addCalendarDays(confirmedAt, deliveryDays)
+    const calculatedDate = expectedDates.length
+      ? new Date(Math.max(...expectedDates.map((date) => date.getTime())))
       : null;
     const updated = await transaction.order.updateMany({
       where: {
@@ -341,50 +403,150 @@ export async function submitOrderProofOfDelivery(
   supplierId: string,
   orderId: string,
   input: {
+    itemIds?: string[];
     proofUrl: string;
     proofKey: string;
     recipientName?: string;
     note?: string;
   },
 ) {
-  const order = await db.order.findFirst({
-    where: { id: orderId, supplierId },
-    select: { id: true, publicId: true, buyerId: true, status: true },
-  });
-  if (!order) throw new Error("Order not found");
-  const proofEligibleStatuses = new Set<OrderStatus>([
-    OrderStatus.confirmed,
-    OrderStatus.processing,
-    OrderStatus.shipped,
-  ]);
-  if (!proofEligibleStatuses.has(order.status)) {
-    throw new Error("Confirm the order before submitting proof of delivery");
-  }
+  const saved = await db.$transaction(async (transaction) => {
+    const order = await transaction.order.findFirst({
+      where: { id: orderId, supplierId },
+      include: { items: true },
+    });
+    if (!order) throw new Error("Order not found");
+    const proofEligibleStatuses = new Set<OrderStatus>([
+      OrderStatus.confirmed,
+      OrderStatus.processing,
+      OrderStatus.shipped,
+    ]);
+    if (!proofEligibleStatuses.has(order.status)) {
+      throw new Error("Confirm the order before submitting proof of delivery");
+    }
 
-  const saved = await db.order.update({
-    where: { id: order.id },
-    data: {
-      status: OrderStatus.delivered,
-      proofOfDeliveryUrl: input.proofUrl,
-      proofOfDeliveryKey: input.proofKey,
-      proofRecipientName: input.recipientName?.trim() || null,
-      proofOfDeliveryNote: input.note?.trim() || null,
-      proofSubmittedAt: new Date(),
-    },
-    include: orderInclude,
+    const uniqueItemIds = Array.from(
+      new Set((input.itemIds ?? []).map((itemId) => itemId.trim()).filter(Boolean)),
+    );
+    if (!uniqueItemIds.length) {
+      throw new Error("Select at least one order item for this delivery batch");
+    }
+    const selectedItems = order.items.filter((item) => uniqueItemIds.includes(item.id));
+    if (selectedItems.length !== uniqueItemIds.length) {
+      throw new Error("One or more selected items do not belong to this order");
+    }
+    if (selectedItems.some((item) => item.deliveredAt)) {
+      throw new Error("One or more selected items were already delivered");
+    }
+
+    const deliveredAt = new Date();
+    await transaction.orderItem.updateMany({
+      where: { id: { in: uniqueItemIds }, orderId: order.id },
+      data: {
+        deliveredAt,
+        proofOfDeliveryUrl: input.proofUrl,
+        proofOfDeliveryKey: input.proofKey,
+        proofRecipientName: input.recipientName?.trim() || null,
+        proofOfDeliveryNote: input.note?.trim() || null,
+        proofSubmittedAt: deliveredAt,
+      },
+    });
+
+    const remaining = await transaction.orderItem.count({
+      where: { orderId: order.id, deliveredAt: null },
+    });
+    const nextStatus = remaining === 0 ? OrderStatus.delivered : OrderStatus.processing;
+
+    await transaction.order.update({
+      where: { id: order.id },
+      data: {
+        status: nextStatus,
+        proofOfDeliveryUrl: input.proofUrl,
+        proofOfDeliveryKey: input.proofKey,
+        proofRecipientName: input.recipientName?.trim() || null,
+        proofOfDeliveryNote: input.note?.trim() || null,
+        proofSubmittedAt: deliveredAt,
+      },
+    });
+
+    return transaction.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: orderInclude,
+    });
   });
+
+  const deliveredItemCount = saved.items.filter((item) => item.deliveredAt).length;
+  const isComplete = saved.items.length > 0 && deliveredItemCount === saved.items.length;
   await createNotificationsSafely([
     {
-      recipientUserId: order.buyerId,
+      recipientUserId: saved.buyerId,
       actorUserId: supplierId,
-      type: "order.delivered",
-      title: "Order delivered",
-      body: `Proof of delivery was submitted for ${order.publicId}.`,
+      type: isComplete ? "order.delivered" : "order.delivery.partial",
+      title: isComplete ? "Order delivered" : "Order delivery updated",
+      body: isComplete
+        ? `All parts for ${saved.publicId} have been delivered.`
+        : `${deliveredItemCount} of ${saved.items.length} parts for ${saved.publicId} have been delivered.`,
       linkUrl: "/orders",
       entityType: "order",
-      entityId: order.id,
+      entityId: saved.id,
     },
   ]);
+  return mapOrder(saved);
+}
+
+export async function confirmOrderItemReceipt(
+  buyerId: string,
+  orderId: string,
+  itemId: string,
+) {
+  const trimmedOrderId = orderId.trim();
+  const trimmedItemId = itemId.trim();
+  if (!trimmedOrderId || !trimmedItemId) {
+    throw new Error("Order and item are required");
+  }
+
+  const saved = await db.$transaction(async (transaction) => {
+    const order = await transaction.order.findFirst({
+      where: {
+        buyerId,
+        OR: [{ id: trimmedOrderId }, { publicId: trimmedOrderId }],
+      },
+      include: { items: true },
+    });
+    if (!order) throw new Error("Order not found");
+
+    const item = order.items.find((orderItem) => orderItem.id === trimmedItemId);
+    if (!item) throw new Error("Order item not found");
+    if (!item.deliveredAt) {
+      throw new Error("This part has not been delivered yet");
+    }
+
+    if (!item.buyerConfirmedAt) {
+      await transaction.orderItem.update({
+        where: { id: item.id },
+        data: { buyerConfirmedAt: new Date() },
+      });
+    }
+
+    return transaction.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: orderInclude,
+    });
+  });
+
+  await createNotificationsSafely([
+    {
+      recipientUserId: saved.supplierId,
+      actorUserId: buyerId,
+      type: "order.delivery.received",
+      title: "Delivery receipt confirmed",
+      body: `A delivered part for ${saved.publicId} was confirmed by the buyer.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: saved.id,
+    },
+  ]);
+
   return mapOrder(saved);
 }
 

@@ -12,6 +12,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const proofOfDeliveryKey = await findOrderProofKeyForUser({
     orderId: id,
+    itemId: request.nextUrl.searchParams.get("itemId"),
     userId: auth.user.id,
   });
   if (!proofOfDeliveryKey) {
