@@ -98,6 +98,23 @@ const rfqBidDeliveryOption = (value: unknown): RfqBidDeliveryOption => {
 const requesterLabel = (source: RfqSource) =>
   source === RfqSource.fleet ? "Fleet" : "Customer"
 
+const rfqRankingWindowMinutes = (source: RfqSource) =>
+  source === RfqSource.fleet ? 24 * 60 : 30
+
+const addMinutes = (date: Date, minutes: number) =>
+  new Date(date.getTime() + minutes * 60_000)
+
+const rfqQuoteWindowEndsAt = (rfq: {
+  rankingWindowMinutes?: number | null
+  rankingWindowStartedAt?: Date | string | null
+  createdAt: Date | string
+  source: RfqSource
+}) => {
+  const minutes = rfq.rankingWindowMinutes ?? rfqRankingWindowMinutes(rfq.source)
+  const startedAt = new Date(rfq.rankingWindowStartedAt ?? rfq.createdAt)
+  return addMinutes(startedAt, minutes)
+}
+
 async function notifyRfqCreated(rfq: {
   id: string
   publicId: string
@@ -142,22 +159,36 @@ async function notifyRfqBidSubmitted(input: {
   supplierId: string
   source: RfqSource
   isUpdate: boolean
+  windowStartedAt: Date
 }) {
   const adminIds = await activeAdminRecipientIds()
   const title = input.isUpdate ? "RFQ quote updated" : "New RFQ quote received"
   const notifications: CreateNotificationInput[] = []
 
   if (input.requesterId) {
-    notifications.push({
-      recipientUserId: input.requesterId,
-      actorUserId: input.supplierId,
-      type: input.isUpdate ? "rfq.bid.updated" : "rfq.bid.created",
-      title,
-      body: `A supplier ${input.isUpdate ? "updated a quote" : "submitted a quote"} for RFQ ${input.rfqPublicId}.`,
-      linkUrl: "/rfqs",
-      entityType: "rfq",
-      entityId: input.rfqId,
+    const existingWindowNotice = await db.notification.findFirst({
+      where: {
+        recipientUserId: input.requesterId,
+        type: "rfq.bid.window_activity",
+        entityType: "rfq",
+        entityId: input.rfqId,
+        createdAt: { gte: input.windowStartedAt },
+      },
+      select: { id: true },
     })
+
+    if (!existingWindowNotice) {
+      notifications.push({
+        recipientUserId: input.requesterId,
+        actorUserId: input.supplierId,
+        type: "rfq.bid.window_activity",
+        title: "Suppliers are quoting",
+        body: `Suppliers are preparing quotes for RFQ ${input.rfqPublicId}. Top quotes will be available after the current quote window closes.`,
+        linkUrl: "/rfqs",
+        entityType: "rfq",
+        entityId: input.rfqId,
+      })
+    }
   }
 
   notifications.push(
@@ -232,7 +263,213 @@ async function notifyRfqBidAccepted(input: {
   await createNotificationsSafely(notifications)
 }
 
+async function scoreRfqBids(
+  bids: Array<{
+    id: string
+    supplierId: string
+    totalAmount: number
+    deliveryDays: number
+    createdAt: Date
+  }>,
+) {
+  if (!bids.length) return []
+
+  const supplierIds = [...new Set(bids.map((bid) => bid.supplierId))]
+  const [reviewRows, orders] = await Promise.all([
+    db.supplierProductReview.groupBy({
+      by: ["supplierId"],
+      where: { supplierId: { in: supplierIds } },
+      _avg: { rating: true },
+      _count: { _all: true },
+    }),
+    db.order.findMany({
+      where: {
+        supplierId: { in: supplierIds },
+        status: { not: OrderStatus.cancelled },
+      },
+      select: {
+        supplierId: true,
+        status: true,
+        items: {
+          select: {
+            expectedDeliveryAt: true,
+            deliveredAt: true,
+          },
+        },
+      },
+    }),
+  ])
+
+  const reviewsBySupplier = new Map(
+    reviewRows.map((row) => [
+      row.supplierId,
+      {
+        averageRating: row._avg.rating ?? 0,
+        reviewCount: row._count._all,
+      },
+    ]),
+  )
+  const orderStatsBySupplier = new Map<
+    string,
+    { completedOrders: number; deliveredItems: number; onTimeItems: number }
+  >()
+
+  for (const order of orders) {
+    const stats = orderStatsBySupplier.get(order.supplierId) ?? {
+      completedOrders: 0,
+      deliveredItems: 0,
+      onTimeItems: 0,
+    }
+    if (order.status === OrderStatus.delivered) {
+      stats.completedOrders += 1
+    }
+    for (const item of order.items) {
+      if (!item.deliveredAt) continue
+      stats.deliveredItems += 1
+      if (!item.expectedDeliveryAt || item.deliveredAt <= item.expectedDeliveryAt) {
+        stats.onTimeItems += 1
+      }
+    }
+    orderStatsBySupplier.set(order.supplierId, stats)
+  }
+
+  const amounts = bids.map((bid) => bid.totalAmount)
+  const minAmount = Math.min(...amounts)
+  const maxAmount = Math.max(...amounts)
+
+  return bids
+    .map((bid) => {
+      const reviews = reviewsBySupplier.get(bid.supplierId) ?? {
+        averageRating: 0,
+        reviewCount: 0,
+      }
+      const orderStats = orderStatsBySupplier.get(bid.supplierId) ?? {
+        completedOrders: 0,
+        deliveredItems: 0,
+        onTimeItems: 0,
+      }
+      const reviewScore = (reviews.averageRating / 5) * 40
+      const reviewVolumeScore = Math.min(reviews.reviewCount, 50) / 50 * 10
+      const completedOrderScore = Math.min(orderStats.completedOrders, 100) / 100 * 20
+      const onTimeRate = orderStats.deliveredItems
+        ? orderStats.onTimeItems / orderStats.deliveredItems
+        : 0
+      const deliveryPerformanceScore = onTimeRate * 15
+      const priceScore = maxAmount === minAmount
+        ? 10
+        : ((maxAmount - bid.totalAmount) / (maxAmount - minAmount)) * 10
+      const leadTimeScore = Math.max(0, 5 - Math.min(bid.deliveryDays, 30) / 6)
+
+      return {
+        ...bid,
+        score:
+          reviewScore +
+          reviewVolumeScore +
+          completedOrderScore +
+          deliveryPerformanceScore +
+          priceScore +
+          leadTimeScore,
+      }
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      if (a.totalAmount !== b.totalAmount) return a.totalAmount - b.totalAmount
+      if (a.deliveryDays !== b.deliveryDays) return a.deliveryDays - b.deliveryDays
+      return a.createdAt.getTime() - b.createdAt.getTime()
+    })
+}
+
+async function refreshRfqRankingWindow(rfqId: string) {
+  const rfq = await db.rfq.findUnique({
+    where: { id: rfqId },
+    select: {
+      id: true,
+      source: true,
+      status: true,
+      createdAt: true,
+      rankingWindowMinutes: true,
+      rankingWindowStartedAt: true,
+    },
+  })
+  if (!rfq || rfq.status !== RfqStatus.open) return
+
+  const windowMinutes = rfq.rankingWindowMinutes ?? rfqRankingWindowMinutes(rfq.source)
+  const windowStartedAt = rfq.rankingWindowStartedAt ?? rfq.createdAt
+  const now = new Date()
+  if (now < addMinutes(windowStartedAt, windowMinutes)) {
+    if (!rfq.rankingWindowMinutes || !rfq.rankingWindowStartedAt) {
+      await db.rfq.update({
+        where: { id: rfq.id },
+        data: {
+          rankingWindowMinutes: windowMinutes,
+          rankingWindowStartedAt: windowStartedAt,
+        },
+      })
+    }
+    return
+  }
+
+  let nextWindowStartedAt = windowStartedAt
+  while (now >= addMinutes(nextWindowStartedAt, windowMinutes)) {
+    nextWindowStartedAt = addMinutes(nextWindowStartedAt, windowMinutes)
+  }
+
+  const bids = await db.rfqBid.findMany({
+    where: { rfqId: rfq.id, status: RfqBidStatus.submitted },
+    select: {
+      id: true,
+      supplierId: true,
+      totalAmount: true,
+      deliveryDays: true,
+      createdAt: true,
+    },
+  })
+  const rankedBids = await scoreRfqBids(bids)
+  const topBids = rankedBids.slice(0, 5)
+  const rankedAt = new Date()
+
+  await db.$transaction(async (transaction) => {
+    await transaction.rfqBid.updateMany({
+      where: { rfqId: rfq.id, status: RfqBidStatus.submitted },
+      data: {
+        rankingVisible: false,
+        rankingScore: null,
+        rankingPosition: null,
+        rankingCalculatedAt: rankedAt,
+      },
+    })
+    for (const [index, bid] of topBids.entries()) {
+      await transaction.rfqBid.update({
+        where: { id: bid.id },
+        data: {
+          rankingVisible: true,
+          rankingScore: bid.score,
+          rankingPosition: index + 1,
+          rankingCalculatedAt: rankedAt,
+        },
+      })
+    }
+    await transaction.rfq.update({
+      where: { id: rfq.id },
+      data: {
+        rankingWindowMinutes: windowMinutes,
+        rankingWindowStartedAt: nextWindowStartedAt,
+        rankingLastCalculatedAt: rankedAt,
+      },
+    })
+  })
+}
+
+async function refreshRfqRankingWindows(rfqIds: string[]) {
+  await Promise.all([...new Set(rfqIds)].map((rfqId) => refreshRfqRankingWindow(rfqId)))
+}
+
 const mapRfqMoney = <T extends {
+  source: RfqSource
+  status: RfqStatus
+  createdAt: Date | string
+  rankingWindowMinutes?: number | null
+  rankingWindowStartedAt?: Date | string | null
   parts: Array<{ targetPrice: number | null }>
   bids?: Array<{
     totalAmount: number
@@ -241,6 +478,8 @@ const mapRfqMoney = <T extends {
   order?: { totalAmount: number } | null
 }>(rfq: T) => ({
   ...rfq,
+  quoteWindowEndsAt: rfqQuoteWindowEndsAt(rfq),
+  quoteWindowActive: rfq.status === RfqStatus.open && new Date() < rfqQuoteWindowEndsAt(rfq),
   parts: rfq.parts.map((part) => ({
     ...part,
     targetPrice: part.targetPrice === null ? null : part.targetPrice / 100,
@@ -467,6 +706,8 @@ export async function createRfq(
       fleetVehicleId: fleetVehicle?.id,
       source,
       status: RfqStatus.open,
+      rankingWindowMinutes: rfqRankingWindowMinutes(source),
+      rankingWindowStartedAt: new Date(),
       projectName: requiredText(input.projectName, "Project name"),
       description: text(input.description) || null,
       responseDeadline: deadline,
@@ -624,8 +865,42 @@ export async function listFleetRfqs(
     }),
     db.rfq.count({ where }),
   ])
+  await refreshRfqRankingWindows(rfqs.map((rfq) => rfq.id))
+  const refreshedRfqs = await db.rfq.findMany({
+    where,
+    include: {
+      parts: true,
+      fleetVehicle: true,
+      bids: {
+        where: {
+          OR: [
+            { rankingVisible: true, status: RfqBidStatus.submitted },
+            { status: RfqBidStatus.accepted },
+          ],
+        },
+        include: {
+          items: { orderBy: { createdAt: "asc" } },
+          supplier: {
+            select: {
+              id: true,
+              supplierPublicId: true,
+              companyName: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+        orderBy: [{ rankingPosition: "asc" }, { totalAmount: "asc" }],
+      },
+      order: true,
+    },
+    orderBy: { createdAt: "desc" },
+    skip: (safePage - 1) * safePageSize,
+    take: safePageSize,
+  })
   return {
-    rfqs: rfqs.map(mapRfqMoney),
+    rfqs: refreshedRfqs.map(mapRfqMoney),
     pagination: {
       page: safePage,
       pageSize: safePageSize,
@@ -681,8 +956,41 @@ export async function listUserRfqs(
     }),
     db.rfq.count({ where }),
   ])
+  await refreshRfqRankingWindows(rfqs.map((rfq) => rfq.id))
+  const refreshedRfqs = await db.rfq.findMany({
+    where,
+    include: {
+      parts: true,
+      bids: {
+        where: {
+          OR: [
+            { rankingVisible: true, status: RfqBidStatus.submitted },
+            { status: RfqBidStatus.accepted },
+          ],
+        },
+        include: {
+          items: { orderBy: { createdAt: "asc" } },
+          supplier: {
+            select: {
+              id: true,
+              supplierPublicId: true,
+              companyName: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+        orderBy: [{ rankingPosition: "asc" }, { totalAmount: "asc" }],
+      },
+      order: true,
+    },
+    orderBy: { createdAt: "desc" },
+    skip: (safePage - 1) * safePageSize,
+    take: safePageSize,
+  })
   return {
-    rfqs: rfqs.map(mapRfqMoney),
+    rfqs: refreshedRfqs.map(mapRfqMoney),
     pagination: {
       page: safePage,
       pageSize: safePageSize,
@@ -741,11 +1049,19 @@ export async function submitRfqBid(
       requesterId: true,
       responseDeadline: true,
       source: true,
+      createdAt: true,
+      rankingWindowMinutes: true,
+      rankingWindowStartedAt: true,
       parts: { select: { id: true, quantity: true, partName: true } },
     },
   })
   if (!rfq) throw new Error("This RFQ is not open for quotes")
   if (rfq.responseDeadline <= new Date()) throw new Error("The RFQ response deadline has passed")
+  await refreshRfqRankingWindow(rfq.id)
+  const rankingState = await db.rfq.findUnique({
+    where: { id: rfq.id },
+    select: { createdAt: true, rankingWindowStartedAt: true },
+  })
 
   const validUntilText = text(input.validUntil)
   const validUntil = validUntilText
@@ -821,6 +1137,11 @@ export async function submitRfqBid(
     supplierId,
     source: rfq.source,
     isUpdate: false,
+    windowStartedAt:
+      rankingState?.rankingWindowStartedAt ??
+      rfq.rankingWindowStartedAt ??
+      rankingState?.createdAt ??
+      rfq.createdAt,
   })
 
   return {
@@ -847,6 +1168,8 @@ export async function acceptRfqBid(
   if (!deliveryAddress) {
     throw new Error("Select a delivery address before creating an order")
   }
+
+  await refreshRfqRankingWindow(rfqId)
 
   const result = await db.$transaction(async (transaction) => {
     const rfq = await transaction.rfq.findFirst({
@@ -875,6 +1198,9 @@ export async function acceptRfqBid(
       include: { items: true },
     })
     if (!bid) throw new Error("Quote not found or no longer available")
+    if (!bid.rankingVisible) {
+      throw new Error("This quote is not currently available for acceptance")
+    }
     const quotedByPartId = new Map(bid.items.map((item) => [item.rfqPartId, item]))
     if (bid.validUntil) {
       const quoteExpiry = new Date(bid.validUntil)

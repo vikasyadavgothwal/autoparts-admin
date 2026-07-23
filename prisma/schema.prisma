@@ -353,33 +353,36 @@ model FleetVehicle {
 }
 
 model Rfq {
-  id                  String    @id @default(cuid())
-  publicId            String    @unique @default(dbgenerated("next_rfq_public_id()"))
-  requesterId         String?
-  fleetVehicleId      String?
-  source              RfqSource
-  status              RfqStatus @default(open)
-  projectName         String
-  description         String?
-  responseDeadline    DateTime
-  deliveryRequirement String
-  paymentTerms        String
-  companyName         String
-  contactName         String
-  email               String
-  phone               String
-  vehicleVin          String?
-  vehicleYear         Int?
-  vehicleMake         String?
-  vehicleModel        String?
-  vehicleTrim         String?
-  attachmentKey       String?
-  attachmentUrl       String?
-  attachmentName      String?
-  attachmentMimeType  String?
-  attachmentSize      Int?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id                      String    @id @default(cuid())
+  publicId                String    @unique @default(dbgenerated("next_rfq_public_id()"))
+  requesterId             String?
+  fleetVehicleId          String?
+  source                  RfqSource
+  status                  RfqStatus @default(open)
+  projectName             String
+  description             String?
+  responseDeadline        DateTime
+  deliveryRequirement     String
+  paymentTerms            String
+  companyName             String
+  contactName             String
+  email                   String
+  phone                   String
+  vehicleVin              String?
+  vehicleYear             Int?
+  vehicleMake             String?
+  vehicleModel            String?
+  vehicleTrim             String?
+  attachmentKey           String?
+  attachmentUrl           String?
+  attachmentName          String?
+  attachmentMimeType      String?
+  attachmentSize          Int?
+  rankingWindowMinutes    Int?
+  rankingWindowStartedAt  DateTime?
+  rankingLastCalculatedAt DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   requester    User?         @relation(fields: [requesterId], references: [id], onDelete: SetNull)
   fleetVehicle FleetVehicle? @relation(fields: [fleetVehicleId], references: [id], onDelete: SetNull)
@@ -391,21 +394,26 @@ model Rfq {
   @@index([fleetVehicleId])
   @@index([status, createdAt])
   @@index([source])
+  @@index([rankingWindowStartedAt])
   @@map("rfqs")
 }
 
 model RfqBid {
-  id           String       @id @default(cuid())
-  rfqId        String
-  supplierId   String
-  totalAmount  Int
-  deliveryDays Int
-  partType     String       @default("New")
-  validUntil   DateTime?
-  notes        String?
-  status       RfqBidStatus @default(submitted)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id                  String       @id @default(cuid())
+  rfqId               String
+  supplierId          String
+  totalAmount         Int
+  deliveryDays        Int
+  partType            String       @default("New")
+  validUntil          DateTime?
+  notes               String?
+  status              RfqBidStatus @default(submitted)
+  rankingVisible      Boolean      @default(false)
+  rankingScore        Float?
+  rankingPosition     Int?
+  rankingCalculatedAt DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 
   rfq      Rfq          @relation(fields: [rfqId], references: [id], onDelete: Cascade)
   supplier User         @relation(fields: [supplierId], references: [id], onDelete: Cascade)
@@ -415,6 +423,8 @@ model RfqBid {
   @@unique([rfqId, supplierId])
   @@index([supplierId, status])
   @@index([rfqId, status])
+  @@index([rankingVisible])
+  @@index([rankingPosition])
   @@map("rfq_bids")
 }
 

@@ -13,6 +13,7 @@ import {
   getPartReviewSummary,
   getSupplierReviewSummaries,
 } from "@/services/supplier-product-reviews/supplier-product-review-service"
+import { getSupplierPartEffectivePriceCents } from "@/services/supplier-part-pricing"
 import type { SupplierProductReviewSummary } from "@/types/supplier-product-reviews/reviews"
 
 const DEFAULT_CURRENCY = "AED"
@@ -89,21 +90,15 @@ const containsInsensitive = (value: string) => ({
 const toMoney = (cents: number | null | undefined): number | null =>
   typeof cents === "number" ? cents / 100 : null
 
-const getEffectivePriceCents = (offer: MarketplaceSupplierPart): number =>
-  offer.pricing?.discountPrice ??
-  offer.pricing?.basePrice ??
-  offer.price ??
-  0
-
 const isSellableOffer = (offer: MarketplaceSupplierPart): boolean =>
-  offer.stock > 0 && getEffectivePriceCents(offer) > 0
+  offer.stock > 0 && getSupplierPartEffectivePriceCents(offer) > 0
 
 const getUniqueSellableOfferModels = (offers: MarketplaceSupplierPart[]) => {
   const sortedOfferModels = offers
     .filter(isSellableOffer)
     .map((offer) => ({
       offer,
-      effectivePrice: getEffectivePriceCents(offer),
+      effectivePrice: getSupplierPartEffectivePriceCents(offer),
     }))
     .sort(
       (left, right) =>
@@ -471,7 +466,7 @@ const buildOffer = async (
   reviewSummary?: SupplierProductReviewSummary,
 ) => {
   const content = extractVendorContent(offer)
-  const effectivePrice = getEffectivePriceCents(offer)
+  const effectivePrice = getSupplierPartEffectivePriceCents(offer)
   const stockLeadTime = offer.stockRows.find((row) => row.leadTime)?.leadTime
   const images = await getDisplayImageUrls(
     uniqueNonEmpty(offer.supplierImageUrls),

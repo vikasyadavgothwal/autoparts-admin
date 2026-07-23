@@ -13,6 +13,7 @@ import {
   createNotificationsSafely,
   type CreateNotificationInput,
 } from "@/services/notifications/notification-service";
+import { getSupplierPartEffectivePriceCents } from "@/services/supplier-part-pricing";
 import { getUserAddressForCheckout } from "@/services/user-addresses/user-address-service";
 
 const normalizePaging = (page: number, pageSize: number) => ({
@@ -582,7 +583,7 @@ export async function createDirectOrders(
           },
         },
       },
-      include: { part: true },
+      include: { part: true, pricing: true },
     });
 
     const supplierPartById = new Map(
@@ -614,7 +615,8 @@ export async function createDirectOrders(
         );
       }
 
-      const lineTotal = supplierPart.price * line.quantity;
+      const unitPrice = getSupplierPartEffectivePriceCents(supplierPart);
+      const lineTotal = unitPrice * line.quantity;
       const existingGroup = groupedOrders.get(supplierPart.supplierId) ?? {
         supplierId: supplierPart.supplierId,
         totalAmount: 0,
@@ -629,7 +631,7 @@ export async function createDirectOrders(
           supplierPart.originalOemNumber ||
           supplierPart.originalMpn,
         quantity: line.quantity,
-        unitPrice: supplierPart.price,
+        unitPrice,
         lineTotal,
       });
       groupedOrders.set(supplierPart.supplierId, existingGroup);
