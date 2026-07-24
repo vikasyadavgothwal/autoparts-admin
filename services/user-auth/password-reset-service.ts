@@ -1,11 +1,11 @@
-import { createHash, randomInt, randomUUID } from "crypto"
+import { createHash, randomBytes, randomUUID } from "crypto"
 import nodemailer from "nodemailer"
 
 import { db } from "@/lib/database/prisma"
 import { hashPassword } from "@/lib/auth/password"
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const OTP_TTL_MINUTES = 10
+const RESET_LINK_TTL_MINUTES = 30
 
 const normalizeEmail = (value: string | null | undefined) => {
   const email = value?.trim().toLowerCase() ?? ""
@@ -13,14 +13,6 @@ const normalizeEmail = (value: string | null | undefined) => {
     throw new Error("Enter a valid email address")
   }
   return email
-}
-
-const normalizeOtp = (value: string | null | undefined) => {
-  const otp = value?.trim() ?? ""
-  if (!/^\d{6}$/.test(otp)) {
-    throw new Error("Enter the 6 digit OTP")
-  }
-  return otp
 }
 
 const hashSecret = (value: string) =>
@@ -40,7 +32,7 @@ const sendWebhook = async (
     })
     return response.ok
   } catch (error) {
-    console.error("Password reset OTP webhook failed", error)
+    console.error("Password reset webhook failed", error)
     return false
   }
 }
@@ -68,12 +60,12 @@ const smtpConfig = () => {
   }
 }
 
-const sendSmtpOtp = async ({
+const sendSmtpResetLink = async ({
   to,
-  otp,
+  resetLink,
 }: {
   to: string
-  otp: string
+  resetLink: string
 }) => {
   const config = smtpConfig()
   if (!config) return false
@@ -88,14 +80,19 @@ const sendSmtpOtp = async ({
   await transporter.sendMail({
     from: config.from,
     to,
-    subject: "AutoPartsPro password reset OTP",
-    text: `Your AutoPartsPro password reset OTP is ${otp}. It expires in ${OTP_TTL_MINUTES} minutes.`,
+    subject: "Reset your AutoPartsPro password",
+    text: `Open this link to reset your AutoPartsPro password: ${resetLink}\n\nThis link expires in ${RESET_LINK_TTL_MINUTES} minutes.`,
     html: `
       <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111">
-        <h2>Password reset OTP</h2>
-        <p>Your AutoPartsPro password reset OTP is:</p>
-        <p style="font-size:28px;font-weight:700;letter-spacing:4px">${otp}</p>
-        <p>This OTP expires in ${OTP_TTL_MINUTES} minutes.</p>
+        <h2>Reset your password</h2>
+        <p>Click the button below to set a new AutoPartsPro password.</p>
+        <p>
+          <a href="${resetLink}" style="display:inline-block;background:#111;color:#fff;padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:700">
+            Reset password
+          </a>
+        </p>
+        <p style="word-break:break-all">If the button does not work, open this link: ${resetLink}</p>
+        <p>This link expires in ${RESET_LINK_TTL_MINUTES} minutes.</p>
         <p>If you did not request this, you can ignore this email.</p>
       </div>
     `,
@@ -105,13 +102,21 @@ const sendSmtpOtp = async ({
 }
 
 const passwordResetWebhookUrl = () =>
+  process.env.USER_PASSWORD_RESET_URL_WEBHOOK_URL?.trim() ||
   process.env.USER_PASSWORD_RESET_OTP_WEBHOOK_URL?.trim() ||
   process.env.USER_EMAIL_VERIFICATION_WEBHOOK_URL?.trim() ||
   process.env.FLEET_EMAIL_VERIFICATION_WEBHOOK_URL?.trim() ||
   process.env.SUPPLIER_EMAIL_VERIFICATION_WEBHOOK_URL?.trim() ||
   process.env.GARAGE_EMAIL_VERIFICATION_WEBHOOK_URL?.trim()
 
-export async function requestUserPasswordResetOtp(
+const resetBaseUrl = (origin: string | null) =>
+  process.env.USER_PASSWORD_RESET_BASE_URL?.trim().replace(/\/+$/, "") ||
+  origin?.trim().replace(/\/+$/, "") ||
+  process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, "") ||
+  process.env.PUBLIC_SITE_URL?.trim().replace(/\/+$/, "") ||
+  "http://localhost:3001"
+
+export async function requestUserPasswordResetLink(
   emailInput: string | null | undefined,
   origin: string | null,
 ) {
@@ -125,8 +130,9 @@ export async function requestUserPasswordResetOtp(
     throw new Error("No active account exists for this email")
   }
 
-  const otp = String(randomInt(100000, 1000000))
-  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000)
+  const token = randomBytes(32).toString("hex")
+  const expiresAt = new Date(Date.now() + RESET_LINK_TTL_MINUTES * 60 * 1000)
+  const resetLink = `${resetBaseUrl(origin)}/reset-password?token=${token}`
 
   await db.garageVerificationRequest.create({
     data: {
@@ -134,7 +140,7 @@ export async function requestUserPasswordResetOtp(
       garageId: user.id,
       target: "email",
       targetValue: email,
-      otpHash: hashSecret(`password-reset:${otp}`),
+      tokenHash: hashSecret(`password-reset:${token}`),
       expiresAt,
     },
   })
@@ -142,68 +148,79 @@ export async function requestUserPasswordResetOtp(
   const webhookSent = await sendWebhook(passwordResetWebhookUrl(), {
     to: email,
     email,
-    otp,
+    resetLink,
+    passwordResetLink: resetLink,
     purpose: "password_reset",
     accountType: "User",
     origin,
-    expiresInMinutes: OTP_TTL_MINUTES,
+    expiresInMinutes: RESET_LINK_TTL_MINUTES,
   })
   const smtpSent = webhookSent
     ? false
-    : await sendSmtpOtp({ to: email, otp })
+    : await sendSmtpResetLink({ to: email, resetLink })
   const sent = webhookSent || smtpSent
 
   if (!sent && process.env.NODE_ENV === "production") {
     throw new Error(
-      "Password reset email sender is not configured. Configure USER_PASSWORD_RESET_OTP_WEBHOOK_URL or SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM.",
+      "Password reset email sender is not configured. Configure USER_PASSWORD_RESET_URL_WEBHOOK_URL or SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM.",
     )
   }
 
   return {
     ok: true as const,
     message: sent
-      ? "Password reset OTP sent to your email"
-      : "Password reset OTP created. Configure USER_PASSWORD_RESET_OTP_WEBHOOK_URL to send it automatically.",
-    ...(process.env.NODE_ENV === "production" ? {} : { otp }),
+      ? "Password reset link sent to your email"
+      : "Password reset link created. Configure USER_PASSWORD_RESET_URL_WEBHOOK_URL to send it automatically.",
+    ...(process.env.NODE_ENV === "production" ? {} : { resetLink }),
   }
 }
 
-export async function resetUserPasswordWithOtp(input: {
-  email?: unknown
-  otp?: unknown
+export async function resetUserPasswordWithToken(input: {
+  token?: unknown
   password?: unknown
 }) {
-  const email = normalizeEmail(typeof input.email === "string" ? input.email : "")
-  const otp = normalizeOtp(typeof input.otp === "string" ? input.otp : "")
+  const token = typeof input.token === "string" ? input.token.trim() : ""
   const password = typeof input.password === "string" ? input.password : ""
 
+  if (!/^[a-f0-9]{64}$/i.test(token)) {
+    throw new Error("Password reset link is invalid or expired")
+  }
   if (password.length < 8) {
     throw new Error("Password must be at least 8 characters")
   }
 
+  const [request] = await db.$queryRaw<Array<{
+    id: string
+    garageId: string
+    targetValue: string
+  }>>`
+    UPDATE "garage_verification_requests"
+    SET "consumedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = (
+      SELECT "id"
+      FROM "garage_verification_requests"
+      WHERE
+        "target" = 'email'::"GarageVerificationTarget"
+        AND "tokenHash" = ${hashSecret(`password-reset:${token}`)}
+        AND "consumedAt" IS NULL
+        AND "expiresAt" > CURRENT_TIMESTAMP
+      ORDER BY "expiresAt" DESC
+      LIMIT 1
+    )
+    RETURNING "id", "garageId", "targetValue"
+  `
+
+  if (!request) {
+    throw new Error("Password reset link is invalid or expired")
+  }
+
   const user = await db.user.findUnique({
-    where: { email },
+    where: { id: request.garageId },
     select: { id: true, isActive: true, emailVerifiedAt: true },
   })
 
-  if (!user || !user.isActive) {
-    throw new Error("No active account exists for this email")
-  }
-
-  const updated = await db.garageVerificationRequest.updateMany({
-    where: {
-      garageId: user.id,
-      target: "email",
-      targetValue: email,
-      otpHash: hashSecret(`password-reset:${otp}`),
-      consumedAt: null,
-      expiresAt: { gt: new Date() },
-    },
-    data: { consumedAt: new Date() },
-  })
-
-  if (updated.count < 1) {
-    throw new Error("OTP is invalid or expired")
+  if (!user?.isActive) {
+    throw new Error("No active account exists for this reset link")
   }
 
   await db.user.update({

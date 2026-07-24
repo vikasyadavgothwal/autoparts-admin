@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { requestUserPasswordResetOtp } from "@/services/user-auth/password-reset-service"
+import { requestUserPasswordResetLink } from "@/services/user-auth/password-reset-service"
 
 type RequestBody = {
   email?: unknown
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await requestUserPasswordResetOtp(
+    const result = await requestUserPasswordResetLink(
       typeof body.email === "string" ? body.email : "",
       request.headers.get("origin"),
     )
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
         ok: false,
         success: false,
         message:
-          error instanceof Error ? error.message : "Unable to send reset OTP",
+          error instanceof Error ? error.message : "Unable to send reset link",
       },
       { status: 400 },
     )

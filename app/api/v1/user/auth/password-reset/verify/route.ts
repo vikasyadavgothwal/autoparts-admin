@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { resetUserPasswordWithOtp } from "@/services/user-auth/password-reset-service"
+import { resetUserPasswordWithToken } from "@/services/user-auth/password-reset-service"
 
 type VerifyBody = {
-  email?: unknown
-  otp?: unknown
+  token?: unknown
   password?: unknown
 }
 
@@ -22,7 +21,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await resetUserPasswordWithOtp(body)
+    const result = await resetUserPasswordWithToken(body)
     return NextResponse.json({ ...result, success: true })
   } catch (error) {
     return NextResponse.json(
