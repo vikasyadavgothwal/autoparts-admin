@@ -1,4 +1,5 @@
 import { createHash, randomInt, randomUUID } from "crypto"
+import nodemailer from "nodemailer"
 
 import { db } from "@/lib/database/prisma"
 import { hashPassword } from "@/lib/auth/password"
@@ -44,9 +45,70 @@ const sendWebhook = async (
   }
 }
 
+const smtpConfig = () => {
+  const host = process.env.SMTP_HOST?.trim()
+  const user = process.env.SMTP_USER?.trim()
+  const pass = process.env.SMTP_PASS?.trim()
+  const from =
+    process.env.SMTP_FROM?.trim() ||
+    process.env.MAIL_FROM?.trim() ||
+    process.env.EMAIL_FROM?.trim()
+  const port = Number(process.env.SMTP_PORT ?? 587)
+
+  if (!host || !user || !pass || !from) return null
+
+  return {
+    host,
+    port: Number.isFinite(port) ? port : 587,
+    secure:
+      process.env.SMTP_SECURE === "true" ||
+      process.env.SMTP_PORT === "465",
+    auth: { user, pass },
+    from,
+  }
+}
+
+const sendSmtpOtp = async ({
+  to,
+  otp,
+}: {
+  to: string
+  otp: string
+}) => {
+  const config = smtpConfig()
+  if (!config) return false
+
+  const transporter = nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: config.auth,
+  })
+
+  await transporter.sendMail({
+    from: config.from,
+    to,
+    subject: "AutoPartsPro password reset OTP",
+    text: `Your AutoPartsPro password reset OTP is ${otp}. It expires in ${OTP_TTL_MINUTES} minutes.`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111">
+        <h2>Password reset OTP</h2>
+        <p>Your AutoPartsPro password reset OTP is:</p>
+        <p style="font-size:28px;font-weight:700;letter-spacing:4px">${otp}</p>
+        <p>This OTP expires in ${OTP_TTL_MINUTES} minutes.</p>
+        <p>If you did not request this, you can ignore this email.</p>
+      </div>
+    `,
+  })
+
+  return true
+}
+
 const passwordResetWebhookUrl = () =>
   process.env.USER_PASSWORD_RESET_OTP_WEBHOOK_URL?.trim() ||
   process.env.USER_EMAIL_VERIFICATION_WEBHOOK_URL?.trim() ||
+  process.env.FLEET_EMAIL_VERIFICATION_WEBHOOK_URL?.trim() ||
+  process.env.SUPPLIER_EMAIL_VERIFICATION_WEBHOOK_URL?.trim() ||
   process.env.GARAGE_EMAIL_VERIFICATION_WEBHOOK_URL?.trim()
 
 export async function requestUserPasswordResetOtp(
@@ -77,15 +139,25 @@ export async function requestUserPasswordResetOtp(
     },
   })
 
-  const sent = await sendWebhook(passwordResetWebhookUrl(), {
-    to: user.email,
-    email: user.email,
+  const webhookSent = await sendWebhook(passwordResetWebhookUrl(), {
+    to: email,
+    email,
     otp,
     purpose: "password_reset",
     accountType: "User",
     origin,
     expiresInMinutes: OTP_TTL_MINUTES,
   })
+  const smtpSent = webhookSent
+    ? false
+    : await sendSmtpOtp({ to: email, otp })
+  const sent = webhookSent || smtpSent
+
+  if (!sent && process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Password reset email sender is not configured. Configure USER_PASSWORD_RESET_OTP_WEBHOOK_URL or SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM.",
+    )
+  }
 
   return {
     ok: true as const,
