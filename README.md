@@ -144,6 +144,11 @@ Detected or documented variables:
 - `VIN_API_PASS`
 - `GARAGE_EMAIL_VERIFICATION_WEBHOOK_URL`
 - `GARAGE_SMS_OTP_WEBHOOK_URL`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_FROM`
 
 ### Run, Build, and Test Commands
 

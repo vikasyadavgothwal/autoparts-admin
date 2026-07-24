@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomInt, randomUUID } from "node:crypto"
 
 import { db } from "@/lib/database/prisma"
+import { sendSmtpMail } from "@/lib/email/smtp"
 import { OrderStatus, Prisma } from "@/lib/generated/prisma/client"
 import {
   activeAdminRecipientIds,
@@ -126,6 +127,17 @@ const vehicleVin = (value: unknown) => {
   if (!normalized) return null
   if (!/^[A-HJ-NPR-Z0-9]{5,17}$/.test(normalized)) {
     throw new Error("VIN must be 5 to 17 letters/numbers and cannot include I, O, or Q")
+  }
+  return normalized
+}
+
+const hashSecret = (value: string) =>
+  createHash("sha256").update(value).digest("hex")
+
+const otpText = (value: unknown) => {
+  const normalized = text(value).replace(/\D/g, "")
+  if (!/^\d{6}$/.test(normalized)) {
+    throw new Error("Enter the 6-digit OTP sent to the customer")
   }
   return normalized
 }
@@ -735,8 +747,14 @@ export async function updateGarageBookingStatus(
   garageId: string,
   bookingId: string,
   status: unknown,
+  options: { completionOtp?: unknown } = {},
 ) {
   const nextStatus = bookingStatus(status)
+
+  if (nextStatus === "completed") {
+    await verifyGarageBookingCompletionOtp(garageId, bookingId, options.completionOtp)
+  }
+
   const [booking] = await db.$queryRaw<GarageBookingRow[]>`
     UPDATE "garage_bookings"
     SET "status" = ${nextStatus}::"GarageBookingStatus",
@@ -774,6 +792,116 @@ export async function updateGarageBookingStatus(
   const mappedBooking = mapBooking(booking)
   await notifyGarageBookingStatusChanged(mappedBooking)
   return mappedBooking
+}
+
+export async function requestGarageBookingCompletionOtp(
+  garageId: string,
+  bookingId: string,
+) {
+  const trimmedBookingId = requiredText(bookingId, "Booking")
+  const [booking] = await db.$queryRaw<Array<{
+    id: string
+    publicId: string
+    garageId: string
+    customerName: string
+    customerEmail: string | null
+    serviceName: string
+    status: GarageBookingStatus
+  }>>`
+    SELECT
+      "id",
+      "publicId",
+      "garageId",
+      "customerName",
+      "customerEmail",
+      "serviceName",
+      "status"
+    FROM "garage_bookings"
+    WHERE "garageId" = ${garageId}
+      AND ("id" = ${trimmedBookingId} OR "publicId" = ${trimmedBookingId})
+    LIMIT 1
+  `
+
+  if (!booking) throw new Error("Booking not found")
+  if (booking.status === "completed") {
+    throw new Error("This booking is already completed")
+  }
+  if (booking.status === "cancelled") {
+    throw new Error("Cancelled bookings cannot be completed")
+  }
+  if (!booking.customerEmail) {
+    throw new Error("Customer email is not available for this booking")
+  }
+
+  const otp = String(randomInt(100000, 1000000))
+  await db.$executeRaw`
+    INSERT INTO "garage_booking_completion_otps" (
+      "id",
+      "bookingId",
+      "garageId",
+      "customerEmail",
+      "otpHash",
+      "expiresAt"
+    )
+    VALUES (
+      ${randomUUID()},
+      ${booking.id},
+      ${garageId},
+      ${booking.customerEmail},
+      ${hashSecret(otp)},
+      CURRENT_TIMESTAMP + INTERVAL '10 minutes'
+    )
+  `
+
+  await sendSmtpMail({
+    to: booking.customerEmail,
+    subject: "Confirm garage service completion OTP",
+    text: [
+      `Your OTP is ${otp}.`,
+      "",
+      `Share this OTP with the garage only if ${booking.serviceName} for booking ${booking.publicId} has been completed.`,
+      "This OTP expires in 10 minutes.",
+    ].join("\n"),
+    html: [
+      `<p>Your OTP is <strong>${otp}</strong>.</p>`,
+      `<p>Share this OTP with the garage only if <strong>${booking.serviceName}</strong> for booking <strong>${booking.publicId}</strong> has been completed.</p>`,
+      "<p>This OTP expires in 10 minutes.</p>",
+    ].join(""),
+  })
+
+  return {
+    ok: true,
+    message: `Completion OTP sent to ${booking.customerEmail}`,
+  }
+}
+
+async function verifyGarageBookingCompletionOtp(
+  garageId: string,
+  bookingId: string,
+  otp: unknown,
+) {
+  const normalizedOtp = otpText(otp)
+  const trimmedBookingId = requiredText(bookingId, "Booking")
+  const [request] = await db.$queryRaw<Array<{ id: string }>>`
+    UPDATE "garage_booking_completion_otps"
+    SET "consumedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = (
+      SELECT gbc."id"
+      FROM "garage_booking_completion_otps" gbc
+      JOIN "garage_bookings" gb ON gb."id" = gbc."bookingId"
+      WHERE gbc."garageId" = ${garageId}
+        AND (gb."id" = ${trimmedBookingId} OR gb."publicId" = ${trimmedBookingId})
+        AND gbc."otpHash" = ${hashSecret(normalizedOtp)}
+        AND gbc."expiresAt" > CURRENT_TIMESTAMP
+        AND gbc."consumedAt" IS NULL
+        AND gb."status" <> 'completed'::"GarageBookingStatus"
+      ORDER BY gbc."createdAt" DESC
+      LIMIT 1
+    )
+    RETURNING "id"
+  `
+
+  if (!request) throw new Error("Completion OTP is invalid or expired")
 }
 
 export async function listUserGarageBookings(customerId: string) {
