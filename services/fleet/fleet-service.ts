@@ -98,8 +98,7 @@ const rfqBidDeliveryOption = (value: unknown): RfqBidDeliveryOption => {
 const requesterLabel = (source: RfqSource) =>
   source === RfqSource.fleet ? "Fleet" : "Customer"
 
-const rfqRankingWindowMinutes = (source: RfqSource) =>
-  source === RfqSource.fleet ? 24 * 60 : 30
+const rfqRankingWindowMinutes = () => 30
 
 const addMinutes = (date: Date, minutes: number) =>
   new Date(date.getTime() + minutes * 60_000)
@@ -110,7 +109,7 @@ const rfqQuoteWindowEndsAt = (rfq: {
   createdAt: Date | string
   source: RfqSource
 }) => {
-  const minutes = rfq.rankingWindowMinutes ?? rfqRankingWindowMinutes(rfq.source)
+  const minutes = rfq.rankingWindowMinutes ?? rfqRankingWindowMinutes()
   const startedAt = new Date(rfq.rankingWindowStartedAt ?? rfq.createdAt)
   return addMinutes(startedAt, minutes)
 }
@@ -155,41 +154,13 @@ async function notifyRfqCreated(rfq: {
 async function notifyRfqBidSubmitted(input: {
   rfqId: string
   rfqPublicId: string
-  requesterId: string | null
   supplierId: string
   source: RfqSource
   isUpdate: boolean
-  windowStartedAt: Date
 }) {
   const adminIds = await activeAdminRecipientIds()
   const title = input.isUpdate ? "RFQ quote updated" : "New RFQ quote received"
   const notifications: CreateNotificationInput[] = []
-
-  if (input.requesterId) {
-    const existingWindowNotice = await db.notification.findFirst({
-      where: {
-        recipientUserId: input.requesterId,
-        type: "rfq.bid.window_activity",
-        entityType: "rfq",
-        entityId: input.rfqId,
-        createdAt: { gte: input.windowStartedAt },
-      },
-      select: { id: true },
-    })
-
-    if (!existingWindowNotice) {
-      notifications.push({
-        recipientUserId: input.requesterId,
-        actorUserId: input.supplierId,
-        type: "rfq.bid.window_activity",
-        title: "Suppliers are quoting",
-        body: `Suppliers are preparing quotes for RFQ ${input.rfqPublicId}. Top quotes will be available after the current quote window closes.`,
-        linkUrl: "/rfqs",
-        entityType: "rfq",
-        entityId: input.rfqId,
-      })
-    }
-  }
 
   notifications.push(
     ...adminIds.map((adminId) => ({
@@ -205,6 +176,38 @@ async function notifyRfqBidSubmitted(input: {
   )
 
   await createNotificationsSafely(notifications)
+}
+
+async function notifyRfqQuotesReady(input: {
+  rfqId: string
+  rfqPublicId: string
+  requesterId: string | null
+  quoteCount: number
+}) {
+  if (!input.requesterId || input.quoteCount < 1) return
+
+  const existingNotice = await db.notification.findFirst({
+    where: {
+      recipientUserId: input.requesterId,
+      type: "rfq.bid.ranking_ready",
+      entityType: "rfq",
+      entityId: input.rfqId,
+    },
+    select: { id: true },
+  })
+  if (existingNotice) return
+
+  await createNotificationsSafely([
+    {
+      recipientUserId: input.requesterId,
+      type: "rfq.bid.ranking_ready",
+      title: "RFQ quotes are ready",
+      body: `${input.quoteCount} supplier quote${input.quoteCount === 1 ? "" : "s"} are ready to review for RFQ ${input.rfqPublicId}.`,
+      linkUrl: "/rfqs",
+      entityType: "rfq",
+      entityId: input.rfqId,
+    },
+  ])
 }
 
 async function notifyRfqBidAccepted(input: {
@@ -384,6 +387,8 @@ async function refreshRfqRankingWindow(rfqId: string) {
     where: { id: rfqId },
     select: {
       id: true,
+      publicId: true,
+      requesterId: true,
       source: true,
       status: true,
       createdAt: true,
@@ -393,7 +398,7 @@ async function refreshRfqRankingWindow(rfqId: string) {
   })
   if (!rfq || rfq.status !== RfqStatus.open) return
 
-  const windowMinutes = rfq.rankingWindowMinutes ?? rfqRankingWindowMinutes(rfq.source)
+  const windowMinutes = rfq.rankingWindowMinutes ?? rfqRankingWindowMinutes()
   const windowStartedAt = rfq.rankingWindowStartedAt ?? rfq.createdAt
   const now = new Date()
   if (now < addMinutes(windowStartedAt, windowMinutes)) {
@@ -457,6 +462,13 @@ async function refreshRfqRankingWindow(rfqId: string) {
         rankingLastCalculatedAt: rankedAt,
       },
     })
+  })
+
+  await notifyRfqQuotesReady({
+    rfqId: rfq.id,
+    rfqPublicId: rfq.publicId,
+    requesterId: rfq.requesterId,
+    quoteCount: topBids.length,
   })
 }
 
@@ -706,7 +718,7 @@ export async function createRfq(
       fleetVehicleId: fleetVehicle?.id,
       source,
       status: RfqStatus.open,
-      rankingWindowMinutes: rfqRankingWindowMinutes(source),
+      rankingWindowMinutes: rfqRankingWindowMinutes(),
       rankingWindowStartedAt: new Date(),
       projectName: requiredText(input.projectName, "Project name"),
       description: text(input.description) || null,
@@ -1058,10 +1070,6 @@ export async function submitRfqBid(
   if (!rfq) throw new Error("This RFQ is not open for quotes")
   if (rfq.responseDeadline <= new Date()) throw new Error("The RFQ response deadline has passed")
   await refreshRfqRankingWindow(rfq.id)
-  const rankingState = await db.rfq.findUnique({
-    where: { id: rfq.id },
-    select: { createdAt: true, rankingWindowStartedAt: true },
-  })
 
   const validUntilText = text(input.validUntil)
   const validUntil = validUntilText
@@ -1133,15 +1141,9 @@ export async function submitRfqBid(
   await notifyRfqBidSubmitted({
     rfqId: rfq.id,
     rfqPublicId: rfq.publicId,
-    requesterId: rfq.requesterId,
     supplierId,
     source: rfq.source,
     isUpdate: false,
-    windowStartedAt:
-      rankingState?.rankingWindowStartedAt ??
-      rfq.rankingWindowStartedAt ??
-      rankingState?.createdAt ??
-      rfq.createdAt,
   })
 
   return {

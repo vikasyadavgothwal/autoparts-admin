@@ -168,12 +168,31 @@ export async function loginUserWithFirebase(
     where: { OR: identityFilters },
   })
 
-  if (matchingUsers.length > 1) {
+  const phoneSignIn = identity.signInProvider === "phone"
+  const phoneMatchedUser =
+    phoneSignIn && phone
+      ? matchingUsers.find((user) => user.phone === phone)
+      : undefined
+  const uidMatchedUser = matchingUsers.find(
+    (user) => user.firebaseUid === firebaseUid,
+  )
+  const emailMatchedUser =
+    email ? matchingUsers.find((user) => user.email === email) : undefined
+
+  const existingUser = phoneMatchedUser ?? uidMatchedUser ?? emailMatchedUser
+
+  if (
+    matchingUsers.some((user) => user.id !== existingUser?.id) &&
+    !(phoneSignIn && phoneMatchedUser)
+  ) {
     throw new Error("Firebase identity conflicts with existing user accounts")
   }
 
-  const existingUser = matchingUsers[0]
-  if (existingUser?.firebaseUid && existingUser.firebaseUid !== firebaseUid) {
+  if (
+    existingUser?.firebaseUid &&
+    existingUser.firebaseUid !== firebaseUid &&
+    !(phoneSignIn && existingUser.phone === phone)
+  ) {
     throw new Error("Firebase identity conflicts with an existing user account")
   }
 
