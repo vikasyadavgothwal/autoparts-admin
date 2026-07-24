@@ -266,6 +266,7 @@ model User {
   supplierProductReviews    SupplierProductReview[]     @relation("SupplierProductReviewSupplier")
   customerSupplierReviews   SupplierProductReview[]     @relation("SupplierProductReviewCustomer")
   savedParts                UserSavedPart[]
+  cart                      UserCart?
   addresses                 UserAddress[]
   userVehicles              UserVehicle[]
   garageProfile             GarageProfile?
@@ -1007,6 +1008,19 @@ model UserSavedPart {
   @@index([userId, createdAt])
   @@index([partUid])
   @@map("user_saved_parts")
+}
+
+model UserCart {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  items     Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt])
+  @@map("user_carts")
 }
 
 model SupplierProductReview {
