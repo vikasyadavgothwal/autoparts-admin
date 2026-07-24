@@ -752,7 +752,24 @@ export async function updateGarageBookingStatus(
   const nextStatus = bookingStatus(status)
 
   if (nextStatus === "completed") {
-    await verifyGarageBookingCompletionOtp(garageId, bookingId, options.completionOtp)
+    const [booking] = await db.$queryRaw<Array<{
+      customerId: string | null
+      status: GarageBookingStatus
+    }>>`
+      SELECT "customerId", "status"
+      FROM "garage_bookings"
+      WHERE "garageId" = ${garageId}
+        AND ("id" = ${bookingId} OR "publicId" = ${bookingId})
+      LIMIT 1
+    `
+
+    if (!booking) throw new Error("Booking not found")
+    if (booking.status === "cancelled") {
+      throw new Error("Cancelled bookings cannot be completed")
+    }
+    if (booking.customerId) {
+      await verifyGarageBookingCompletionOtp(garageId, bookingId, options.completionOtp)
+    }
   }
 
   const [booking] = await db.$queryRaw<GarageBookingRow[]>`
@@ -806,12 +823,14 @@ export async function requestGarageBookingCompletionOtp(
     customerName: string
     customerEmail: string | null
     serviceName: string
+    customerId: string | null
     status: GarageBookingStatus
   }>>`
     SELECT
       "id",
       "publicId",
       "garageId",
+      "customerId",
       "customerName",
       "customerEmail",
       "serviceName",
@@ -828,6 +847,9 @@ export async function requestGarageBookingCompletionOtp(
   }
   if (booking.status === "cancelled") {
     throw new Error("Cancelled bookings cannot be completed")
+  }
+  if (!booking.customerId) {
+    throw new Error("Offline appointments do not require customer OTP")
   }
   if (!booking.customerEmail) {
     throw new Error("Customer email is not available for this booking")
