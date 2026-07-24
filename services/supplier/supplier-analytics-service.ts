@@ -75,11 +75,20 @@ export async function getSupplierAnalytics(
       where: {
         status: RfqStatus.open,
         responseDeadline: { gt: now },
-        bids: { none: { supplierId } },
+        order: null,
+        AND: [
+          { bids: { none: { supplierId } } },
+          { bids: { none: { status: RfqBidStatus.accepted } } },
+        ],
       },
     }),
     db.rfq.findMany({
-      where: { status: RfqStatus.open, responseDeadline: { gt: now } },
+      where: {
+        status: RfqStatus.open,
+        responseDeadline: { gt: now },
+        order: null,
+        bids: { none: { status: RfqBidStatus.accepted } },
+      },
       select: {
         id: true,
         publicId: true,

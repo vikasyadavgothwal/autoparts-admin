@@ -778,6 +778,8 @@ export async function listSupplierRfqs(
   const query = search.trim()
   const where: Prisma.RfqWhereInput = {
     status: RfqStatus.open,
+    order: null,
+    bids: { none: { status: RfqBidStatus.accepted } },
     ...(query ? {
       OR: [
         { publicId: { contains: query, mode: "insensitive" } },
