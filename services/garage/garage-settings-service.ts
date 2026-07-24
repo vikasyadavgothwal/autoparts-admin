@@ -575,9 +575,16 @@ export async function verifyGarageMobileWithFirebase(
     throw new Error("Firebase token does not include a verified mobile number")
   }
 
-  const profile = await getGarageProfile(garageId)
-  if (profile.mobile && phoneText(profile.mobile) !== phone) {
-    throw new Error("Firebase verified mobile does not match the saved mobile number")
+  const existing = await db.user.findFirst({
+    where: {
+      phone,
+      NOT: { id: garageId },
+    },
+    select: { id: true },
+  })
+
+  if (existing) {
+    throw new Error("This mobile number is already used by another account")
   }
 
   await db.user.update({
