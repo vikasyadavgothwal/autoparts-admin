@@ -138,8 +138,6 @@ async function mapSupplierProfile(
       vatTrnNumber: true,
       vatTrnImageUrl: true,
       emiratesIdPassportUrl: true,
-      bankIban: true,
-      bankAccountProofUrl: true,
       marketplaceAgreementAcceptedAt: true,
       firebaseUid: true,
       avatarUrl: true,
@@ -178,8 +176,6 @@ async function mapSupplierProfile(
     vatTrnNumber: supplier.vatTrnNumber,
     vatTrnImageUrl: await publicImageUrl(supplier.vatTrnImageUrl),
     emiratesIdPassportUrl: await publicImageUrl(supplier.emiratesIdPassportUrl),
-    bankIban: supplier.bankIban,
-    bankAccountProofUrl: await publicImageUrl(supplier.bankAccountProofUrl),
     marketplaceAgreementAcceptedAt:
       supplier.marketplaceAgreementAcceptedAt?.toISOString() ?? null,
     mobileVerifiedAt: mobileVerifiedAt?.toISOString() ?? null,
@@ -214,11 +210,7 @@ export async function updateSupplierProfile(
   const contactPerson = nullableText(input.contactPerson, 160);
   const designation = nullableText(input.designation, 120);
   const tradeLicenseImageUrl = nullableHttpUrl(input.tradeLicenseImageUrl);
-  const vatTrnNumber = nullableText(input.vatTrnNumber, 100);
-  const vatTrnImageUrl = nullableHttpUrl(input.vatTrnImageUrl);
   const emiratesIdPassportUrl = nullableHttpUrl(input.emiratesIdPassportUrl);
-  const bankIban = nullableText(input.bankIban, 80);
-  const bankAccountProofUrl = nullableHttpUrl(input.bankAccountProofUrl);
   const marketplaceAgreementAccepted =
     input.marketplaceAgreementAccepted === true ||
     input.marketplaceAgreementAccepted === "true" ||
@@ -248,11 +240,7 @@ export async function updateSupplierProfile(
       supplierContactPerson: contactPerson,
       supplierDesignation: designation,
       tradeLicenseImageUrl,
-      vatTrnNumber,
-      vatTrnImageUrl,
       emiratesIdPassportUrl,
-      bankIban,
-      bankAccountProofUrl,
       marketplaceAgreementAcceptedAt: marketplaceAgreementAccepted
         ? current.marketplaceAgreementAcceptedAt ?? new Date()
         : null,

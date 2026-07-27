@@ -46,13 +46,9 @@ const detailRows = (supplier: SupplierRecord) => [
   ["Contact person", supplier.contactPerson],
   ["Designation", supplier.designation],
   ["Trade license image", supplier.tradeLicenseImageUrl ?? "Not added"],
-  ["VAT TRN number", supplier.vatTrnNumber],
-  ["VAT TRN image", supplier.vatTrnImageUrl ?? "Not added"],
   ["Emirates ID / Passport", supplier.emiratesIdPassportUrl ?? "Not added"],
-  ["Bank IBAN", supplier.bankIban],
-  ["Bank account proof", supplier.bankAccountProofUrl ?? "Not added"],
   [
-    "Marketplace agreement",
+    "Terms and Conditions",
     supplier.marketplaceAgreementAcceptedAt
       ? new Date(supplier.marketplaceAgreementAcceptedAt).toLocaleDateString(
           "en-AE",
@@ -66,20 +62,8 @@ const detailRows = (supplier: SupplierRecord) => [
       : "Pending",
   ],
   [
-    "VAT Registration Verification",
-    supplier.vatTrnNumber !== "Not added" && supplier.vatTrnImageUrl
-      ? "Submitted"
-      : "Pending",
-  ],
-  [
     "Emirates ID / Passport Verification",
     supplier.emiratesIdPassportUrl ? "Submitted" : "Pending",
-  ],
-  [
-    "Bank Account (IBAN) Verification",
-    supplier.bankIban !== "Not added" && supplier.bankAccountProofUrl
-      ? "Submitted"
-      : "Pending",
   ],
   [
     "Contact Verification",
@@ -267,9 +251,7 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
                     <dt className="text-xs text-dashboard-muted">{label}</dt>
                     <dd className="mt-1 break-words text-sm font-medium text-dashboard-text">
                       {(label === "Trade license image" ||
-                        label === "VAT TRN image" ||
-                        label === "Emirates ID / Passport" ||
-                        label === "Bank account proof") &&
+                        label === "Emirates ID / Passport") &&
                       value !== "Not added" ? (
                         <a
                           href={value}
