@@ -35,6 +35,10 @@ export type SupplierRecord = {
   tradeLicenseImageUrl: string | null
   vatTrnNumber: string
   vatTrnImageUrl: string | null
+  emiratesIdPassportUrl: string | null
+  bankIban: string
+  bankAccountProofUrl: string | null
+  marketplaceAgreementAcceptedAt: string | null
   address: string
   city: string
   state: string

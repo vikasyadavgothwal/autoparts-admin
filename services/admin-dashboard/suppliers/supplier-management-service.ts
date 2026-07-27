@@ -85,6 +85,11 @@ const mapSupplier = (supplier: SupplierAccount): SupplierRecord => ({
   tradeLicenseImageUrl: documentUrl(supplier.tradeLicenseImageUrl),
   vatTrnNumber: supplier.vatTrnNumber ?? "Not added",
   vatTrnImageUrl: documentUrl(supplier.vatTrnImageUrl),
+  emiratesIdPassportUrl: documentUrl(supplier.emiratesIdPassportUrl),
+  bankIban: supplier.bankIban ?? "Not added",
+  bankAccountProofUrl: documentUrl(supplier.bankAccountProofUrl),
+  marketplaceAgreementAcceptedAt:
+    supplier.marketplaceAgreementAcceptedAt?.toISOString() ?? null,
   address:
     [supplier.addressLine1, supplier.addressLine2].filter(Boolean).join(", ") ||
     "Not added",

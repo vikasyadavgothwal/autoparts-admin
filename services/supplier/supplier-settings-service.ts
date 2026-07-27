@@ -137,6 +137,10 @@ async function mapSupplierProfile(
       tradeLicenseImageUrl: true,
       vatTrnNumber: true,
       vatTrnImageUrl: true,
+      emiratesIdPassportUrl: true,
+      bankIban: true,
+      bankAccountProofUrl: true,
+      marketplaceAgreementAcceptedAt: true,
       firebaseUid: true,
       avatarUrl: true,
       addressLine1: true,
@@ -173,6 +177,11 @@ async function mapSupplierProfile(
     tradeLicenseImageUrl: await publicImageUrl(supplier.tradeLicenseImageUrl),
     vatTrnNumber: supplier.vatTrnNumber,
     vatTrnImageUrl: await publicImageUrl(supplier.vatTrnImageUrl),
+    emiratesIdPassportUrl: await publicImageUrl(supplier.emiratesIdPassportUrl),
+    bankIban: supplier.bankIban,
+    bankAccountProofUrl: await publicImageUrl(supplier.bankAccountProofUrl),
+    marketplaceAgreementAcceptedAt:
+      supplier.marketplaceAgreementAcceptedAt?.toISOString() ?? null,
     mobileVerifiedAt: mobileVerifiedAt?.toISOString() ?? null,
     avatarUrl: await publicImageUrl(supplier.avatarUrl),
     addressLine1: supplier.addressLine1,
@@ -207,6 +216,13 @@ export async function updateSupplierProfile(
   const tradeLicenseImageUrl = nullableHttpUrl(input.tradeLicenseImageUrl);
   const vatTrnNumber = nullableText(input.vatTrnNumber, 100);
   const vatTrnImageUrl = nullableHttpUrl(input.vatTrnImageUrl);
+  const emiratesIdPassportUrl = nullableHttpUrl(input.emiratesIdPassportUrl);
+  const bankIban = nullableText(input.bankIban, 80);
+  const bankAccountProofUrl = nullableHttpUrl(input.bankAccountProofUrl);
+  const marketplaceAgreementAccepted =
+    input.marketplaceAgreementAccepted === true ||
+    input.marketplaceAgreementAccepted === "true" ||
+    input.marketplaceAgreementAccepted === "on";
 
   if (email && !EMAIL_PATTERN.test(email)) {
     throw new Error("Enter a valid email address");
@@ -220,7 +236,7 @@ export async function updateSupplierProfile(
 
   const current = await db.user.findUnique({
     where: { id: supplierId },
-    select: { email: true, phone: true },
+    select: { email: true, phone: true, marketplaceAgreementAcceptedAt: true },
   });
   if (!current) throw new Error("Supplier account was not found");
 
@@ -234,6 +250,12 @@ export async function updateSupplierProfile(
       tradeLicenseImageUrl,
       vatTrnNumber,
       vatTrnImageUrl,
+      emiratesIdPassportUrl,
+      bankIban,
+      bankAccountProofUrl,
+      marketplaceAgreementAcceptedAt: marketplaceAgreementAccepted
+        ? current.marketplaceAgreementAcceptedAt ?? new Date()
+        : null,
       firstName,
       lastName,
       addressLine1: nullableText(input.addressLine1, 255),
