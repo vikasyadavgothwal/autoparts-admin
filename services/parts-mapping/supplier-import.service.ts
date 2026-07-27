@@ -42,11 +42,14 @@ const supplierFacingUnmappedReason = (reason: string) => {
     /17VIN/i.test(normalized) ||
     /VIN API/i.test(normalized) ||
     /brand lookup/i.test(normalized) ||
-    /route/i.test(normalized)
+    /route/i.test(normalized) ||
+    /not confirmed/i.test(normalized) ||
+    /no exact/i.test(normalized) ||
+    /unable to confirm/i.test(normalized)
   ) {
-    return "Product VIN invalid"
+    return "OEM part not found"
   }
-  return normalized || "Product VIN invalid"
+  return normalized || "OEM part not found"
 }
 
 export async function importSupplierPartsBulk(
@@ -146,7 +149,7 @@ export async function importSupplierPartsBulk(
           oemNumber: oemNumber ?? "",
           competitorPartNumber: competitorOem,
           competitorBrandName: competitorBrand,
-          reason: "Product was not confirmed in the local catalog or 17VIN",
+          reason: "OEM part not found",
         }
       }
 
