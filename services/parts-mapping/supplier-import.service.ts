@@ -36,6 +36,19 @@ import {
   type BulkPartResolution,
 } from "./internal-helpers"
 
+const supplierFacingUnmappedReason = (reason: string) => {
+  const normalized = reason.trim()
+  if (
+    /17VIN/i.test(normalized) ||
+    /VIN API/i.test(normalized) ||
+    /brand lookup/i.test(normalized) ||
+    /route/i.test(normalized)
+  ) {
+    return "Product VIN invalid"
+  }
+  return normalized || "Product VIN invalid"
+}
+
 export async function importSupplierPartsBulk(
   supplierId: string,
   rows: SupplierBulkProductRow[],
@@ -288,8 +301,9 @@ export async function importSupplierPartsBulk(
         }
       }
       if (hasProductInfo) {
-        const reason =
-          error instanceof Error ? error.message : "Unable to confirm this OEM"
+        const reason = supplierFacingUnmappedReason(
+          error instanceof Error ? error.message : "Unable to confirm this OEM",
+        )
         await upsertPendingSupplierProductInfo(
           supplierId,
           rowForPersistence,
@@ -316,7 +330,9 @@ export async function importSupplierPartsBulk(
         competitorPartNumber: competitorOem,
         competitorBrandName: competitorBrand,
         reason:
-          error instanceof Error ? error.message : "Unable to confirm this OEM",
+          supplierFacingUnmappedReason(
+            error instanceof Error ? error.message : "Unable to confirm this OEM",
+          ),
       }
     }
   })
