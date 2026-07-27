@@ -11,6 +11,8 @@ export type SupplierProfileInput = {
   vatTrnNumber?: unknown;
   vatTrnImageUrl?: unknown;
   emiratesIdPassportUrl?: unknown;
+  bankIban?: unknown;
+  bankAccountProofUrl?: unknown;
   marketplaceAgreementAccepted?: unknown;
   addressLine1?: unknown;
   addressLine2?: unknown;
@@ -37,6 +39,8 @@ export type SupplierProfileRecord = {
   vatTrnNumber: string | null;
   vatTrnImageUrl: string | null;
   emiratesIdPassportUrl: string | null;
+  bankIban: string | null;
+  bankAccountProofUrl: string | null;
   marketplaceAgreementAcceptedAt: string | null;
   mobileVerifiedAt: string | null;
   avatarUrl: string | null;

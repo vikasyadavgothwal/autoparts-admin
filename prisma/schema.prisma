@@ -233,6 +233,8 @@ model User {
   vatTrnNumber                   String?
   vatTrnImageUrl                 String?
   emiratesIdPassportUrl          String?
+  bankIban                       String?
+  bankAccountProofUrl            String?
   marketplaceAgreementAcceptedAt DateTime?
   addressLine1                   String?
   addressLine2                   String?
