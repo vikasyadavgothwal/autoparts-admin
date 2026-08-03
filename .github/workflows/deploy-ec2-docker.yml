@@ -78,11 +78,7 @@ jobs:
           if [ -n "$GHCR_READ_TOKEN" ]; then
             echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
           fi
-          docker compose pull "$COMPOSE_SERVICE"
-          docker compose up -d redis
-          docker compose run --rm "$COMPOSE_SERVICE" npx prisma migrate deploy
-          docker compose up -d "$COMPOSE_SERVICE"
-          docker image prune -f
+          /opt/autoparts/deploy-service.sh "$COMPOSE_SERVICE"
           EOF
           )
           COMMAND_ID=$(aws ssm send-command \
