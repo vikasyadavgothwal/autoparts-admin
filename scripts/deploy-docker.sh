@@ -29,11 +29,6 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$REDIS_CONTAINER_NAME"; then
     redis:7-alpine
 fi
 
-if [[ -n "$PM2_APP_NAME" ]] && command -v pm2 >/dev/null 2>&1; then
-  pm2 stop "$PM2_APP_NAME" || true
-  pm2 save || true
-fi
-
 GIT_SHA="$(git rev-parse --short HEAD)"
 docker build --pull -t "$IMAGE_NAME:$GIT_SHA" -t "$IMAGE_NAME:latest" .
 
@@ -49,6 +44,11 @@ docker run --rm \
   "${ENV_ARGS[@]}" \
   "$IMAGE_NAME:$GIT_SHA" \
   npx prisma migrate deploy
+
+if [[ -n "$PM2_APP_NAME" ]] && command -v pm2 >/dev/null 2>&1; then
+  pm2 stop "$PM2_APP_NAME" || true
+  pm2 save || true
+fi
 
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
