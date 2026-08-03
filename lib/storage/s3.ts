@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer"
 import {
   GetObjectCommand,
   DeleteObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
   type ObjectCannedACL,
@@ -257,6 +258,21 @@ export const createSignedS3ObjectUrl = async (
   return getSignedUrl(getS3Client(), command, {
     expiresIn: expiresIn ?? config.signedUrlExpiresIn,
   })
+}
+
+export const s3ObjectExists = async (key: string): Promise<boolean> => {
+  const config = getS3StorageConfig()
+  try {
+    await getS3Client().send(
+      new HeadObjectCommand({
+        Bucket: config.bucket,
+        Key: key,
+      }),
+    )
+    return true
+  } catch {
+    return false
+  }
 }
 
 export const getS3ObjectKeyFromUrl = (value: string): string | null => {

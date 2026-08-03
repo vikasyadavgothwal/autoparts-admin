@@ -18,6 +18,7 @@ import {
   Building2,
   ChartColumn,
   PackageSearch,
+  ScanLine,
   Settings,
 } from "lucide-react"
 import {
@@ -46,6 +47,7 @@ const items: readonly AppSidebarNavItem[] = [
   { title: "Queries", url: appRoutes.queries, icon: MessageSquareText },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
   { title: "Parts Mapping", url: appRoutes.partsMapping, icon: PackageSearch },
+  { title: "VIN Decoder", url: appRoutes.vinDecoder, icon: ScanLine },
   { title: "Reports", url: "/reports", icon: ChartColumn },
 ]
 

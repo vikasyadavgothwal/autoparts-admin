@@ -149,16 +149,21 @@ model VehicleLookup {
 }
 
 model VinLookupCache {
-  id          String   @id @default(cuid())
-  vin         String   @unique
-  year        Int
-  make        String
-  model       String
-  vehicleName String?
-  trim        String?
-  rawData     Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(cuid())
+  vin            String   @unique
+  year           Int
+  make           String
+  model          String
+  vehicleName    String?
+  market         String?
+  platform       String?
+  engine         String?
+  engineCapacity String?
+  transmission   String?
+  trim           String?
+  rawData        Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@index([vin])
   @@map("vin_lookup_cache")
@@ -213,72 +218,78 @@ model GradeLookup {
 }
 
 model User {
-  id                             String                      @id @default(cuid())
-  publicId                       String                      @unique @default(dbgenerated("next_user_public_id()"))
-  supplierPublicId               String?                     @unique
-  garagePublicId                 String?                     @unique
-  firebaseUid                    String?                     @unique
-  email                          String?                     @unique
-  phone                          String?                     @unique
-  googleId                       String?                     @unique
-  passwordHash                   String?
-  firstName                      String?
-  lastName                       String?
-  avatarUrl                      String?
-  companyName                    String?
-  tradeLicenseNumber             String?
-  supplierContactPerson          String?
-  supplierDesignation            String?
-  tradeLicenseImageUrl           String?
-  vatTrnNumber                   String?
-  vatTrnImageUrl                 String?
-  emiratesIdPassportUrl          String?
-  bankIban                       String?
-  bankAccountProofUrl            String?
-  marketplaceAgreementAcceptedAt DateTime?
-  addressLine1                   String?
-  addressLine2                   String?
-  city                           String?
-  state                          String?
-  postalCode                     String?
-  country                        String?
-  roles                          UserRole[]                  @default([User])
-  activeRole                     UserRole                    @default(User)
-  isActive                       Boolean                     @default(true)
-  supplierApprovalStatus         SupplierApprovalStatus      @default(Pending)
-  supplierReviewedAt             DateTime?
-  supplierReviewedByAdminId      String?
-  emailVerifiedAt                DateTime?
-  lastLoginAt                    DateTime?
-  authVersion                    Int                         @default(1)
-  createdAt                      DateTime                    @default(now())
-  updatedAt                      DateTime                    @updatedAt
-  sessions                       UserSession[]
-  supplierParts                  SupplierPart[]
-  supplierPartStocks             SupplierPartStock[]
-  supplierPartPricings           SupplierPartPricing[]
-  fleetVehicles                  FleetVehicle[]
-  rfqs                           Rfq[]
-  rfqBids                        RfqBid[]
-  buyerOrders                    Order[]                     @relation("OrderBuyer")
-  supplierOrders                 Order[]                     @relation("OrderSupplier")
-  garageServices                 GarageService[]
-  garageBookings                 GarageBooking[]             @relation("GarageBookingGarage")
-  customerGarageBookings         GarageBooking[]             @relation("GarageBookingCustomer")
-  garageServiceReviews           GarageServiceReview[]       @relation("GarageServiceReviewGarage")
-  customerServiceReviews         GarageServiceReview[]       @relation("GarageServiceReviewCustomer")
-  supplierProductReviews         SupplierProductReview[]     @relation("SupplierProductReviewSupplier")
-  customerSupplierReviews        SupplierProductReview[]     @relation("SupplierProductReviewCustomer")
-  savedParts                     UserSavedPart[]
-  cart                           UserCart?
-  addresses                      UserAddress[]
-  userVehicles                   UserVehicle[]
-  garageProfile                  GarageProfile?
-  garageVerifications            GarageVerificationRequest[]
-  notifications                  Notification[]              @relation("UserNotificationRecipient")
-  sentNotifications              Notification[]              @relation("UserNotificationActor")
-  notificationDevices            NotificationDevice[]        @relation("UserNotificationDevice")
-  supplierReviewedBy             admin?                      @relation("SupplierApprovalReviewer", fields: [supplierReviewedByAdminId], references: [id], onDelete: SetNull)
+  id                              String                      @id @default(cuid())
+  publicId                        String                      @unique @default(dbgenerated("next_user_public_id()"))
+  supplierPublicId                String?                     @unique
+  garagePublicId                  String?                     @unique
+  firebaseUid                     String?                     @unique
+  email                           String?                     @unique
+  phone                           String?                     @unique
+  googleId                        String?                     @unique
+  passwordHash                    String?
+  firstName                       String?
+  lastName                        String?
+  avatarUrl                       String?
+  companyName                     String?
+  tradeLicenseNumber              String?
+  supplierContactPerson           String?
+  supplierDesignation             String?
+  supplierContactPhone            String?
+  tradeLicenseImageUrl            String?
+  vatTrnNumber                    String?
+  vatTrnImageUrl                  String?
+  supplierIdentityDocumentType    String?
+  emiratesIdPassportUrl           String?
+  emiratesIdBackUrl               String?
+  passportAddressUrl              String?
+  passportVisaFrontUrl            String?
+  bankIban                        String?
+  bankAccountProofUrl             String?
+  marketplaceAgreementAcceptedAt  DateTime?
+  addressLine1                    String?
+  addressLine2                    String?
+  city                            String?
+  state                           String?
+  postalCode                      String?
+  country                         String?
+  roles                           UserRole[]                  @default([User])
+  activeRole                      UserRole                    @default(User)
+  isActive                        Boolean                     @default(true)
+  supplierApprovalStatus          SupplierApprovalStatus      @default(Pending)
+  supplierApprovalRejectionReason String?
+  supplierReviewedAt              DateTime?
+  supplierReviewedByAdminId       String?
+  emailVerifiedAt                 DateTime?
+  lastLoginAt                     DateTime?
+  authVersion                     Int                         @default(1)
+  createdAt                       DateTime                    @default(now())
+  updatedAt                       DateTime                    @updatedAt
+  sessions                        UserSession[]
+  supplierParts                   SupplierPart[]
+  supplierPartStocks              SupplierPartStock[]
+  supplierPartPricings            SupplierPartPricing[]
+  fleetVehicles                   FleetVehicle[]
+  rfqs                            Rfq[]
+  rfqBids                         RfqBid[]
+  buyerOrders                     Order[]                     @relation("OrderBuyer")
+  supplierOrders                  Order[]                     @relation("OrderSupplier")
+  garageServices                  GarageService[]
+  garageBookings                  GarageBooking[]             @relation("GarageBookingGarage")
+  customerGarageBookings          GarageBooking[]             @relation("GarageBookingCustomer")
+  garageServiceReviews            GarageServiceReview[]       @relation("GarageServiceReviewGarage")
+  customerServiceReviews          GarageServiceReview[]       @relation("GarageServiceReviewCustomer")
+  supplierProductReviews          SupplierProductReview[]     @relation("SupplierProductReviewSupplier")
+  customerSupplierReviews         SupplierProductReview[]     @relation("SupplierProductReviewCustomer")
+  savedParts                      UserSavedPart[]
+  cart                            UserCart?
+  addresses                       UserAddress[]
+  userVehicles                    UserVehicle[]
+  garageProfile                   GarageProfile?
+  garageVerifications             GarageVerificationRequest[]
+  notifications                   Notification[]              @relation("UserNotificationRecipient")
+  sentNotifications               Notification[]              @relation("UserNotificationActor")
+  notificationDevices             NotificationDevice[]        @relation("UserNotificationDevice")
+  supplierReviewedBy              admin?                      @relation("SupplierApprovalReviewer", fields: [supplierReviewedByAdminId], references: [id], onDelete: SetNull)
 
   @@index([roles], type: Gin)
   @@index([activeRole])

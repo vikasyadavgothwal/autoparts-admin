@@ -3,6 +3,8 @@ import {
   VIN_API_DEFAULT_BASE_URL,
 } from "@/lib/vin-search"
 
+const VIN17_TIMEOUT_MS = 15_000
+
 export type Vin17PartCandidate = {
   sourcePartId: string | null
   partNumber: string | null
@@ -236,6 +238,7 @@ const fetch17Vin = async (
     method: "GET",
     headers: { Accept: "application/json" },
     cache: "no-store",
+    signal: AbortSignal.timeout(VIN17_TIMEOUT_MS),
   })
 
   const payload = await response.json().catch(async () => ({

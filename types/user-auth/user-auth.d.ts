@@ -39,6 +39,8 @@ export type CreateUserInput = {
   state?: string | null
   postalCode?: string | null
   country?: string | null
+  supplierContactPerson?: string | null
+  supplierDesignation?: string | null
   roles?: UserRole[]
   activeRole?: UserRole
 }
@@ -155,6 +157,9 @@ export type LoginUserApiBody = {
   requestedRole?: unknown
   requestedRoleUid?: unknown
   requestedDisplayName?: unknown
+  requestedSupplierContactPerson?: unknown
+  requestedSupplierDesignation?: unknown
+  requestedSupplierPhone?: unknown
 }
 
 export type UpdateActiveRoleApiBody = {

@@ -21,6 +21,11 @@ export type SupplierTableColumn = {
   className?: string
 }
 
+export type SupplierDocumentView = {
+  url: string | null
+  exists: boolean
+}
+
 export type SupplierRecord = {
   internalId: string
   id: string
@@ -32,12 +37,16 @@ export type SupplierRecord = {
   tradeLicenseNumber: string
   contactPerson: string
   designation: string
-  tradeLicenseImageUrl: string | null
+  tradeLicenseImageUrl: SupplierDocumentView
   vatTrnNumber: string
-  vatTrnImageUrl: string | null
-  emiratesIdPassportUrl: string | null
+  vatTrnImageUrl: SupplierDocumentView
+  supplierIdentityDocumentType: string | null
+  emiratesIdPassportUrl: SupplierDocumentView
+  emiratesIdBackUrl: SupplierDocumentView
+  passportAddressUrl: SupplierDocumentView
+  passportVisaFrontUrl: SupplierDocumentView
   bankIban: string
-  bankAccountProofUrl: string | null
+  bankAccountProofUrl: SupplierDocumentView
   marketplaceAgreementAcceptedAt: string | null
   address: string
   city: string
@@ -52,5 +61,6 @@ export type SupplierRecord = {
   accountActive: boolean
   reviewedAt: string
   reviewedBy: string
+  rejectionReason: string | null
   status: SupplierStatus
 }

@@ -32,6 +32,8 @@ type NotificationPopupProps = {
   onUnreadChange?: (count: number) => void
 }
 
+type PushPermission = "unsupported" | NotificationPermission
+
 const relativeTime = (value: string) => {
   const timestamp = new Date(value).getTime()
   if (Number.isNaN(timestamp)) return "Now"
@@ -61,11 +63,18 @@ const sortNotifications = (items: DashboardNotification[]) =>
       new Date(next.createdAt).getTime() - new Date(current.createdAt).getTime(),
   )
 
+const initialPushPermission = (): PushPermission =>
+  typeof window !== "undefined" && "Notification" in window
+    ? Notification.permission
+    : "unsupported"
+
 export function NotificationPopup({ onUnreadChange }: NotificationPopupProps) {
   const [notifications, setNotifications] = useState<DashboardNotification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [isMutating, setIsMutating] = useState(false)
+  const [pushPermission, setPushPermission] =
+    useState<PushPermission>(initialPushPermission)
 
   useEffect(() => {
     onUnreadChange?.(unreadCount)
@@ -170,6 +179,13 @@ export function NotificationPopup({ onUnreadChange }: NotificationPopupProps) {
     }
   }
 
+  const enablePushNotifications = async () => {
+    await registerFirebasePushNotifications({ requestPermission: true })
+    if ("Notification" in window) {
+      setPushPermission(Notification.permission)
+    }
+  }
+
   const unreadLabel = useMemo(
     () => `${unreadCount} unread notification${unreadCount === 1 ? "" : "s"}`,
     [unreadCount],
@@ -196,6 +212,20 @@ export function NotificationPopup({ onUnreadChange }: NotificationPopupProps) {
           Mark all
         </Button>
       </div>
+      {pushPermission === "default" ? (
+        <div className="border-b border-border bg-brand-surface/70 px-4 py-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void enablePushNotifications()}
+            className="h-8 w-full gap-1.5 text-xs"
+          >
+            <BellRing className="h-3.5 w-3.5" />
+            Enable push
+          </Button>
+        </div>
+      ) : null}
       <div className="max-h-[22rem] overflow-y-auto">
         {isLoading ? (
           <div className="py-10 text-center text-sm text-muted-foreground">

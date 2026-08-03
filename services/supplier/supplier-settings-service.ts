@@ -3,7 +3,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { db } from "@/lib/database/prisma";
 import { verifyFirebaseIdToken } from "@/lib/firebase/admin";
-import { Prisma } from "@/lib/generated/prisma/client";
+import { Prisma, SupplierApprovalStatus } from "@/lib/generated/prisma/client";
+import { sendSmtpMail } from "@/lib/email/smtp";
 import {
   createSignedS3ObjectUrl,
   deleteObjectFromS3,
@@ -36,15 +37,33 @@ type AvatarUploadInput = {
   body: Buffer;
 };
 
+type DocumentUploadInput = AvatarUploadInput & {
+  kind: string;
+};
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MOBILE_PATTERN = /^\+\d{8,18}$/;
-const POSTAL_CODE_PATTERN = /^[A-Za-z0-9 -]*$/;
+const POSTAL_CODE_PATTERN = /^\d{6}$/;
+const ADDRESS_LINE_PATTERN = /^[A-Za-z0-9\s.,#'’/&()-]*$/;
+const PLACE_NAME_PATTERN = /^[A-Za-z\s.'’()-]*$/;
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
+const MAX_DOCUMENT_SIZE = 5 * 1024 * 1024;
+const MAX_PDF_DOCUMENT_SIZE = 10 * 1024 * 1024;
+const TRADE_LICENSE_MIN_LENGTH = 6;
+const TRADE_LICENSE_MAX_LENGTH = 30;
+const VAT_TRN_MIN_LENGTH = 10;
+const VAT_TRN_MAX_LENGTH = 20;
+const BANK_IBAN_MAX_LENGTH = 34;
 const AVATAR_EXTENSIONS: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
   "image/webp": "webp",
 };
+const DOCUMENT_EXTENSIONS: Record<string, string> = {
+  ...AVATAR_EXTENSIONS,
+  "application/pdf": "pdf",
+};
+const IDENTITY_DOCUMENT_TYPES = new Set(["emirates_id", "passport"]);
 
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
@@ -67,9 +86,26 @@ const nullableHttpUrl = (value: unknown) => {
       throw new Error();
     }
   } catch {
-    throw new Error("Document image URL must be a valid HTTP or HTTPS URL");
+    throw new Error("Document URL must be a valid HTTP or HTTPS URL");
   }
   return normalized;
+};
+
+const normalizeStoredDocumentUrl = (value: unknown) => {
+  const normalized = nullableHttpUrl(value);
+  if (!normalized) return null;
+
+  const key = getS3ObjectKeyFromUrl(normalized);
+  if (!key) return normalized;
+
+  try {
+    const url = new URL(normalized);
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return normalized;
+  }
 };
 
 const phoneText = (value: unknown) => text(value).replace(/[^\d+]/g, "");
@@ -134,10 +170,15 @@ async function mapSupplierProfile(
       tradeLicenseNumber: true,
       supplierContactPerson: true,
       supplierDesignation: true,
+      supplierContactPhone: true,
       tradeLicenseImageUrl: true,
       vatTrnNumber: true,
       vatTrnImageUrl: true,
+      supplierIdentityDocumentType: true,
       emiratesIdPassportUrl: true,
+      emiratesIdBackUrl: true,
+      passportAddressUrl: true,
+      passportVisaFrontUrl: true,
       bankIban: true,
       bankAccountProofUrl: true,
       marketplaceAgreementAcceptedAt: true,
@@ -150,6 +191,7 @@ async function mapSupplierProfile(
       postalCode: true,
       country: true,
       supplierApprovalStatus: true,
+      supplierApprovalRejectionReason: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -160,6 +202,10 @@ async function mapSupplierProfile(
   const mobileVerifiedAt =
     (await getMobileVerifiedAt(supplier.id, supplier.phone)) ??
     (supplier.phone && supplier.firebaseUid ? supplier.updatedAt : null);
+  const supplierContactPhoneVerifiedAt = await getMobileVerifiedAt(
+    supplier.id,
+    supplier.supplierContactPhone,
+  );
 
   return {
     id: supplier.id,
@@ -174,10 +220,17 @@ async function mapSupplierProfile(
     tradeLicenseNumber: supplier.tradeLicenseNumber,
     contactPerson: supplier.supplierContactPerson,
     designation: supplier.supplierDesignation,
+    supplierContactPhone: supplier.supplierContactPhone,
+    supplierContactPhoneVerifiedAt:
+      supplierContactPhoneVerifiedAt?.toISOString() ?? null,
     tradeLicenseImageUrl: await publicImageUrl(supplier.tradeLicenseImageUrl),
     vatTrnNumber: supplier.vatTrnNumber,
     vatTrnImageUrl: await publicImageUrl(supplier.vatTrnImageUrl),
+    supplierIdentityDocumentType: supplier.supplierIdentityDocumentType,
     emiratesIdPassportUrl: await publicImageUrl(supplier.emiratesIdPassportUrl),
+    emiratesIdBackUrl: await publicImageUrl(supplier.emiratesIdBackUrl),
+    passportAddressUrl: await publicImageUrl(supplier.passportAddressUrl),
+    passportVisaFrontUrl: await publicImageUrl(supplier.passportVisaFrontUrl),
     bankIban: supplier.bankIban,
     bankAccountProofUrl: await publicImageUrl(supplier.bankAccountProofUrl),
     marketplaceAgreementAcceptedAt:
@@ -191,6 +244,7 @@ async function mapSupplierProfile(
     postalCode: supplier.postalCode,
     country: supplier.country,
     supplierApprovalStatus: supplier.supplierApprovalStatus,
+    supplierApprovalRejectionReason: supplier.supplierApprovalRejectionReason,
     createdAt: supplier.createdAt.toISOString(),
     updatedAt: supplier.updatedAt.toISOString(),
   };
@@ -209,16 +263,29 @@ export async function updateSupplierProfile(
   const lastName = nullableText(input.lastName, 100);
   const email = nullableText(input.email, 254)?.toLowerCase() ?? null;
   const phone = nullableText(input.phone, 40);
-  const postalCode = nullableText(input.postalCode, 40);
+  const addressLine1 = nullableText(input.addressLine1, 255);
+  const addressLine2 = nullableText(input.addressLine2, 255);
+  const city = nullableText(input.city, 120);
+  const state = nullableText(input.state, 120);
+  const postalCode = nullableText(input.postalCode, 6);
+  const country = nullableText(input.country, 120);
   const tradeLicenseNumber = nullableText(input.tradeLicenseNumber, 100);
   const contactPerson = nullableText(input.contactPerson, 160);
   const designation = nullableText(input.designation, 120);
-  const tradeLicenseImageUrl = nullableHttpUrl(input.tradeLicenseImageUrl);
+  const supplierContactPhone = nullableText(input.supplierContactPhone, 40);
+  const tradeLicenseImageUrl = normalizeStoredDocumentUrl(input.tradeLicenseImageUrl);
   const vatTrnNumber = nullableText(input.vatTrnNumber, 100);
-  const vatTrnImageUrl = nullableHttpUrl(input.vatTrnImageUrl);
-  const emiratesIdPassportUrl = nullableHttpUrl(input.emiratesIdPassportUrl);
-  const bankIban = nullableText(input.bankIban, 80);
-  const bankAccountProofUrl = nullableHttpUrl(input.bankAccountProofUrl);
+  const vatTrnImageUrl = normalizeStoredDocumentUrl(input.vatTrnImageUrl);
+  const supplierIdentityDocumentType = nullableText(
+    input.supplierIdentityDocumentType,
+    40,
+  );
+  const emiratesIdPassportUrl = normalizeStoredDocumentUrl(input.emiratesIdPassportUrl);
+  const emiratesIdBackUrl = normalizeStoredDocumentUrl(input.emiratesIdBackUrl);
+  const passportAddressUrl = normalizeStoredDocumentUrl(input.passportAddressUrl);
+  const passportVisaFrontUrl = normalizeStoredDocumentUrl(input.passportVisaFrontUrl);
+  const bankIban = nullableText(input.bankIban, BANK_IBAN_MAX_LENGTH);
+  const bankAccountProofUrl = normalizeStoredDocumentUrl(input.bankAccountProofUrl);
   const marketplaceAgreementAccepted =
     input.marketplaceAgreementAccepted === true ||
     input.marketplaceAgreementAccepted === "true" ||
@@ -230,15 +297,102 @@ export async function updateSupplierProfile(
   if (phone && !MOBILE_PATTERN.test(phone)) {
     throw new Error("Enter a valid mobile number");
   }
+  if (supplierContactPhone && !MOBILE_PATTERN.test(supplierContactPhone)) {
+    throw new Error("Enter a valid supplier contact number");
+  }
+  if (
+    tradeLicenseNumber &&
+    (tradeLicenseNumber.length < TRADE_LICENSE_MIN_LENGTH ||
+      tradeLicenseNumber.length > TRADE_LICENSE_MAX_LENGTH)
+  ) {
+    throw new Error(
+      `Trade license number must be ${TRADE_LICENSE_MIN_LENGTH}-${TRADE_LICENSE_MAX_LENGTH} characters`,
+    );
+  }
+  if (
+    vatTrnNumber &&
+    (vatTrnNumber.length < VAT_TRN_MIN_LENGTH ||
+      vatTrnNumber.length > VAT_TRN_MAX_LENGTH)
+  ) {
+    throw new Error(
+      `VAT TRN must be ${VAT_TRN_MIN_LENGTH}-${VAT_TRN_MAX_LENGTH} characters`,
+    );
+  }
   if (postalCode && !POSTAL_CODE_PATTERN.test(postalCode)) {
-    throw new Error("Postal code contains invalid characters");
+    throw new Error("Postal code must be exactly 6 digits");
+  }
+  if (addressLine1 && !ADDRESS_LINE_PATTERN.test(addressLine1)) {
+    throw new Error("Address line 1 contains invalid characters");
+  }
+  if (addressLine2 && !ADDRESS_LINE_PATTERN.test(addressLine2)) {
+    throw new Error("Address line 2 contains invalid characters");
+  }
+  if (city && !PLACE_NAME_PATTERN.test(city)) {
+    throw new Error("City contains invalid characters");
+  }
+  if (state && !PLACE_NAME_PATTERN.test(state)) {
+    throw new Error("State contains invalid characters");
+  }
+  if (country && !PLACE_NAME_PATTERN.test(country)) {
+    throw new Error("Country contains invalid characters");
+  }
+  if (bankIban && bankIban.length > BANK_IBAN_MAX_LENGTH) {
+    throw new Error(`Bank Account IBAN must be ${BANK_IBAN_MAX_LENGTH} characters or fewer`);
+  }
+  if (
+    supplierIdentityDocumentType &&
+    !IDENTITY_DOCUMENT_TYPES.has(supplierIdentityDocumentType)
+  ) {
+    throw new Error("Choose Emirates ID or Passport as identity document");
   }
 
   const current = await db.user.findUnique({
     where: { id: supplierId },
-    select: { email: true, phone: true, marketplaceAgreementAcceptedAt: true },
+    select: {
+      email: true,
+      phone: true,
+      supplierContactPhone: true,
+      marketplaceAgreementAcceptedAt: true,
+      supplierApprovalStatus: true,
+      companyName: true,
+      supplierContactPerson: true,
+      tradeLicenseImageUrl: true,
+      vatTrnImageUrl: true,
+      emiratesIdPassportUrl: true,
+      emiratesIdBackUrl: true,
+      passportAddressUrl: true,
+      passportVisaFrontUrl: true,
+      bankAccountProofUrl: true,
+    },
   });
   if (!current) throw new Error("Supplier account was not found");
+
+  if (phone && phone !== current.phone) {
+    const existingPhoneOwner = await db.user.findFirst({
+      where: { phone, NOT: { id: supplierId } },
+      select: { id: true },
+    });
+    if (existingPhoneOwner) {
+      throw new Error("This authorized phone number is already used by another account");
+    }
+  }
+  if (supplierContactPhone !== current.supplierContactPhone) {
+    throw new Error("Verify the supplier contact number with OTP before saving");
+  }
+
+  const documentsSubmitted =
+    tradeLicenseNumber &&
+    tradeLicenseImageUrl &&
+    vatTrnNumber &&
+    vatTrnImageUrl &&
+    supplierIdentityDocumentType &&
+    emiratesIdPassportUrl &&
+    bankIban &&
+    bankAccountProofUrl &&
+    marketplaceAgreementAccepted;
+  const shouldSubmitForReview =
+    Boolean(documentsSubmitted) &&
+    current.supplierApprovalStatus !== SupplierApprovalStatus.Approved;
 
   await db.user.update({
     where: { id: supplierId },
@@ -250,7 +404,11 @@ export async function updateSupplierProfile(
       tradeLicenseImageUrl,
       vatTrnNumber,
       vatTrnImageUrl,
+      supplierIdentityDocumentType,
       emiratesIdPassportUrl,
+      emiratesIdBackUrl,
+      passportAddressUrl,
+      passportVisaFrontUrl,
       bankIban,
       bankAccountProofUrl,
       marketplaceAgreementAcceptedAt: marketplaceAgreementAccepted
@@ -258,18 +416,101 @@ export async function updateSupplierProfile(
         : null,
       firstName,
       lastName,
-      addressLine1: nullableText(input.addressLine1, 255),
-      addressLine2: nullableText(input.addressLine2, 255),
-      city: nullableText(input.city, 120),
-      state: nullableText(input.state, 120),
+      addressLine1,
+      addressLine2,
+      city,
+      state,
       postalCode,
-      country: nullableText(input.country, 120),
+      country,
       ...(email === current.email ? { email } : {}),
-      ...(phone === current.phone ? { phone } : {}),
+      phone,
+      ...(shouldSubmitForReview
+        ? {
+            supplierApprovalStatus: SupplierApprovalStatus.Pending,
+            supplierApprovalRejectionReason: null,
+            supplierReviewedAt: null,
+            supplierReviewedByAdminId: null,
+          }
+        : {}),
     },
   });
 
+  await deleteReplacedSupplierDocuments(supplierId, current, {
+    tradeLicenseImageUrl,
+    vatTrnImageUrl,
+    emiratesIdPassportUrl,
+    emiratesIdBackUrl,
+    passportAddressUrl,
+    passportVisaFrontUrl,
+    bankAccountProofUrl,
+  });
+
+  if (shouldSubmitForReview) {
+    await notifyAdminsSupplierDocumentsSubmitted({
+      supplierId,
+      supplierName:
+        companyName ?? current.companyName ?? current.supplierContactPerson ?? "Supplier",
+      supplierEmail: email ?? current.email,
+    });
+  }
+
   return getSupplierProfile(supplierId);
+}
+
+type SupplierDocumentUrlField =
+  | "tradeLicenseImageUrl"
+  | "vatTrnImageUrl"
+  | "emiratesIdPassportUrl"
+  | "emiratesIdBackUrl"
+  | "passportAddressUrl"
+  | "passportVisaFrontUrl"
+  | "bankAccountProofUrl";
+
+async function deleteReplacedSupplierDocuments(
+  supplierId: string,
+  current: Record<SupplierDocumentUrlField, string | null>,
+  next: Record<SupplierDocumentUrlField, string | null>,
+) {
+  await Promise.all(
+    (Object.keys(next) as SupplierDocumentUrlField[]).map(async (field) => {
+      const previousUrl = current[field];
+      const nextUrl = next[field];
+      if (!previousUrl) return;
+
+      const previousKey = getS3ObjectKeyFromUrl(previousUrl);
+      const nextKey = nextUrl ? getS3ObjectKeyFromUrl(nextUrl) : null;
+      if (previousKey && previousKey === nextKey) return;
+
+      if (previousKey?.startsWith(`supplier-profiles/${supplierId}/documents/`)) {
+        await deleteObjectFromS3(previousKey).catch(() => undefined);
+      }
+    }),
+  );
+}
+
+async function notifyAdminsSupplierDocumentsSubmitted(input: {
+  supplierId: string;
+  supplierName: string;
+  supplierEmail: string | null;
+}) {
+  const admins = await db.admin.findMany({
+    where: { isActive: true },
+    select: { email: true },
+  });
+  const recipients = admins.map((admin) => admin.email).filter(Boolean);
+  if (recipients.length === 0) return;
+
+  await Promise.all(
+    recipients.map((to) =>
+      sendSmtpMail({
+        to,
+        subject: "New supplier documents submitted for review",
+        text: `A supplier has uploaded verification documents and is waiting for admin review.\n\nSupplier: ${input.supplierName}\nSupplier email: ${input.supplierEmail ?? "Not added"}\nSupplier ID: ${input.supplierId}\n\nPlease check the Supplier Management area in AutoParts Pro Admin.`,
+      }).catch((error) => {
+        console.error("Unable to send supplier document submission email", error);
+      }),
+    ),
+  );
 }
 
 export async function requestSupplierEmailVerification(
@@ -431,6 +672,61 @@ export async function verifySupplierMobileWithFirebase(
   return getSupplierProfile(supplierId);
 }
 
+export async function verifySupplierContactPhoneWithFirebase(
+  supplierId: string,
+  firebaseIdToken: string,
+) {
+  const decodedToken = await verifyFirebaseIdToken(firebaseIdToken);
+  const phone = phoneText(decodedToken.phone_number);
+  if (!phone) {
+    throw new Error("Firebase token does not include a verified mobile number");
+  }
+
+  const existingAccountPhone = await db.user.findFirst({
+    where: { phone, NOT: { id: supplierId } },
+    select: { id: true },
+  });
+  if (existingAccountPhone) {
+    throw new Error("This supplier contact number is already used by another account");
+  }
+
+  const existingSupplierContactPhone = await db.user.findFirst({
+    where: { supplierContactPhone: phone, NOT: { id: supplierId } },
+    select: { id: true },
+  });
+  if (existingSupplierContactPhone) {
+    throw new Error("This supplier contact number is already used by another supplier");
+  }
+
+  await db.user.update({
+    where: { id: supplierId },
+    data: { supplierContactPhone: phone },
+  });
+
+  await db.$executeRaw`
+    INSERT INTO "garage_verification_requests" (
+      "id",
+      "garageId",
+      "target",
+      "targetValue",
+      "otpHash",
+      "expiresAt",
+      "consumedAt"
+    )
+    VALUES (
+      ${randomUUID()},
+      ${supplierId},
+      'mobile'::"GarageVerificationTarget",
+      ${phone},
+      ${hashSecret(phone)},
+      CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+      CURRENT_TIMESTAMP
+    )
+  `;
+
+  return getSupplierProfile(supplierId);
+}
+
 export async function uploadSupplierAvatar(
   supplierId: string,
   input: AvatarUploadInput,
@@ -466,4 +762,38 @@ export async function uploadSupplierAvatar(
   }
 
   return getSupplierProfile(supplierId);
+}
+
+export async function uploadSupplierDocument(
+  supplierId: string,
+  input: DocumentUploadInput,
+) {
+  const extension = DOCUMENT_EXTENSIONS[input.contentType];
+  const maximumSize =
+    input.contentType === "application/pdf"
+      ? MAX_PDF_DOCUMENT_SIZE
+      : MAX_DOCUMENT_SIZE;
+  if (!extension || input.body.byteLength > maximumSize) {
+    throw new Error(
+      "Document must be JPG, PNG, WebP up to 5 MB, or PDF up to 10 MB",
+    );
+  }
+
+  const supplier = await db.user.findUnique({
+    where: { id: supplierId },
+    select: { id: true },
+  });
+  if (!supplier) throw new Error("Supplier account was not found");
+
+  const cleanKind =
+    input.kind.trim().replace(/[^a-z0-9_-]/gi, "-").toLowerCase() ||
+    "document";
+  const key = `supplier-profiles/${supplierId}/documents/${cleanKind}-${Date.now()}-${randomUUID()}.${extension}`;
+  const uploaded = await uploadObjectToS3({
+    key,
+    body: input.body,
+    contentType: input.contentType,
+  });
+
+  return { documentUrl: uploaded.objectUrl };
 }

@@ -7,6 +7,7 @@ export async function reviewSupplierAccount(
   supplierId: string,
   status: SupplierStatus,
   adminId: string,
+  rejectionReason?: string,
 ) {
-  return updateAdminSupplierApproval(supplierId, status, adminId)
+  return updateAdminSupplierApproval(supplierId, status, adminId, rejectionReason)
 }

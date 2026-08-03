@@ -5,7 +5,7 @@ import { readJsonBody, requireAdminFromRequest } from "@/lib/parts-mapping/auth"
 import type { SupplierStatus } from "@/types/admin-dashboard/suppliers/suppliers-types"
 
 type RouteContext = { params: Promise<{ id: string }> }
-type ReviewSupplierBody = { status?: unknown }
+type ReviewSupplierBody = { status?: unknown; rejectionReason?: unknown }
 
 const supplierStatuses = new Set<SupplierStatus>([
   "Approved",
@@ -29,6 +29,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const status =
     typeof parsed.body.status === "string" ? parsed.body.status.trim() : ""
+  const rejectionReason =
+    typeof parsed.body.rejectionReason === "string"
+      ? parsed.body.rejectionReason.trim()
+      : ""
   if (!supplierStatuses.has(status as SupplierStatus)) {
     return NextResponse.json(
       { ok: false, message: "Supplier status is invalid" },
@@ -41,6 +45,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       (await context.params).id,
       status as SupplierStatus,
       auth.admin.id,
+      rejectionReason,
     )
     return NextResponse.json({ ok: true, supplier })
   } catch (error) {

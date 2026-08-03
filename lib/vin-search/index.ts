@@ -12,6 +12,7 @@ import type {
   VinSearchUpstreamJsonResult,
 } from "@/types/vin-search/vin-search-api"
 export const VIN_API_DEFAULT_BASE_URL = "https://api.17vin.com/vin"
+const VIN_API_TIMEOUT_MS = 15_000
 
 export const getVinSearchApiBaseUrl = (): string =>
   process.env.VIN_API_BASE_URL ?? VIN_API_DEFAULT_BASE_URL
@@ -230,6 +231,7 @@ export const fetchVinSearchResult = async (
     method: "GET",
     headers: { Accept: "application/json" },
     cache: "no-store",
+    signal: AbortSignal.timeout(VIN_API_TIMEOUT_MS),
   })
 
   const parsedPayload = await parseJsonResponse(response)

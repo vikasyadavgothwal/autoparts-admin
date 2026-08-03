@@ -27,7 +27,17 @@ const isSecureContextForPush = () =>
 
 let registrationPromise: Promise<void> | null = null
 
-export function registerFirebasePushNotifications() {
+export function registerFirebasePushNotifications(options?: {
+  requestPermission?: boolean
+}) {
+  if (
+    typeof window !== "undefined" &&
+    "Notification" in window &&
+    Notification.permission === "default" &&
+    !options?.requestPermission
+  ) {
+    return Promise.resolve()
+  }
   if (registrationPromise) return registrationPromise
 
   registrationPromise = (async () => {
@@ -43,7 +53,7 @@ export function registerFirebasePushNotifications() {
     }
 
     const permission =
-      Notification.permission === "default"
+      Notification.permission === "default" && options?.requestPermission
         ? await Notification.requestPermission()
         : Notification.permission
     if (permission !== "granted") return

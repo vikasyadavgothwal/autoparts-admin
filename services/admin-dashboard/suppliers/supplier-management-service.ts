@@ -1,6 +1,7 @@
 import { Check, CircleX, Package, Store } from "lucide-react"
 
 import { db } from "@/lib/database/prisma"
+import { sendSmtpMail } from "@/lib/email/smtp"
 import {
   SupplierApprovalStatus,
   UserRole,
@@ -61,17 +62,18 @@ const reviewerName = (supplier: SupplierAccount) =>
   supplier.supplierReviewedBy?.email ||
   "Not reviewed"
 
-const documentUrl = (value: string | null) => {
-  if (!value) return null
+const documentUrl = async (value: string | null) => {
+  if (!value) return { url: null, exists: false }
   try {
     const url = new URL(value)
-    return url.protocol === "http:" || url.protocol === "https:" ? value : null
+    const isHttp = url.protocol === "http:" || url.protocol === "https:"
+    return { url: isHttp ? value : null, exists: isHttp }
   } catch {
-    return null
+    return { url: null, exists: false }
   }
 }
 
-const mapSupplier = (supplier: SupplierAccount): SupplierRecord => ({
+const mapSupplier = async (supplier: SupplierAccount): Promise<SupplierRecord> => ({
   internalId: supplier.id,
   id: supplier.supplierPublicId ?? supplier.publicId,
   accountId: supplier.publicId,
@@ -82,12 +84,16 @@ const mapSupplier = (supplier: SupplierAccount): SupplierRecord => ({
   tradeLicenseNumber: supplier.tradeLicenseNumber ?? "Not added",
   contactPerson: supplier.supplierContactPerson ?? "Not added",
   designation: supplier.supplierDesignation ?? "Not added",
-  tradeLicenseImageUrl: documentUrl(supplier.tradeLicenseImageUrl),
+  tradeLicenseImageUrl: await documentUrl(supplier.tradeLicenseImageUrl),
   vatTrnNumber: supplier.vatTrnNumber ?? "Not added",
-  vatTrnImageUrl: documentUrl(supplier.vatTrnImageUrl),
-  emiratesIdPassportUrl: documentUrl(supplier.emiratesIdPassportUrl),
+  vatTrnImageUrl: await documentUrl(supplier.vatTrnImageUrl),
+  supplierIdentityDocumentType: supplier.supplierIdentityDocumentType,
+  emiratesIdPassportUrl: await documentUrl(supplier.emiratesIdPassportUrl),
+  emiratesIdBackUrl: await documentUrl(supplier.emiratesIdBackUrl),
+  passportAddressUrl: await documentUrl(supplier.passportAddressUrl),
+  passportVisaFrontUrl: await documentUrl(supplier.passportVisaFrontUrl),
   bankIban: supplier.bankIban ?? "Not added",
-  bankAccountProofUrl: documentUrl(supplier.bankAccountProofUrl),
+  bankAccountProofUrl: await documentUrl(supplier.bankAccountProofUrl),
   marketplaceAgreementAcceptedAt:
     supplier.marketplaceAgreementAcceptedAt?.toISOString() ?? null,
   address:
@@ -106,7 +112,40 @@ const mapSupplier = (supplier: SupplierAccount): SupplierRecord => ({
   reviewedAt: formatDate(supplier.supplierReviewedAt),
   reviewedBy: reviewerName(supplier),
   status: supplier.supplierApprovalStatus,
+  rejectionReason: supplier.supplierApprovalRejectionReason,
 })
+
+const supplierDisplayName = (supplier: SupplierAccount) =>
+  supplier.supplierContactPerson || supplier.firstName || supplier.companyName || "Supplier"
+
+async function notifySupplierReviewResult(
+  supplier: SupplierAccount,
+  status: SupplierApprovalStatus,
+  rejectionReason: string | null,
+) {
+  if (!supplier.email) return
+
+  try {
+    if (status === SupplierApprovalStatus.Approved) {
+      await sendSmtpMail({
+        to: supplier.email,
+        subject: "Your AutoParts Pro supplier profile is verified",
+        text: `Hello ${supplierDisplayName(supplier)},\n\nYour supplier profile has been verified by the AutoParts Pro admin team. You can now manage your inventory, RFQs, orders, offers, reviews, and performance dashboard.\n\nAutoParts Pro`,
+      })
+      return
+    }
+
+    if (status === SupplierApprovalStatus.Rejected) {
+      await sendSmtpMail({
+        to: supplier.email,
+        subject: "AutoParts Pro supplier document review update",
+        text: `Hello ${supplierDisplayName(supplier)},\n\nYour supplier profile documents need to be updated before approval.\n\nReason: ${rejectionReason || "Please review and resubmit your supplier documents."}\n\nLog in to Supplier Settings, update the required documents, and resubmit for admin review.\n\nAutoParts Pro`,
+      })
+    }
+  } catch (error) {
+    console.error("Unable to send supplier review email", error)
+  }
+}
 
 export async function listAdminSuppliers(): Promise<SupplierRecord[]> {
   const suppliers = await db.user.findMany({
@@ -115,15 +154,21 @@ export async function listAdminSuppliers(): Promise<SupplierRecord[]> {
     orderBy: [{ createdAt: "desc" }],
   })
 
-  return suppliers.map(mapSupplier)
+  return Promise.all(suppliers.map(mapSupplier))
 }
 
 export async function updateAdminSupplierApproval(
   id: string,
   status: SupplierStatus,
   adminId: string,
+  rejectionReasonInput?: string,
 ): Promise<SupplierRecord> {
   const approvalStatus = status as SupplierApprovalStatus
+  const rejectionReason = rejectionReasonInput?.trim() ?? ""
+  if (approvalStatus === SupplierApprovalStatus.Rejected && !rejectionReason) {
+    throw new Error("Enter a rejection reason for the supplier")
+  }
+
   const result = await db.user.updateMany({
     where: {
       id,
@@ -131,6 +176,10 @@ export async function updateAdminSupplierApproval(
     },
     data: {
       supplierApprovalStatus: approvalStatus,
+      supplierApprovalRejectionReason:
+        approvalStatus === SupplierApprovalStatus.Rejected
+          ? rejectionReason
+          : null,
       supplierReviewedAt: new Date(),
       supplierReviewedByAdminId: adminId,
     },
@@ -147,6 +196,12 @@ export async function updateAdminSupplierApproval(
   if (!supplier) {
     throw new Error("Supplier was not found")
   }
+
+  await notifySupplierReviewResult(
+    supplier,
+    approvalStatus,
+    approvalStatus === SupplierApprovalStatus.Rejected ? rejectionReason : null,
+  )
 
   return mapSupplier(supplier)
 }

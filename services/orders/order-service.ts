@@ -784,6 +784,10 @@ export async function createDirectOrders(
     let serviceTotalAmount = 0;
     let serviceBookingCount = 0;
     if (serviceBookings.length && firstLinkedOrder) {
+      const buyer = await transaction.user.findUnique({
+        where: { id: buyerId },
+        select: { email: true },
+      });
       const advanceSetting = await getGarageBookingAdvanceSetting();
       const services = await transaction.garageService.findMany({
         where: {
@@ -814,7 +818,7 @@ export async function createDirectOrders(
               serviceId: service.id,
               serviceName: service.name,
               customerName: deliveryAddress.recipientName,
-              customerEmail: null,
+              customerEmail: buyer?.email ?? null,
               customerPhone: deliveryAddress.phone,
               vehicleYear: line.vehicleYear,
               vehicleMake: line.vehicleMake,

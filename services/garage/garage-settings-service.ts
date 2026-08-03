@@ -33,8 +33,9 @@ type VerificationRow = {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const MOBILE_PATTERN = /^[+\d][\d\s()-]{6,24}$/
-const PINCODE_PATTERN = /^\d*$/
+const MOBILE_PATTERN = /^\+\d{8,18}$/
+const PINCODE_PATTERN = /^\d{0,12}$/
+const PLACE_PATTERN = /^[A-Za-z][A-Za-z\s'.-]*$/
 const DAYS = [
   "Monday",
   "Tuesday",
@@ -114,6 +115,9 @@ const workingHoursByDay = (value: unknown): Record<string, GarageDayHours> => {
     const close = text(hours.close)
     if (enabled && (!TIME_PATTERN.test(open) || !TIME_PATTERN.test(close))) {
       throw new Error(`${day} working hours must use HH:MM format`)
+    }
+    if (enabled && open >= close) {
+      throw new Error(`${day} close time must be after open time`)
     }
     result[day] = {
       enabled,
@@ -311,7 +315,19 @@ export async function updateGarageProfile(
   }
   const pincode = nullableText(input.pincode, 40)
   if (pincode && !PINCODE_PATTERN.test(pincode)) {
-    throw new Error("Pincode must contain numbers only")
+    throw new Error("Pincode must contain up to 12 numbers only")
+  }
+  const country = nullableText(input.country, 80)
+  const state = nullableText(input.state, 80)
+  const city = nullableText(input.city, 80)
+  for (const [label, value] of [
+    ["Country", country],
+    ["State", state],
+    ["City", city],
+  ] as const) {
+    if (value && !PLACE_PATTERN.test(value)) {
+      throw new Error(`${label} can use letters, spaces, apostrophes, periods, and hyphens only`)
+    }
   }
 
   const emailChanged = (existing.contactEmail ?? "") !== (contactEmail ?? "")
@@ -358,16 +374,16 @@ export async function updateGarageProfile(
       "workingHoursByDay" = ${JSON.stringify(hoursByDay)}::jsonb,
       "garageImageUrl" = ${nullableText(input.garageImageUrl, 2048)},
       "garageImageKey" = ${nullableText(input.garageImageKey, 2048)},
-      "address" = ${paragraph(input.address, 1000)},
-      "country" = ${nullableText(input.country, 120)},
-      "state" = ${nullableText(input.state, 120)},
-      "city" = ${nullableText(input.city, 120)},
+      "address" = ${paragraph(input.address, 500)},
+      "country" = ${country},
+      "state" = ${state},
+      "city" = ${city},
       "pincode" = ${pincode},
-      "jobCompletedNumber" = ${integer(input.jobCompletedNumber ?? 0, "Job completed number", 0)},
+      "jobCompletedNumber" = ${integer(input.jobCompletedNumber ?? 0, "Job completed number", 0, 999999)},
       "yearsExperience" = ${integer(input.yearsExperience ?? 0, "Years of experience", 0, 150)},
-      "responseTime" = ${nullableText(input.responseTime, 120)},
+      "responseTime" = ${nullableText(input.responseTime, 80)},
       "certifications" = ${certifications},
-      "about" = ${paragraph(input.about, 2000)},
+      "about" = ${paragraph(input.about, 1000)},
       "galleryImageUrls" = ${galleryImageUrls},
       "galleryImageKeys" = ${galleryImageKeys},
       "updatedAt" = CURRENT_TIMESTAMP

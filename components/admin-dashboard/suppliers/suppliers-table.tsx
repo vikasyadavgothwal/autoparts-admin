@@ -20,6 +20,7 @@ import type { StatusTone } from "@/types/admin-dashboard/shared/status-badge"
 import type { SectionTableColumn } from "@/types/admin-dashboard/shared/section-table"
 import type { SupplierTableProps } from "@/types/admin-dashboard/suppliers/suppliers-table"
 import type {
+  SupplierDocumentView,
   SupplierRecord,
   SupplierStatus,
 } from "@/types/admin-dashboard/suppliers/suppliers-types"
@@ -35,74 +36,259 @@ type ReviewTarget = {
   status: Exclude<SupplierStatus, "Pending">
 }
 
-const detailRows = (supplier: SupplierRecord) => [
-  ["Supplier ID", supplier.id],
-  ["Account ID", supplier.accountId],
-  ["Business name", supplier.name],
-  ["Contact person", supplier.contactName],
-  ["Email", supplier.email],
-  ["Mobile", supplier.phone],
-  ["Trade license number", supplier.tradeLicenseNumber],
-  ["Contact person", supplier.contactPerson],
-  ["Designation", supplier.designation],
-  ["Trade license image", supplier.tradeLicenseImageUrl ?? "Not added"],
-  ["VAT TRN number", supplier.vatTrnNumber],
-  ["VAT registration document", supplier.vatTrnImageUrl ?? "Not added"],
-  ["Emirates ID / Passport", supplier.emiratesIdPassportUrl ?? "Not added"],
-  ["Bank Account IBAN", supplier.bankIban],
-  ["Bank account proof", supplier.bankAccountProofUrl ?? "Not added"],
-  [
-    "Terms and Conditions",
-    supplier.marketplaceAgreementAcceptedAt
-      ? new Date(supplier.marketplaceAgreementAcceptedAt).toLocaleDateString(
-          "en-AE",
-        )
-      : "Not accepted",
-  ],
-  [
-    "Trade Licence Verification",
-    supplier.tradeLicenseNumber !== "Not added" && supplier.tradeLicenseImageUrl
+type DetailRow = readonly [label: string, value: string | number | null]
+
+type DetailSection = {
+  title: string
+  rows: DetailRow[]
+}
+
+const identityDocumentLabel = (supplier: SupplierRecord) =>
+  supplier.supplierIdentityDocumentType === "passport"
+    ? "Passport"
+    : supplier.supplierIdentityDocumentType === "emirates_id"
+      ? "Emirates ID"
+      : "Not added"
+
+const identityVerificationStatus = (supplier: SupplierRecord) =>
+  supplier.supplierIdentityDocumentType === "passport"
+    ? supplier.emiratesIdPassportUrl.exists &&
+      supplier.passportAddressUrl.exists &&
+      supplier.passportVisaFrontUrl.exists
       ? "Submitted"
-      : "Pending",
-  ],
-  [
-    "VAT Registration Verification",
-    supplier.vatTrnNumber !== "Not added" && supplier.vatTrnImageUrl
+      : "Pending"
+    : supplier.emiratesIdPassportUrl.exists && supplier.emiratesIdBackUrl.exists
       ? "Submitted"
-      : "Pending",
-  ],
-  [
-    "Emirates ID / Passport Verification",
-    supplier.emiratesIdPassportUrl ? "Submitted" : "Pending",
-  ],
-  [
-    "Bank Account (IBAN) Verification",
-    supplier.bankIban !== "Not added" && supplier.bankAccountProofUrl
-      ? "Submitted"
-      : "Pending",
-  ],
-  [
-    "Contact Verification",
-    supplier.emailVerified ? "Email verified" : "Pending",
-  ],
-  ["Compliance Review", supplier.status],
-  [
-    "Acceptance of Marketplace Agreement",
-    supplier.marketplaceAgreementAcceptedAt ? "Accepted" : "Pending",
-  ],
-  ["Address", supplier.address],
-  ["City", supplier.city],
-  ["State", supplier.state],
-  ["Postal code", supplier.postalCode],
-  ["Country", supplier.country],
-  ["Products uploaded", String(supplier.products)],
-  ["Joined", supplier.joined],
-  ["Last login", supplier.lastLogin],
-  ["Email verified", supplier.emailVerified ? "Yes" : "No"],
-  ["Account status", supplier.accountActive ? "Active" : "Suspended"],
-  ["Reviewed by", supplier.reviewedBy],
-  ["Reviewed on", supplier.reviewedAt],
-] as const
+      : "Pending"
+
+const detailSections = (supplier: SupplierRecord): DetailSection[] => [
+  {
+    title: "Account",
+    rows: [
+      ["Supplier ID", supplier.id],
+      ["Account ID", supplier.accountId],
+      ["Business name", supplier.name],
+      ["Account holder", supplier.contactName],
+      ["Email", supplier.email],
+      ["Mobile", supplier.phone],
+      ["Products uploaded", String(supplier.products)],
+      ["Joined", supplier.joined],
+      ["Last login", supplier.lastLogin],
+      ["Email verified", supplier.emailVerified ? "Yes" : "No"],
+      ["Account status", supplier.accountActive ? "Active" : "Suspended"],
+    ],
+  },
+  {
+    title: "Authorized Contact",
+    rows: [
+      ["Authorized person name", supplier.contactPerson],
+      ["Designation", supplier.designation],
+    ],
+  },
+  {
+    title: "Verification Documents",
+    rows: [
+      ["Trade license number", supplier.tradeLicenseNumber],
+      [
+        "Trade license image",
+        supplier.tradeLicenseImageUrl.exists ? "Submitted" : "Missing file",
+      ],
+      ["VAT TRN number", supplier.vatTrnNumber],
+      [
+        "VAT registration document",
+        supplier.vatTrnImageUrl.exists ? "Submitted" : "Missing file",
+      ],
+      ["Bank Account IBAN", supplier.bankIban],
+      [
+        "Bank account proof",
+        supplier.bankAccountProofUrl.exists ? "Submitted" : "Missing file",
+      ],
+    ],
+  },
+  {
+    title: "Compliance Checklist",
+    rows: [
+      [
+        "Trade Licence Verification",
+        supplier.tradeLicenseNumber !== "Not added" &&
+        supplier.tradeLicenseImageUrl.exists
+          ? "Submitted"
+          : "Pending",
+      ],
+      [
+        "VAT Registration Verification",
+        supplier.vatTrnNumber !== "Not added" && supplier.vatTrnImageUrl.exists
+          ? "Submitted"
+          : "Pending",
+      ],
+      ["Emirates ID / Passport Verification", identityVerificationStatus(supplier)],
+      [
+        "Bank Account (IBAN) Verification",
+        supplier.bankIban !== "Not added" && supplier.bankAccountProofUrl.exists
+          ? "Submitted"
+          : "Pending",
+      ],
+      ["Contact Verification", supplier.emailVerified ? "Email verified" : "Pending"],
+      [
+        "Acceptance of Marketplace Agreement",
+        supplier.marketplaceAgreementAcceptedAt ? "Accepted" : "Pending",
+      ],
+    ],
+  },
+  {
+    title: "Address",
+    rows: [
+      ["Address", supplier.address],
+      ["City", supplier.city],
+      ["State", supplier.state],
+      ["Postal code", supplier.postalCode],
+      ["Country", supplier.country],
+    ],
+  },
+  {
+    title: "Admin Review",
+    rows: [
+      ["Compliance Review", supplier.status],
+      ["Reviewed by", supplier.reviewedBy],
+      ["Reviewed on", supplier.reviewedAt],
+      ["Rejection reason", supplier.rejectionReason ?? "Not added"],
+    ],
+  },
+]
+
+const renderDetailValue = (value: string | number | null) => {
+  const displayValue = value ?? "Not added"
+
+  return displayValue
+}
+
+const DetailValue = ({
+  value,
+}: {
+  value: string | number | null
+}) => (
+  <dd className="mt-1 min-w-0 break-words text-sm font-medium text-dashboard-text">
+    {renderDetailValue(value)}
+  </dd>
+)
+
+const DetailField = ({ label, value }: { label: string; value: string | number | null }) => (
+  <div className="min-w-0 rounded-sm border border-dashboard-panel-border px-4 py-3">
+    <dt className="text-xs text-dashboard-muted">{label}</dt>
+    <DetailValue value={value} />
+  </div>
+)
+
+const DocumentDetailField = ({
+  label,
+  value,
+  supplierId,
+  field,
+}: {
+  label: string
+  value: SupplierDocumentView
+  supplierId: string
+  field:
+    | "tradeLicenseImageUrl"
+    | "vatTrnImageUrl"
+    | "emiratesIdPassportUrl"
+    | "emiratesIdBackUrl"
+    | "passportAddressUrl"
+    | "passportVisaFrontUrl"
+    | "bankAccountProofUrl"
+}) => (
+  <div className="min-w-0 rounded-sm border border-dashboard-panel-border px-4 py-3">
+    <dt className="text-xs text-dashboard-muted">{label}</dt>
+    <dd className="mt-1 min-w-0 break-words text-sm font-medium text-dashboard-text">
+      {value.url ? (
+        <a
+          href={`/api/v1/admin/suppliers/${supplierId}/documents?field=${field}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center rounded-sm border border-dashboard-accent/30 px-3 py-1.5 text-dashboard-accent underline-offset-4 transition hover:bg-dashboard-accent/10 hover:underline"
+        >
+          View document
+        </a>
+      ) : (
+        "Not added"
+      )}
+    </dd>
+  </div>
+)
+
+const renderVerificationDocuments = (supplier: SupplierRecord) => (
+  <div className="space-y-4 p-4">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+      <DetailField label="Trade license number" value={supplier.tradeLicenseNumber} />
+      <DocumentDetailField
+        label="Trade license image"
+        value={supplier.tradeLicenseImageUrl}
+        supplierId={supplier.internalId}
+        field="tradeLicenseImageUrl"
+      />
+    </div>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+      <DetailField label="VAT TRN number" value={supplier.vatTrnNumber} />
+      <DocumentDetailField
+        label="VAT registration document"
+        value={supplier.vatTrnImageUrl}
+        supplierId={supplier.internalId}
+        field="vatTrnImageUrl"
+      />
+    </div>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+      <DetailField label="Identity document type" value={identityDocumentLabel(supplier)} />
+      <div className="grid gap-3 rounded-sm border border-dashboard-panel-border p-3">
+        {supplier.supplierIdentityDocumentType === "passport" ? (
+          <>
+            <DocumentDetailField
+              label="Passport photo page"
+              value={supplier.emiratesIdPassportUrl}
+              supplierId={supplier.internalId}
+              field="emiratesIdPassportUrl"
+            />
+            <DocumentDetailField
+              label="Passport address page"
+              value={supplier.passportAddressUrl}
+              supplierId={supplier.internalId}
+              field="passportAddressUrl"
+            />
+            <DocumentDetailField
+              label="Passport visa front"
+              value={supplier.passportVisaFrontUrl}
+              supplierId={supplier.internalId}
+              field="passportVisaFrontUrl"
+            />
+          </>
+        ) : (
+          <>
+            <DocumentDetailField
+              label="Emirates ID front"
+              value={supplier.emiratesIdPassportUrl}
+              supplierId={supplier.internalId}
+              field="emiratesIdPassportUrl"
+            />
+            <DocumentDetailField
+              label="Emirates ID back"
+              value={supplier.emiratesIdBackUrl}
+              supplierId={supplier.internalId}
+              field="emiratesIdBackUrl"
+            />
+          </>
+        )}
+      </div>
+    </div>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+      <DetailField label="Bank Account IBAN" value={supplier.bankIban} />
+      <DocumentDetailField
+        label="Bank account proof"
+        value={supplier.bankAccountProofUrl}
+        supplierId={supplier.internalId}
+        field="bankAccountProofUrl"
+      />
+    </div>
+  </div>
+)
 
 export function SuppliersTable({ rows, columns }: SupplierTableProps) {
   const router = useRouter()
@@ -110,12 +296,26 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
     null,
   )
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null)
+  const [rejectionReason, setRejectionReason] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
+
+  function openReviewDialog(
+    supplier: SupplierRecord,
+    status: Exclude<SupplierStatus, "Pending">,
+  ) {
+    setError(null)
+    setRejectionReason(status === "Rejected" ? supplier.rejectionReason ?? "" : "")
+    setReviewTarget({ supplier, status })
+  }
 
   function handleReview() {
     if (!reviewTarget) return
     setError(null)
+    if (reviewTarget.status === "Rejected" && !rejectionReason.trim()) {
+      setError("Enter a rejection reason for the supplier")
+      return
+    }
 
     startTransition(async () => {
       const response = await fetch(
@@ -123,7 +323,11 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: reviewTarget.status }),
+          body: JSON.stringify({
+            status: reviewTarget.status,
+            rejectionReason:
+              reviewTarget.status === "Rejected" ? rejectionReason : undefined,
+          }),
         },
       )
       const payload = (await response.json().catch(() => null)) as
@@ -143,6 +347,7 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
           : `${reviewTarget.supplier.id} rejected. Its products are hidden from the marketplace.`,
       )
       setReviewTarget(null)
+      setRejectionReason("")
       router.refresh()
     })
   }
@@ -214,9 +419,7 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
                     aria-label={`Approve ${supplier.name}`}
                     disabled={isPending}
                     className="border-dashboard-success/30 hover:bg-dashboard-success/10 hover:text-dashboard-success"
-                    onClick={() =>
-                      setReviewTarget({ supplier, status: "Approved" })
-                    }
+                    onClick={() => openReviewDialog(supplier, "Approved")}
                   >
                     <Check className="h-4 w-4" />
                   </Button>
@@ -229,9 +432,7 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
                     aria-label={`Reject ${supplier.name}`}
                     disabled={isPending}
                     className="border-dashboard-danger/30 hover:bg-dashboard-danger/10 hover:text-dashboard-danger"
-                    onClick={() =>
-                      setReviewTarget({ supplier, status: "Rejected" })
-                    }
+                    onClick={() => openReviewDialog(supplier, "Rejected")}
                   >
                     <CircleX className="h-4 w-4" />
                   </Button>
@@ -248,7 +449,7 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
           if (!open) setViewingSupplier(null)
         }}
       >
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>{viewingSupplier?.name}</DialogTitle>
             <DialogDescription>
@@ -257,39 +458,73 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
           </DialogHeader>
 
           {viewingSupplier ? (
-            <div className="max-h-[65vh] overflow-y-auto border-y border-dashboard-panel-border">
-              <dl className="grid sm:grid-cols-2">
-                {detailRows(viewingSupplier).map(([label, value]) => (
-                  <div
-                    key={label}
-                    className="border-b border-dashboard-panel-border px-3 py-3 last:border-b-0 sm:odd:border-r"
-                  >
-                    <dt className="text-xs text-dashboard-muted">{label}</dt>
-                    <dd className="mt-1 break-words text-sm font-medium text-dashboard-text">
-                      {(label === "Trade license image" ||
-                        label === "VAT registration document" ||
-                        label === "Emirates ID / Passport" ||
-                        label === "Bank account proof") &&
-                      value !== "Not added" ? (
-                        <a
-                          href={value}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-dashboard-accent underline underline-offset-4"
+            <div className="max-h-[68vh] space-y-4 overflow-y-auto border-y border-dashboard-panel-border py-4">
+              <div className="flex flex-wrap items-center gap-3 px-1">
+                <StatusBadge
+                  label={viewingSupplier.status}
+                  tone={SUPPLIER_STATUS_TONES[viewingSupplier.status]}
+                />
+                <span className="text-sm text-dashboard-muted">
+                  {viewingSupplier.id} / {viewingSupplier.accountId}
+                </span>
+              </div>
+              {detailSections(viewingSupplier).map((section) => (
+                <section
+                  key={section.title}
+                  className="rounded-sm border border-dashboard-panel-border"
+                >
+                  <header className="border-b border-dashboard-panel-border bg-dashboard-panel px-4 py-3">
+                    <h3 className="text-sm font-semibold text-dashboard-text">
+                      {section.title}
+                    </h3>
+                  </header>
+                  {section.title === "Verification Documents" ? (
+                    renderVerificationDocuments(viewingSupplier)
+                  ) : (
+                    <dl className="grid sm:grid-cols-2">
+                      {section.rows.map(([label, value]) => (
+                        <div
+                          key={`${section.title}-${label}`}
+                          className="min-w-0 border-b border-dashboard-panel-border px-4 py-3 last:border-b-0 sm:odd:border-r sm:[&:nth-last-child(-n+2)]:border-b-0"
                         >
-                          View document
-                        </a>
-                      ) : (
-                        value
-                      )}
-                    </dd>
-                  </div>
+                          <dt className="text-xs text-dashboard-muted">
+                            {label}
+                          </dt>
+                          <DetailValue value={value} />
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                </section>
                 ))}
-              </dl>
             </div>
           ) : null}
 
           <DialogFooter>
+            {viewingSupplier && viewingSupplier.status !== "Approved" ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isPending}
+                className="border-dashboard-success/30 hover:bg-dashboard-success/10 hover:text-dashboard-success"
+                onClick={() => openReviewDialog(viewingSupplier, "Approved")}
+              >
+                <Check className="h-4 w-4" />
+                Approve
+              </Button>
+            ) : null}
+            {viewingSupplier && viewingSupplier.status !== "Rejected" ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isPending}
+                className="border-dashboard-danger/30 hover:bg-dashboard-danger/10 hover:text-dashboard-danger"
+                onClick={() => openReviewDialog(viewingSupplier, "Rejected")}
+              >
+                <CircleX className="h-4 w-4" />
+                Reject
+              </Button>
+            ) : null}
             <Button type="button" onClick={() => setViewingSupplier(null)}>
               Close
             </Button>
@@ -322,6 +557,26 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
 
           {error ? (
             <p className="text-sm font-medium text-dashboard-danger">{error}</p>
+          ) : null}
+
+          {reviewTarget?.status === "Rejected" ? (
+            <div className="space-y-2">
+              <label
+                htmlFor="supplier-rejection-reason"
+                className="text-sm font-medium text-dashboard-text"
+              >
+                Rejection reason
+              </label>
+              <textarea
+                id="supplier-rejection-reason"
+                value={rejectionReason}
+                onChange={(event) => setRejectionReason(event.target.value)}
+                rows={4}
+                maxLength={1000}
+                className="w-full rounded-sm border border-dashboard-panel-border bg-dashboard-panel px-3 py-2 text-sm text-dashboard-text outline-none ring-dashboard-accent/20 focus:ring-2"
+                placeholder="Tell the supplier which document must be corrected."
+              />
+            </div>
           ) : null}
 
           <DialogFooter>

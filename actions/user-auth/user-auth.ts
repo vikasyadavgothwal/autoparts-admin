@@ -28,12 +28,15 @@ import type {
 } from "@/types/user-auth/user-auth"
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PHONE_PATTERN = /^\+[1-9]\d{6,14}$/
 const VALID_ROLES = new Set<UserRole>(Object.values(UserRole))
 const VERIFIED_ACCOUNT_ROLE_REQUIRED_MESSAGE =
   "Choose an account type to finish creating your account"
 
 const readString = (value: unknown): string =>
-  typeof value === "string" ? value.trim() : ""
+  typeof value === "string"
+    ? value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim()
+    : ""
 
 const readOptionalString = (value: unknown): string | null => {
   const normalized = readString(value)
@@ -127,6 +130,8 @@ export async function createUserViaApi(
   const state = readOptionalString(body.state)
   const postalCode = readOptionalString(body.postalCode)
   const country = readOptionalString(body.country)
+  const supplierContactPerson = readOptionalString(body.supplierContactPerson)
+  const supplierDesignation = readOptionalString(body.supplierDesignation)
 
   if (!EMAIL_PATTERN.test(email) || email.length > 254) {
     return invalid("A valid email is required")
@@ -145,7 +150,19 @@ export async function createUserViaApi(
   }
 
   if (
-    exceedsLength([phone, companyName, city, state, postalCode, country], 150)
+    exceedsLength(
+      [
+        phone,
+        companyName,
+        city,
+        state,
+        postalCode,
+        country,
+        supplierContactPerson,
+        supplierDesignation,
+      ],
+      150,
+    )
   ) {
     return invalid("One or more profile fields exceed the allowed length")
   }
@@ -175,6 +192,23 @@ export async function createUserViaApi(
     return invalid("Active role must be included in roles")
   }
 
+  const isSupplierSignup =
+    rawActiveRole === UserRole.Supplier || roles?.includes(UserRole.Supplier)
+  if (isSupplierSignup) {
+    if (!companyName) {
+      return invalid("Business name is required for supplier accounts")
+    }
+    if (!supplierContactPerson) {
+      return invalid("Authorized person name is required for supplier accounts")
+    }
+    if (!supplierDesignation) {
+      return invalid("Designation is required for supplier accounts")
+    }
+    if (!phone || !PHONE_PATTERN.test(phone)) {
+      return invalid("Enter a valid supplier phone number with country code")
+    }
+  }
+
   const input: CreateUserInput = {
     email,
     password,
@@ -189,6 +223,8 @@ export async function createUserViaApi(
     state,
     postalCode,
     country,
+    supplierContactPerson,
+    supplierDesignation,
     roles: roles ?? [UserRole.User],
     activeRole: rawActiveRole
       ? (rawActiveRole as UserRole)
@@ -251,6 +287,13 @@ export async function loginUserViaApi(
     : null
   const requestedRoleUid = readString(body.requestedRoleUid)
   const requestedDisplayName = readOptionalString(body.requestedDisplayName)
+  const requestedSupplierContactPerson = readOptionalString(
+    body.requestedSupplierContactPerson,
+  )
+  const requestedSupplierDesignation = readOptionalString(
+    body.requestedSupplierDesignation,
+  )
+  const requestedSupplierPhone = readOptionalString(body.requestedSupplierPhone)
 
   if (hasFirebaseToken) {
     if (!firebaseIdToken || firebaseIdToken.length > 20_000) {
@@ -264,6 +307,23 @@ export async function loginUserViaApi(
     }
     if (requestedDisplayName && !requestedRole) {
       return invalid("Requested display name requires an account role")
+    }
+    if (requestedRole === UserRole.Supplier) {
+      if (requestedSupplierPhone && !PHONE_PATTERN.test(requestedSupplierPhone)) {
+        return invalid("Enter a valid supplier phone number with country code")
+      }
+      if (
+        exceedsLength(
+          [
+            requestedSupplierContactPerson,
+            requestedSupplierDesignation,
+            requestedSupplierPhone,
+          ],
+          150,
+        )
+      ) {
+        return invalid("One or more supplier fields exceed the allowed length")
+      }
     }
 
     try {
@@ -286,6 +346,13 @@ export async function loginUserViaApi(
         context,
         requestedRole,
         requestedDisplayName,
+        requestedRole === UserRole.Supplier
+          ? {
+              contactPerson: requestedSupplierContactPerson,
+              designation: requestedSupplierDesignation,
+              phone: requestedSupplierPhone,
+            }
+          : null,
       )
 
       return {

@@ -4,10 +4,14 @@ import {
   readJsonBody,
   requireSupplierFromRequest,
 } from "@/lib/parts-mapping/auth";
-import { verifySupplierMobileWithFirebase } from "@/services/supplier/supplier-settings-service";
+import {
+  verifySupplierContactPhoneWithFirebase,
+  verifySupplierMobileWithFirebase,
+} from "@/services/supplier/supplier-settings-service";
 
 type VerifyOtpBody = {
   firebaseIdToken?: unknown;
+  target?: unknown;
 };
 
 export const dynamic = "force-dynamic";
@@ -35,13 +39,23 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+    const target =
+      parsed.body.target === "supplierContactPhone"
+        ? "supplierContactPhone"
+        : "authorizedPhone";
 
     return NextResponse.json({
       ok: true,
-      profile: await verifySupplierMobileWithFirebase(
-        auth.user.id,
-        firebaseIdToken,
-      ),
+      profile:
+        target === "supplierContactPhone"
+          ? await verifySupplierContactPhoneWithFirebase(
+              auth.user.id,
+              firebaseIdToken,
+            )
+          : await verifySupplierMobileWithFirebase(
+              auth.user.id,
+              firebaseIdToken,
+            ),
     });
   } catch (error) {
     return NextResponse.json(

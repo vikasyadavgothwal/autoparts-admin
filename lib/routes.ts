@@ -31,6 +31,7 @@ export const appRoutes = {
   queries: "/queries",
   orders: "/orders",
   partsMapping: "/parts-mapping",
+  vinDecoder: "/vin-decoder",
   suppliers: "/pages/suppliers-page",
   supplier: "/suppliers",
   reports: "/reports",

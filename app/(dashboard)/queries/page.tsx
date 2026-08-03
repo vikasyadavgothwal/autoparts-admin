@@ -13,7 +13,6 @@ export const dynamic = "force-dynamic"
 export default async function AdminQueriesPage() {
   const result = await listAdminBusinessQueries({ page: 1, pageSize: 500 })
   const queries = JSON.parse(JSON.stringify(result.queries)) as BusinessQueryRecord[]
-
   return (
     <QueriesPage
       initialQueries={queries}

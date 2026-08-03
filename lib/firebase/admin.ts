@@ -6,7 +6,7 @@ import {
   type App,
   type ServiceAccount,
 } from "firebase-admin/app"
-import { getAuth, type DecodedIdToken } from "firebase-admin/auth"
+import { getAuth, type Auth, type DecodedIdToken } from "firebase-admin/auth"
 import { getMessaging, type Messaging } from "firebase-admin/messaging"
 
 type ServiceAccountJson = {
@@ -99,4 +99,8 @@ export async function verifyFirebaseIdToken(
 
 export function getFirebaseMessaging(): Messaging {
   return getMessaging(getFirebaseAdminApp())
+}
+
+export function getFirebaseAuth(): Auth {
+  return getAuth(getFirebaseAdminApp())
 }

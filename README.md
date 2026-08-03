@@ -46,6 +46,21 @@ NEXT_PUBLIC_FIREBASE_VAPID_KEY=
 Deploy migration `20260721110000_notification_devices` before enabling push
 registration in production.
 
+Live dashboard notification badge updates use SSE and can fan out across
+multiple backend processes with Redis pub/sub. Configure either variable on
+`auto_parts_admin` when running more than one Node process/container:
+
+```bash
+NOTIFICATION_REDIS_URL=redis://localhost:6379
+# or
+REDIS_URL=redis://localhost:6379
+```
+
+If Redis is not configured or is temporarily unavailable, notification database
+rows and Firebase browser push still work. Only cross-process live SSE delivery
+falls back to single-process in-memory behavior. See
+`docs/NOTIFICATION_FLOW.md` in the project root for the full flow.
+
 For local frontend access, API CORS is handled globally for `/api/*` routes.
 Browser origins must be listed explicitly as a comma-separated allowlist. Native
 React Native and server-to-server requests normally omit `Origin` and continue
