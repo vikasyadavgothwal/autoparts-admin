@@ -15,6 +15,10 @@ env:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      # CI only: production DATABASE_URL stays on EC2. Next build imports DB-backed
+      # route modules during page-data collection and requires this variable to exist.
+      DATABASE_URL: postgresql://autoparts:autoparts@localhost:5432/autoparts?schema=public
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -101,5 +105,5 @@ jobs:
           if [ -n "${GHCR_READ_TOKEN:-}" ]; then
             echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
           fi
-          /opt/autoparts/deploy-service.sh "$COMPOSE_SERVICE"
+          flock /tmp/autoparts-deploy.lock /opt/autoparts/deploy-service.sh "$COMPOSE_SERVICE"
           REMOTE_DEPLOY
