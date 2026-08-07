@@ -9,11 +9,10 @@ import { mapUserProfile } from "@/services/user-auth/user-profile"
 import type { UserSessionRequestContext } from "@/types/user-auth/user-auth"
 
 const BUSINESS_ROLES = new Set<UserRole>(["Fleet", "Garage", "Supplier"] as UserRole[])
-const OTP_TTL_MS = 10 * 60 * 1000
 const token = () => randomBytes(32).toString("hex")
 const otp = () => String(randomInt(100000, 1000000))
-const expires = () => new Date(Date.now() + OTP_TTL_MS)
 const accountTypeForRole = (role: UserRole) => role as unknown as BusinessAccountType
+let tableReady = false
 
 type BusinessLoginAccount = { id: string; type: BusinessAccountType; plan: { code: BusinessPlanCode; name: string } }
 
@@ -36,6 +35,28 @@ async function findBusinessAccount(userId: string, role: UserRole | null): Promi
 }
 
 async function ensureRow(accountId: string, userId: string) {
+  if (!tableReady) {
+    await db.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "business_login_security" (
+        "id" TEXT PRIMARY KEY,
+        "businessAccountId" TEXT NOT NULL REFERENCES "business_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+        "userId" TEXT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+        "pinHash" TEXT,
+        "otpHash" TEXT,
+        "otpExpiresAt" TIMESTAMP(3),
+        "otpConsumedAt" TIMESTAMP(3),
+        "loginChallengeHash" TEXT,
+        "loginChallengeExpiresAt" TIMESTAMP(3),
+        "loginChallengeConsumedAt" TIMESTAMP(3),
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "business_login_security_businessAccountId_userId_key" ON "business_login_security"("businessAccountId", "userId")`)
+    await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "business_login_security_userId_idx" ON "business_login_security"("userId")`)
+    await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "business_login_security_loginChallengeHash_idx" ON "business_login_security"("loginChallengeHash")`)
+    tableReady = true
+  }
   const [row] = await db.$queryRaw<Array<{ id: string; pinHash: string | null }>>`
     INSERT INTO "business_login_security" ("id", "businessAccountId", "userId")
     VALUES (${token()}, ${accountId}, ${userId})
@@ -58,8 +79,8 @@ export async function createBusinessLoginChallenge(input: { user: User; role: Us
   const code = otp()
   await db.$executeRaw`
     UPDATE "business_login_security"
-    SET "otpHash" = ${hashPassword(code)}, "otpExpiresAt" = ${expires()}, "otpConsumedAt" = NULL,
-        "loginChallengeHash" = ${hashPassword(challengeId)}, "loginChallengeExpiresAt" = ${expires()}, "loginChallengeConsumedAt" = NULL,
+    SET "otpHash" = ${hashPassword(code)}, "otpExpiresAt" = NOW() + INTERVAL '10 minutes', "otpConsumedAt" = NULL,
+        "loginChallengeHash" = ${hashPassword(challengeId)}, "loginChallengeExpiresAt" = NOW() + INTERVAL '10 minutes', "loginChallengeConsumedAt" = NULL,
         "updatedAt" = CURRENT_TIMESTAMP
     WHERE "id" = ${row.id}
   `
@@ -107,7 +128,7 @@ export async function requestBusinessPinOtp(userId: string) {
   const user = await db.user.findUniqueOrThrow({ where: { id: userId } })
   const row = await ensureRow(status.businessAccountId, userId)
   const code = otp()
-  await db.$executeRaw`UPDATE "business_login_security" SET "otpHash" = ${hashPassword(code)}, "otpExpiresAt" = ${expires()}, "otpConsumedAt" = NULL, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = ${row.id}`
+  await db.$executeRaw`UPDATE "business_login_security" SET "otpHash" = ${hashPassword(code)}, "otpExpiresAt" = NOW() + INTERVAL '10 minutes', "otpConsumedAt" = NULL, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = ${row.id}`
   await sendOtp(user.email, code, "AutoParts Pro PIN verification")
   return { message: "OTP sent to your email" }
 }
