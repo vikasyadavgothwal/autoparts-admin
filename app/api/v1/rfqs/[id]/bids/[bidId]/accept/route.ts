@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { getOptionalUserFromRequest } from "@/lib/parts-mapping/auth"
-import { RfqSource } from "@/lib/generated/prisma/client"
+import { db } from "@/lib/database/prisma"
+import { getOptionalUserFromRequest } from "@/lib/auth/api-guards"
+import { BusinessAccountType, OrderStatus, RfqSource } from "@/lib/generated/prisma/client"
+import { assertBusinessPlanLimit } from "@/services/business/business-platform-service"
 import { acceptRfqBid } from "@/services/fleet/fleet-service"
 
 const readOptionalAddressId = async (request: NextRequest) => {
@@ -35,6 +37,23 @@ export async function POST(
   }
   try {
     const { id, bidId } = await context.params
+    if (source === RfqSource.fleet) {
+      const existingOrder = await db.order.findFirst({
+        where: { rfqId: id, buyerId: auth.user.id },
+        select: { bidId: true },
+      })
+      if (!existingOrder) {
+        const currentCount = await db.order.count({
+          where: { buyerId: auth.user.id, status: { not: OrderStatus.cancelled } },
+        })
+        await assertBusinessPlanLimit({
+          userId: auth.user.id,
+          accountType: BusinessAccountType.Fleet,
+          limit: "orderLimit",
+          currentCount,
+        })
+      }
+    }
     const addressId = await readOptionalAddressId(request)
     const order = await acceptRfqBid(auth.user.id, id, bidId, source, addressId)
     return NextResponse.json({ ok: true, order })

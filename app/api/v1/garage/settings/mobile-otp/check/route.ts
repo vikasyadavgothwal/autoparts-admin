@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { readJsonBody, requireGarageFromRequest } from "@/lib/parts-mapping/auth"
+import { readJsonBody, requireGarageFromRequest } from "@/lib/auth/api-guards"
 import { assertMobileNumberAvailable } from "@/services/user-auth/mobile-availability-service"
 
 type CheckBody = { phone?: unknown }

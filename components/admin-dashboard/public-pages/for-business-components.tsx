@@ -311,6 +311,8 @@ export function PricingPanel({
   isSaving,
   saveStatus,
 }: PricingPanelProps) {
+  const visiblePlans = config.plans.slice(0, 3)
+
   return (
     <Card className="rounded-lg border-[#2A2A2A] bg-[#1A1A1A]">
       <CardHeader>
@@ -337,111 +339,112 @@ export function PricingPanel({
           />
         </div>
 
-        <div className="space-y-3">
-          {config.plans.map((plan, index) => (
-            <Card
-              key={`pricing-plan-${index}`}
-              className="rounded-lg border-[#2A2A2A] bg-[#0A0A0A]"
-            >
-              <CardContent className="space-y-4 p-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <InputField
-                    id={`pricing-${index}-heading`}
-                    label="Plan heading"
-                    value={plan.heading}
-                    onChange={(value) => onPlanChange(index, "heading", value)}
-                    maxLength={FOR_BUSINESS_INPUT_LIMITS.planHeading}
-                    placeholder="Starter"
-                  />
-                  <InputField
-                    id={`pricing-${index}-subheading`}
-                    label="Plan subheading"
-                    value={plan.subheading}
-                    onChange={(value) => onPlanChange(index, "subheading", value)}
-                    maxLength={FOR_BUSINESS_INPUT_LIMITS.planSubheading}
-                    placeholder="What this plan includes"
-                  />
-                  <InputField
-                    id={`pricing-${index}-price`}
-                    label="Price"
-                    value={plan.price}
-                    onChange={(value) => onPlanChange(index, "price", value)}
-                    maxLength={FOR_BUSINESS_INPUT_LIMITS.planPrice}
-                    placeholder="$299"
-                  />
-                  <InputField
-                    id={`pricing-${index}-duration`}
-                    label="Duration"
-                    value={plan.duration}
-                    onChange={(value) => onPlanChange(index, "duration", value)}
-                    maxLength={FOR_BUSINESS_INPUT_LIMITS.planDuration}
-                    placeholder="per month"
-                  />
-                  <InputField
-                    id={`pricing-${index}-button-text`}
-                    label="Button text"
-                    value={plan.buttonText}
-                    onChange={(value) => onPlanChange(index, "buttonText", value)}
-                    maxLength={FOR_BUSINESS_INPUT_LIMITS.planButtonText}
-                    placeholder="Choose plan"
-                  />
-                  <ToggleField
-                    id={`pricing-${index}-most-popular`}
-                    label="Most popular"
-                    checked={plan.mostPopular}
-                    onChange={(checked) => onPlanMostPopularChange(index, checked)}
-                  />
-                </div>
-
-                <div>
-                  <p className="mb-2 text-sm font-medium text-[#9CA3AF]">
-                    Key points
-                  </p>
-                  <div className="space-y-2">
-                    {plan.keyPoints.map((point, pointIndex) => (
-                      <div
-                        key={`pricing-${index}-point-${pointIndex}`}
-                        className="flex items-end gap-2"
-                      >
-                        <div className="flex-1">
-                          <InputField
-                            id={`pricing-${index}-point-${pointIndex}`}
-                            label={`Point ${pointIndex + 1}`}
-                            value={point}
-                            onChange={(value) =>
-                              onPlanPointChange(index, pointIndex, value)
-                            }
-                            maxLength={FOR_BUSINESS_INPUT_LIMITS.planKeyPoint}
-                            placeholder="Feature statement"
-                          />
-                        </div>
-                        <Button
-                          type="button"
-                          className="mb-1 h-auto px-3 py-2 text-xs"
-                          variant="outline"
-                          onClick={() => onRemovePoint(index, pointIndex)}
-                        >
-                          Remove
-                        </Button>
+        <div className="space-y-5">
+          <section className="space-y-3">
+            <div>
+              <h3 className="text-base font-semibold text-white">Pricing plans</h3>
+              <p className="text-sm text-[#9CA3AF]">Edit the three public pricing cards shown on the For Business page.</p>
+            </div>
+            <div className="grid gap-4 xl:grid-cols-3">
+                {visiblePlans.map((plan, index) => (
+                  <Card
+                    key={`pricing-plan-${index}`}
+                    className="rounded-lg border-[#2A2A2A] bg-[#0A0A0A]"
+                  >
+                    <CardContent className="space-y-4 p-4">
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
+                        <InputField
+                          id={`pricing-${index}-heading`}
+                          label="Plan heading"
+                          value={plan.heading}
+                          onChange={(value) => onPlanChange(index, "heading", value)}
+                          maxLength={FOR_BUSINESS_INPUT_LIMITS.planHeading}
+                          placeholder="Fleet Free"
+                        />
+                        <InputField
+                          id={`pricing-${index}-subheading`}
+                          label="Plan subheading"
+                          value={plan.subheading}
+                          onChange={(value) => onPlanChange(index, "subheading", value)}
+                          maxLength={FOR_BUSINESS_INPUT_LIMITS.planSubheading}
+                          placeholder="What this plan includes"
+                        />
+                        <InputField
+                          id={`pricing-${index}-price`}
+                          label="Price"
+                          value={plan.price}
+                          onChange={(value) => onPlanChange(index, "price", value)}
+                          maxLength={FOR_BUSINESS_INPUT_LIMITS.planPrice}
+                          placeholder="AED 299 or Custom"
+                        />
+                        <InputField
+                          id={`pricing-${index}-duration`}
+                          label="Duration"
+                          value={plan.duration}
+                          onChange={(value) => onPlanChange(index, "duration", value)}
+                          maxLength={FOR_BUSINESS_INPUT_LIMITS.planDuration}
+                          placeholder="per month"
+                        />
+                        <InputField
+                          id={`pricing-${index}-button-text`}
+                          label="Button text"
+                          value={plan.buttonText}
+                          onChange={(value) => onPlanChange(index, "buttonText", value)}
+                          maxLength={FOR_BUSINESS_INPUT_LIMITS.planButtonText}
+                          placeholder="Choose plan"
+                        />
+                        <ToggleField
+                          id={`pricing-${index}-most-popular`}
+                          label="Most popular"
+                          checked={plan.mostPopular}
+                          onChange={(checked) => onPlanMostPopularChange(index, checked)}
+                        />
                       </div>
-                    ))}
-                  </div>
 
-                  <div className="mt-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-auto px-3 py-1.5"
-                      variant="outline"
-                      onClick={() => onAddPoint(index)}
-                    >
-                      Add point
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                      <div>
+                        <p className="mb-2 text-sm font-medium text-[#9CA3AF]">Key points</p>
+                        <div className="space-y-2">
+                          {plan.keyPoints.map((point, pointIndex) => (
+                            <div key={`pricing-${index}-point-${pointIndex}`} className="flex items-end gap-2">
+                              <div className="flex-1">
+                                <InputField
+                                  id={`pricing-${index}-point-${pointIndex}`}
+                                  label={`Point ${pointIndex + 1}`}
+                                  value={point}
+                                  onChange={(value) => onPlanPointChange(index, pointIndex, value)}
+                                  maxLength={FOR_BUSINESS_INPUT_LIMITS.planKeyPoint}
+                                  placeholder="Feature statement"
+                                />
+                              </div>
+                              <Button
+                                type="button"
+                                className="mb-1 h-auto px-3 py-2 text-xs"
+                                variant="outline"
+                                onClick={() => onRemovePoint(index, pointIndex)}
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-auto px-3 py-1.5"
+                            variant="outline"
+                            onClick={() => onAddPoint(index)}
+                          >
+                            Add point
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+            </div>
+          </section>
         </div>
 
         <SectionSaveAction

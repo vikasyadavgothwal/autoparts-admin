@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireSupplierFromRequest } from "@/lib/parts-mapping/auth";
+import { requireSupplierFromRequest } from "@/lib/auth/api-guards";
 import { uploadSupplierAvatar } from "@/services/supplier/supplier-settings-service";
 
 export const dynamic = "force-dynamic";

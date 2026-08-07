@@ -14,12 +14,11 @@ export const ADMIN_AUTH = {
   refreshTokenTtlDays: parsePositiveInt(process.env.ADMIN_REFRESH_TTL_DAYS, 7),
 }
 
-export const isAdminAuthSecretConfigured = () =>
-  Boolean(ADMIN_AUTH.accessTokenSecret && ADMIN_AUTH.refreshTokenSecret)
+export const isAdminAuthSecretConfigured = () => Boolean(ADMIN_AUTH.accessTokenSecret && ADMIN_AUTH.refreshTokenSecret)
+
 
 export const getAdminCookieOptions = () => {
   const isProd = process.env.NODE_ENV === "production"
-
   return {
     secure: isProd,
     httpOnly: true,

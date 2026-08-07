@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { deleteAdminBusinessQuery } from "@/actions/business-queries/business-queries"
-import { requireAdminFromRequest } from "@/lib/parts-mapping/auth"
+import { requireAdminFromRequest } from "@/lib/auth/api-guards"
 
 type RouteContext = { params: Promise<{ id: string }> }
 

@@ -2,6 +2,7 @@ import { Check, CircleX, Package, Store } from "lucide-react"
 
 import { db } from "@/lib/database/prisma"
 import { sendSmtpMail } from "@/lib/email/smtp"
+import { logError } from "@/lib/logger"
 import {
   SupplierApprovalStatus,
   UserRole,
@@ -143,7 +144,7 @@ async function notifySupplierReviewResult(
       })
     }
   } catch (error) {
-    console.error("Unable to send supplier review email", error)
+    logError("Unable to send supplier review email", error)
   }
 }
 

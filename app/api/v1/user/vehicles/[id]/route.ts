@@ -1,6 +1,13 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest } from "next/server"
 
-import { requireCustomerUserFromRequest, readJsonBody } from "@/lib/parts-mapping/auth"
+import {
+  apiError,
+  apiErrorMessage,
+  apiOk,
+  isUniqueConstraintError,
+  readJsonBody,
+  withCustomerApiRoute,
+} from "@/lib/auth/api-guards"
 import {
   deleteUserVehicle,
   updateUserVehicle,
@@ -13,50 +20,34 @@ export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireCustomerUserFromRequest(request)
-  if (!auth.ok) return auth.response
+  return withCustomerApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<UserVehicleInput>(request)
+    if (!parsed.ok) return apiError(parsed.message)
 
-  const parsed = await readJsonBody<UserVehicleInput>(request)
-  if (!parsed.ok) {
-    return NextResponse.json({ ok: false, message: parsed.message }, { status: 400 })
-  }
-
-  try {
-    const { id } = await context.params
-    const vehicle = await updateUserVehicle(auth.user.id, id, parsed.body)
-    return NextResponse.json({ ok: true, vehicle })
-  } catch (error) {
-    const message =
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
+    try {
+      const { id } = await context.params
+      const vehicle = await updateUserVehicle(user.id, id, parsed.body)
+      return apiOk({ vehicle })
+    } catch (error) {
+      const message = isUniqueConstraintError(error)
         ? "A vehicle with this VIN already exists in your account"
-        : error instanceof Error
-          ? error.message
-          : "Unable to save vehicle"
+        : apiErrorMessage(error, "Unable to save vehicle")
 
-    return NextResponse.json({ ok: false, message }, { status: 400 })
-  }
+      return apiError(message)
+    }
+  })
 }
 
 export async function DELETE(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireCustomerUserFromRequest(request)
-  if (!auth.ok) return auth.response
-
-  try {
-    const { id } = await context.params
-    return NextResponse.json({
-      ok: true,
-      ...(await deleteUserVehicle(auth.user.id, id)),
-    })
-  } catch (error) {
-    return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Unable to delete vehicle" },
-      { status: 400 },
-    )
-  }
+  return withCustomerApiRoute(request, async (user) => {
+    try {
+      const { id } = await context.params
+      return apiOk(await deleteUserVehicle(user.id, id))
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to delete vehicle"))
+    }
+  })
 }

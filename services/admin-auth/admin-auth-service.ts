@@ -16,10 +16,8 @@ import {
   type AuthTokenClaims,
   type CreateAdminInput,
 } from "@/types/admin-auth/admin-auth"
-
 const ADMIN_LOCK_MINUTES = 15
 const MAX_FAILED_ATTEMPTS = 5
-
 type AdminLoginRecord = {
   id: string
   email: string
@@ -29,36 +27,29 @@ type AdminLoginRecord = {
   failedLoginCount: number
   lockedUntil: Date | null
 }
-
 type AdminLookupRecord = {
   id: string
   email: string
   name: string | null
   isActive: boolean
 }
-
 const toActionMessage = (message: string) => ({ ok: false as const, message })
-
 const now = () => new Date()
-
 const addMinutesFromNow = (minutes: number): Date => {
   const target = now()
   target.setMinutes(target.getMinutes() + minutes)
   return target
 }
-
 const addSeconds = (seconds: number): Date => {
   const target = now()
   target.setSeconds(target.getSeconds() + seconds)
   return target
 }
-
 const addDays = (days: number): Date => {
   const target = now()
   target.setDate(target.getDate() + days)
   return target
 }
-
 const ensureConfigured = () => {
   if (!ADMIN_AUTH.accessTokenSecret || !ADMIN_AUTH.refreshTokenSecret) {
     throw new Error(
@@ -66,7 +57,6 @@ const ensureConfigured = () => {
     )
   }
 }
-
 const buildAdminPayload = (adminId: string, sessionId: string, sessionJti: string): AuthTokenClaims => {
   const issuedAt = Math.floor(now().getTime() / 1000)
   const expiresAt = Math.floor(
@@ -82,7 +72,6 @@ const buildAdminPayload = (adminId: string, sessionId: string, sessionJti: strin
     exp: expiresAt,
   }
 }
-
 const buildRefreshPayload = (
   adminId: string,
   familyTokenId: string,
@@ -101,7 +90,6 @@ const buildRefreshPayload = (
     exp: expiresAt,
   }
 }
-
 export const findAdminByEmail = async (
   email: string,
 ): Promise<AdminLookupRecord | null> => {
@@ -117,7 +105,6 @@ export const findAdminByEmail = async (
 
   return record
 }
-
 export const authenticateAdmin = async (
   input: AdminCredentialInput,
 ): Promise<{ ok: true; admin: AdminLoginRecord } | { ok: false; message: string }> => {
@@ -185,7 +172,6 @@ export const authenticateAdmin = async (
     admin,
   }
 }
-
 export const createAdminSession = async (
   adminId: string,
   requestContext: AuthRequestContext,
@@ -238,7 +224,6 @@ export const createAdminSession = async (
     },
   }
 }
-
 export const createAdminWithCredentials = async (
   input: CreateAdminInput,
 ): Promise<{ ok: true; admin: AuthenticatedAdmin } | { ok: false; message: string }> => {
@@ -274,7 +259,6 @@ export const createAdminWithCredentials = async (
 
   return { ok: true, admin }
 }
-
 export const createFirstAdmin = async (
   input: CreateAdminInput,
 ): Promise<{ ok: true; admin: AuthenticatedAdmin } | { ok: false; message: string }> => {
@@ -284,6 +268,50 @@ export const createFirstAdmin = async (
   }
 
   return createAdminWithCredentials(input)
+}
+
+export const changeAdminPassword = async (input: {
+  adminId: string
+  currentPassword: string
+  newPassword: string
+}): Promise<{ ok: true } | { ok: false; message: string }> => {
+  if (!input.currentPassword || !input.newPassword) {
+    return toActionMessage("Current password and new password are required")
+  }
+  if (input.newPassword.length < 8) {
+    return toActionMessage("New password must be at least 8 characters")
+  }
+  if (input.currentPassword === input.newPassword) {
+    return toActionMessage("New password must be different from current password")
+  }
+
+  const admin = await db.admin.findUnique({
+    where: { id: input.adminId },
+    select: { id: true, passwordHash: true, isActive: true },
+  })
+  if (!admin || !admin.isActive) {
+    return toActionMessage("Admin account is not active")
+  }
+  if (!verifyPassword(input.currentPassword, admin.passwordHash)) {
+    return toActionMessage("Current password is incorrect")
+  }
+
+  await db.$transaction([
+    db.admin.update({
+      where: { id: admin.id },
+      data: {
+        passwordHash: hashPassword(input.newPassword),
+        failedLoginCount: 0,
+        lockedUntil: null,
+      },
+    }),
+    db.adminSession.updateMany({
+      where: { adminId: admin.id, revokedAt: null },
+      data: { revokedAt: now() },
+    }),
+  ])
+
+  return { ok: true }
 }
 
 export const getAdminByAccessToken = async (
@@ -343,7 +371,6 @@ export const getAdminByAccessToken = async (
     sessionId: session.id,
   }
 }
-
 export const refreshAdminSession = async (
   token: string,
   requestContext: AuthRequestContext,
@@ -435,7 +462,6 @@ export const refreshAdminSession = async (
     data: {
       revokedAt: now(),
       replacedBy: freshSession.id,
-      rotationCount: existingSession.rotationCount + 1,
     },
   })
 

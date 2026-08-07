@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { requireGarageFromRequest, readJsonBody } from "@/lib/parts-mapping/auth"
+import { requireGarageFromRequest, readJsonBody } from "@/lib/auth/api-guards"
 import {
   getGarageProfile,
   updateGarageProfile,

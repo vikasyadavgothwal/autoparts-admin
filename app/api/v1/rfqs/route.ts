@@ -4,9 +4,11 @@ import { NextRequest, NextResponse } from "next/server"
 
 import {
   getOptionalUserFromRequest,
-} from "@/lib/parts-mapping/auth"
-import { RfqSource } from "@/lib/generated/prisma/client"
+} from "@/lib/auth/api-guards"
+import { db } from "@/lib/database/prisma"
+import { BusinessAccountType, RfqSource, RfqStatus } from "@/lib/generated/prisma/client"
 import { deleteObjectFromS3, uploadObjectToS3 } from "@/lib/storage/s3"
+import { assertBusinessPlanLimit } from "@/services/business/business-platform-service"
 import { createRfq, listFleetRfqs, listSupplierRfqs, listUserRfqs } from "@/services/fleet/fleet-service"
 import type { CreateRfqInput, RfqAttachment } from "@/types/rfq/rfq"
 
@@ -53,6 +55,21 @@ export async function POST(request: NextRequest) {
     }
     if (source === RfqSource.user && (auth.user.activeRole !== "User" || !auth.user.roles.includes("User"))) {
       return NextResponse.json({ ok: false, message: "User authentication is required" }, { status: 403 })
+    }
+    if (source === RfqSource.fleet) {
+      const currentCount = await db.rfq.count({
+        where: {
+          requesterId: auth.user.id,
+          source: RfqSource.fleet,
+          status: { not: RfqStatus.cancelled },
+        },
+      })
+      await assertBusinessPlanLimit({
+        userId: auth.user.id,
+        accountType: BusinessAccountType.Fleet,
+        limit: "rfqLimit",
+        currentCount,
+      })
     }
 
     const fileValue = formData.get("attachment")

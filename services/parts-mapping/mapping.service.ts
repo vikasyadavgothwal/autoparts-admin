@@ -1,4 +1,4 @@
-import { get17VinApplicableModels, normalizePartNumber, type Vin17PartCandidate } from "@/lib/17vin"
+import { get17VinApplicableModels, normalizePartNumber, type Vin17PartCandidate } from "@/lib/vin-17-api-client"
 import { db } from "@/lib/database/prisma"
 import {
   PartNumberType,

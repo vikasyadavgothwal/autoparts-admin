@@ -1,0 +1,66 @@
+{
+  "phase": 11,
+  "goal": "Verify weighted ranking keeps relevance primary and applies subscription boost secondarily",
+  "cases": [
+    {
+      "case": "relevance-first",
+      "description": "Offer B should not overtake Offer A when A has stronger query match despite lower searchBoostLevel",
+      "queryText": "OEM 1234 BRAKE PAD",
+      "offers": [
+        {
+          "id": "A",
+          "originalPartName": "OEM 1234 Brake Pad - Exact Vehicle Match",
+          "queryMatchTokens": ["OEM", "1234", "BRAKE", "PAD"],
+          "searchBoostLevel": 0,
+          "priceCents": 1400,
+          "stock": 2,
+          "leadTime": "5 days",
+          "supplierRating": 4.9,
+          "verified": true
+        },
+        {
+          "id": "B",
+          "originalPartName": "Universal Brake Pad",
+          "queryMatchTokens": ["BRAKE"],
+          "searchBoostLevel": 5,
+          "priceCents": 1200,
+          "stock": 8,
+          "leadTime": "1 day",
+          "supplierRating": 4.9,
+          "verified": true
+        }
+      ],
+      "expectedOrder": ["A", "B"]
+    },
+    {
+      "case": "boost-within-weight",
+      "description": "When relevance is tied, subscription boost should still be considered without fully dominating",
+      "queryText": "front bellow",
+      "offers": [
+        {
+          "id": "C",
+          "originalPartName": "Front Bellow",
+          "queryMatchTokens": ["FRONT", "BELLOWS"],
+          "searchBoostLevel": 5,
+          "priceCents": 2600,
+          "stock": 6,
+          "leadTime": "14 days",
+          "supplierRating": 4.4,
+          "verified": true
+        },
+        {
+          "id": "D",
+          "originalPartName": "Front Bellow",
+          "queryMatchTokens": ["FRONT", "BELLOWS"],
+          "searchBoostLevel": 0,
+          "priceCents": 1700,
+          "stock": 10,
+          "leadTime": "2 days",
+          "supplierRating": 5,
+          "verified": false
+        }
+      ],
+      "expectedOrder": ["D", "C"]
+    }
+  ]
+}

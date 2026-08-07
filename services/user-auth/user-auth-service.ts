@@ -2,10 +2,13 @@ import { db } from "@/lib/database/prisma"
 import { getFirebaseAuth } from "@/lib/firebase/admin"
 import { Prisma, UserRole } from "@/lib/generated/prisma/client"
 import { hashPassword, verifyPassword } from "@/lib/auth/password"
+import { ensureBusinessAccountForOwner } from "@/services/business/business-platform-service"
 import { createUserSession } from "@/services/user-auth/user-session-service"
+import { createBusinessLoginChallenge } from "@/services/business-login-security/business-login-security-service"
 import { mapUserProfile } from "@/services/user-auth/user-profile"
+import { logError } from "@/lib/logger"
 import type {
-  CreateUserInput,
+CreateUserInput,
   FirebaseUserIdentity,
   IssuedUserSession,
   LoginUserInput,
@@ -102,7 +105,7 @@ async function updateFirebasePassword(input: {
       password: input.newPassword,
     })
   } catch (error) {
-    console.error("Firebase password update failed", error)
+    logError("Firebase password update failed", error)
     throw new Error("Unable to update Firebase password")
   }
 }
@@ -138,6 +141,12 @@ export async function createUser(input: CreateUserInput): Promise<UserProfile> {
       roles,
       activeRole,
     },
+  })
+
+  await ensureBusinessAccountForOwner({
+    userId: user.id,
+    role: activeRole,
+    name: user.companyName || [user.firstName, user.lastName].filter(Boolean).join(" "),
   })
 
   return mapUserProfile(user)
@@ -217,12 +226,106 @@ export async function changeUserPassword(input: {
   return { ok: true as const, message: "Password changed successfully" }
 }
 
+export async function getCurrentUserAccount(userId: string) {
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      emailVerifiedAt: true,
+      isActive: true,
+    },
+  })
+  if (!user || !user.isActive) throw new Error("User account is inactive")
+  return {
+    id: user.id,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    phone: user.phone,
+    emailVerifiedAt: user.emailVerifiedAt?.toISOString() ?? null,
+  }
+}
+
+export async function updateCurrentUserAccount(input: {
+  userId: string
+  firstName?: unknown
+  lastName?: unknown
+  email?: unknown
+}) {
+  const firstName = normalizeText(typeof input.firstName === "string" ? input.firstName : null)
+  const lastName = normalizeText(typeof input.lastName === "string" ? input.lastName : null)
+  const email = normalizeEmail(typeof input.email === "string" ? input.email : null)
+  if (!firstName) throw new Error("First name is required")
+  if (!lastName) throw new Error("Last name is required")
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("Enter a valid email address")
+  }
+
+  const currentUser = await db.user.findUnique({
+    where: { id: input.userId },
+    select: {
+      id: true,
+      email: true,
+      firebaseUid: true,
+      isActive: true,
+    },
+  })
+  if (!currentUser || !currentUser.isActive) throw new Error("User account is inactive")
+
+  const existingEmail = await db.user.findFirst({
+    where: { email, NOT: { id: input.userId } },
+    select: { id: true },
+  })
+  if (existingEmail) throw new Error("This email is already used by another account")
+
+  if (currentUser.firebaseUid && currentUser.email !== email) {
+    try {
+      await getFirebaseAuth().updateUser(currentUser.firebaseUid, { email, emailVerified: true })
+    } catch (error) {
+      logError("Firebase email update failed", error)
+      throw new Error("Unable to update Firebase email")
+    }
+  }
+
+  const user = await db.user.update({
+    where: { id: input.userId },
+    data: {
+      firstName,
+      lastName,
+      email,
+      emailVerifiedAt: currentUser.email === email ? undefined : new Date(),
+    },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      emailVerifiedAt: true,
+    },
+  })
+
+  return {
+    id: user.id,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    phone: user.phone,
+    emailVerifiedAt: user.emailVerifiedAt?.toISOString() ?? null,
+  }
+}
+
 export async function loginUser(
   input: LoginUserInput,
   context: UserSessionRequestContext,
 ): Promise<{
   user: UserProfile
   issued: IssuedUserSession
+  challenge?: Awaited<ReturnType<typeof createBusinessLoginChallenge>>
 }> {
   const user = await db.user.findUnique({
     where: { email: input.email.trim().toLowerCase() },
@@ -247,9 +350,11 @@ export async function loginUser(
     data: { lastLoginAt: loggedInAt },
   })
 
+  const challenge = await createBusinessLoginChallenge({ user: updatedUser, role: updatedUser.activeRole })
   return {
     user: mapUserProfile(updatedUser),
     issued,
+    challenge,
   }
 }
 
@@ -266,6 +371,7 @@ export async function loginUserWithFirebase(
 ): Promise<{
   user: UserProfile
   issued: IssuedUserSession
+  challenge?: Awaited<ReturnType<typeof createBusinessLoginChallenge>>
 }> {
   const firebaseUid = identity.uid.trim()
   const email = normalizeEmail(identity.email)
@@ -389,6 +495,15 @@ export async function loginUserWithFirebase(
         },
       })
 
+  if (!existingUser) {
+    await ensureBusinessAccountForOwner({
+      userId: user.id,
+      role: user.activeRole,
+      name: user.companyName || [user.firstName, user.lastName].filter(Boolean).join(" "),
+    })
+  }
+
   const issued = await createUserSession(user, context)
-  return { user: mapUserProfile(user), issued }
+  const challenge = await createBusinessLoginChallenge({ user, role: requestedRole ?? user.activeRole })
+  return { user: mapUserProfile(user), issued, challenge }
 }

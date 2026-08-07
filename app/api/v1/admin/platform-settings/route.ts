@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireAdminFromRequest, readJsonBody } from "@/lib/parts-mapping/auth";
+import { requireAdminFromRequest, readJsonBody } from "@/lib/auth/api-guards";
 import {
   readGarageBookingAdvanceSetting,
   updateGarageBookingAdvanceSetting,

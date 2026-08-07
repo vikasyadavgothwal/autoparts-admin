@@ -1,43 +1,90 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest } from "next/server"
 
-import { requireGarageFromRequest, readJsonBody } from "@/lib/parts-mapping/auth"
+import {
+  apiCreated,
+  apiError,
+  apiErrorMessage,
+  apiOk,
+  readJsonBody,
+  withGarageApiRoute,
+} from "@/lib/auth/api-guards"
+import { db } from "@/lib/database/prisma"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import {
+  assertBusinessPlanLimit,
+  getMyBusinessAccess,
+  logBusinessActivity,
+} from "@/services/business/business-platform-service"
 import { createGarageService, listGarageServices } from "@/services/garage/garage-service"
 import type { GarageServiceInput } from "@/types/garage/services"
 
 export const dynamic = "force-dynamic"
 
-export async function GET(request: NextRequest) {
-  const auth = await requireGarageFromRequest(request)
-  if (!auth.ok) return auth.response
+async function getGarageBusinessAccount(userId: string) {
+  return db.businessAccount.findFirst({
+    where: {
+      type: BusinessAccountType.Garage,
+      isActive: true,
+      members: {
+        some: {
+          userId,
+          status: "Active",
+        },
+      },
+    },
+    select: { id: true, ownerUserId: true },
+  })
+}
 
-  return NextResponse.json({
-    ok: true,
-    services: await listGarageServices(auth.user.id),
+export async function GET(request: NextRequest) {
+  return withGarageApiRoute(request, async (user) => {
+    const account = await getGarageBusinessAccount(user.id)
+    return apiOk({ services: await listGarageServices(account?.ownerUserId ?? user.id) })
   })
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireGarageFromRequest(request)
-  if (!auth.ok) return auth.response
+  return withGarageApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<GarageServiceInput>(request)
+    if (!parsed.ok) return apiError(parsed.message)
 
-  const parsed = await readJsonBody<GarageServiceInput>(request)
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    )
-  }
-
-  try {
-    const service = await createGarageService(auth.user.id, parsed.body)
-    return NextResponse.json({ ok: true, service }, { status: 201 })
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Unable to add service",
-      },
-      { status: 400 },
-    )
-  }
+    try {
+      const access = (await getMyBusinessAccess(user.id)).find(
+        (item) => item.businessAccount.type === BusinessAccountType.Garage,
+      )
+      const serviceAction = access?.actions["services.create"]
+      if (!serviceAction?.allowed) {
+        return apiError(
+          serviceAction?.reason || "Your current plan or role cannot add services",
+          403,
+        )
+      }
+      const accessAccount = await getGarageBusinessAccount(user.id)
+      const garageId = accessAccount?.ownerUserId ?? user.id
+      const currentCount = await db.garageService.count({
+        where: { garageId },
+      })
+      const account = await assertBusinessPlanLimit({
+        userId: user.id,
+        accountType: BusinessAccountType.Garage,
+        limit: "serviceLimit",
+        currentCount,
+      })
+      const service = await createGarageService(account.ownerUserId, parsed.body)
+      await logBusinessActivity({
+        businessAccountId: account.id,
+        actorUserId: user.id,
+        action: "garage_service.created",
+        entityType: "garage_service",
+        entityId: service.id,
+        metadata: {
+          garageId: account.ownerUserId,
+          createdByUserId: user.id,
+        },
+      })
+      return apiCreated({ service })
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to add service"))
+    }
+  })
 }

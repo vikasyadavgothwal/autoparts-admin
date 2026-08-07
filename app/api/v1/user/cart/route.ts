@@ -6,43 +6,34 @@ import {
   replaceUserCartAction,
 } from "@/actions/user/cart"
 import {
+  apiError,
+  apiOk,
   readJsonBody,
-  requireCustomerUserFromRequest,
-} from "@/lib/parts-mapping/auth"
+  withCustomerApiRoute,
+} from "@/lib/auth/api-guards"
 import type { UserCartPayload } from "@/types/user/cart"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request)
-  if (!auth.ok) return auth.response
-
-  return NextResponse.json({
-    ok: true,
-    ...(await getUserCartAction(auth.user.id)),
-  })
+  return withCustomerApiRoute(request, async (user) =>
+    apiOk(await getUserCartAction(user.id)),
+  )
 }
 
 export async function PUT(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request)
-  if (!auth.ok) return auth.response
+  return withCustomerApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<UserCartPayload>(request)
+    if (!parsed.ok) return apiError(parsed.message)
 
-  const parsed = await readJsonBody<UserCartPayload>(request)
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    )
-  }
-
-  const result = await replaceUserCartAction(auth.user.id, parsed.body.items)
-  return NextResponse.json(result, { status: result.statusCode })
+    const result = await replaceUserCartAction(user.id, parsed.body.items)
+    return NextResponse.json(result, { status: result.statusCode })
+  })
 }
 
 export async function DELETE(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request)
-  if (!auth.ok) return auth.response
-
-  const result = await clearUserCartAction(auth.user.id)
-  return NextResponse.json(result, { status: result.statusCode })
+  return withCustomerApiRoute(request, async (user) => {
+    const result = await clearUserCartAction(user.id)
+    return NextResponse.json(result, { status: result.statusCode })
+  })
 }

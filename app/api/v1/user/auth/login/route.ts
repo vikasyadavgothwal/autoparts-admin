@@ -20,6 +20,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { loginUserViaApi } from "@/actions/user-auth/user-auth"
 import { setUserAuthCookies } from "@/lib/user-auth/cookies"
 import {
+  consumeUserAuthRateLimit,
+  getClientIp,
   getUserRequestContext,
   isAllowedUserAuthOrigin,
   setUserAuthCorsHeaders,
@@ -59,21 +61,20 @@ export async function POST(
     ))
   }
 
-  // Temporarily disabled while mobile login is being stabilized.
-  // const rateLimit = await consumeUserAuthRateLimit(
-  //   `user-login:${getClientIp(request) ?? "unknown"}`,
-  //   10,
-  //   15 * 60 * 1_000,
-  // )
-  // if (!rateLimit.allowed) {
-  //   return withCors(request, NextResponse.json(
-  //     { ok: false, success: false, message: "Too many login attempts" },
-  //     {
-  //       status: 429,
-  //       headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
-  //     },
-  //   ))
-  // }
+  const rateLimit = await consumeUserAuthRateLimit(
+    `user-login:${getClientIp(request) ?? "unknown"}`,
+    10,
+    15 * 60 * 1_000,
+  )
+  if (!rateLimit.allowed) {
+    return withCors(request, NextResponse.json(
+      { ok: false, success: false, message: "Too many login attempts" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+      },
+    ))
+  }
 
   let body: LoginUserApiBody
 
@@ -97,6 +98,14 @@ export async function POST(
     typeof body.installationId === "string"
       ? body.installationId.trim().slice(0, 200)
       : ""
+  const deviceIdentifier =
+    typeof body.deviceIdentifier === "string"
+      ? body.deviceIdentifier.trim().slice(0, 200)
+      : installationId
+  const deviceMacAddress =
+    typeof body.deviceMacAddress === "string"
+      ? body.deviceMacAddress.trim().slice(0, 120)
+      : null
   const deviceName =
     typeof body.deviceName === "string" && body.deviceName.trim()
       ? body.deviceName
@@ -105,7 +114,7 @@ export async function POST(
         : null
   const result = await loginUserViaApi(
     body,
-    getUserRequestContext(request, deviceName),
+    getUserRequestContext(request, deviceName, deviceIdentifier, deviceMacAddress),
   )
 
   if (!result.ok) {
@@ -113,6 +122,10 @@ export async function POST(
       { ok: false, success: false, message: result.message },
       { status: result.statusCode },
     ))
+  }
+
+  if ((result as any).mfa) {
+    return withCors(request, NextResponse.json({ ok: true, success: true, user: result.user, mfa: (result as any).mfa }, { status: result.statusCode }))
   }
 
   if (

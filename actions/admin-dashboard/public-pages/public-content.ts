@@ -1,5 +1,6 @@
 "use server"
 
+import { logError } from "@/lib/logger"
 import type { Prisma } from "@/lib/generated/prisma/client"
 import { db } from "@/lib/database/prisma"
 import { randomUUID } from "node:crypto"
@@ -424,7 +425,7 @@ export async function savePublicPageSeoContent(
       data: await resolvePublicPageSeoForResponse(contentWithSeo),
     }
   } catch (error) {
-    console.error("[public-content] savePublicPageSeoContent failed", error)
+    logError("[public-content] savePublicPageSeoContent failed", error)
     return {
       ok: false,
       error: toActionError(error),
@@ -616,7 +617,7 @@ export async function saveSectionContent(
       data: normalized,
     }
   } catch (error) {
-    console.error("[public-content] saveSectionContent failed", error)
+    logError("[public-content] saveSectionContent failed", error)
     return {
       ok: false,
       error: toActionError(error),
@@ -659,7 +660,7 @@ const saveContent = async <T>(
       data: normalized,
     }
   } catch (error) {
-    console.error("[public-content] saveContent failed", error)
+    logError("[public-content] saveContent failed", error)
     return {
       ok: false,
       error: toActionError(error),

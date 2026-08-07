@@ -1,6 +1,13 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest } from "next/server"
 
-import { requireFleetFromRequest, readJsonBody } from "@/lib/parts-mapping/auth"
+import {
+  apiError,
+  apiErrorMessage,
+  apiOk,
+  isUniqueConstraintError,
+  readJsonBody,
+  withFleetApiRoute,
+} from "@/lib/auth/api-guards"
 import {
   deleteFleetVehicle,
   updateFleetVehicle,
@@ -10,57 +17,32 @@ import type { FleetVehicleInput } from "@/types/rfq/rfq"
 type RouteContext = { params: Promise<{ id: string }> }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const auth = await requireFleetFromRequest(request)
-  if (!auth.ok) return auth.response
-  const parsed = await readJsonBody<FleetVehicleInput>(request)
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    )
-  }
-  try {
-    const vehicle = await updateFleetVehicle(
-      auth.user.id,
-      (await context.params).id,
-      parsed.body,
-    )
-    return NextResponse.json({ ok: true, vehicle })
-  } catch (error) {
-    const message =
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
+  return withFleetApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<FleetVehicleInput>(request)
+    if (!parsed.ok) return apiError(parsed.message)
+
+    try {
+      const vehicle = await updateFleetVehicle(
+        user.id,
+        (await context.params).id,
+        parsed.body,
+      )
+      return apiOk({ vehicle })
+    } catch (error) {
+      const message = isUniqueConstraintError(error)
         ? "A vehicle with this VIN already exists in your fleet"
-        : error instanceof Error
-          ? error.message
-          : "Unable to update vehicle"
-    return NextResponse.json(
-      {
-        ok: false,
-        message,
-      },
-      { status: 400 },
-    )
-  }
+        : apiErrorMessage(error, "Unable to update vehicle")
+      return apiError(message)
+    }
+  })
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
-  const auth = await requireFleetFromRequest(request)
-  if (!auth.ok) return auth.response
-  try {
-    return NextResponse.json({
-      ok: true,
-      ...(await deleteFleetVehicle(auth.user.id, (await context.params).id)),
-    })
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Unable to delete vehicle",
-      },
-      { status: 400 },
-    )
-  }
+  return withFleetApiRoute(request, async (user) => {
+    try {
+      return apiOk(await deleteFleetVehicle(user.id, (await context.params).id))
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to delete vehicle"))
+    }
+  })
 }

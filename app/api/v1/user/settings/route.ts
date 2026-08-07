@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import {
+  apiError,
+  apiErrorMessage,
+  apiOk,
   readJsonBody,
-  requireCustomerUserFromRequest,
-} from "@/lib/parts-mapping/auth";
+  withCustomerApiRoute,
+} from "@/lib/auth/api-guards";
 import {
   getUserProfile,
   updateUserProfile,
@@ -13,40 +16,22 @@ import type { UserProfileInput } from "@/types/user/settings";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request);
-  if (!auth.ok) return auth.response;
-
-  return NextResponse.json({
-    ok: true,
-    profile: await getUserProfile(auth.user.id),
-  });
+  return withCustomerApiRoute(request, async (user) =>
+    apiOk({ profile: await getUserProfile(user.id) }),
+  );
 }
 
 export async function PATCH(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request);
-  if (!auth.ok) return auth.response;
+  return withCustomerApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<UserProfileInput>(request);
+    if (!parsed.ok) return apiError(parsed.message);
 
-  const parsed = await readJsonBody<UserProfileInput>(request);
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    );
-  }
-
-  try {
-    return NextResponse.json({
-      ok: true,
-      profile: await updateUserProfile(auth.user.id, parsed.body),
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to update settings",
-      },
-      { status: 400 },
-    );
-  }
+    try {
+      return apiOk({
+        profile: await updateUserProfile(user.id, parsed.body),
+      });
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to update settings"));
+    }
+  });
 }

@@ -23,7 +23,7 @@ export default async function DashboardLayout({
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset className="min-h-svh bg-[#0A0A0A]">
-        <DashboardHeader />
+        <DashboardHeader adminName={authResult.admin.name} />
         <div className="flex flex-1 flex-col p-4 lg:p-6">{children}</div>
       </SidebarInset>
       <Toaster position="top-right" richColors />

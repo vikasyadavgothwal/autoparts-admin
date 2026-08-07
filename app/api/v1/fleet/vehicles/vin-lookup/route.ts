@@ -1,27 +1,26 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest } from "next/server"
 
-import { requireFleetFromRequest } from "@/lib/parts-mapping/auth"
+import { apiError, apiOk, withFleetApiRoute } from "@/lib/auth/api-guards"
 import { resolveVehicleVins } from "@/services/fleet/rfq-import-service"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
-  const auth = await requireFleetFromRequest(request)
-  if (!auth.ok) return auth.response
-
-  const vin = request.nextUrl.searchParams.get("vin")?.trim().toUpperCase() ?? ""
-  if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) {
-    return NextResponse.json({ ok: false, message: "Enter a valid 17-character VIN" }, { status: 400 })
-  }
-
-  try {
-    const [vehicle] = await resolveVehicleVins([vin])
-    return NextResponse.json({ ok: true, found: true, vehicle })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "VIN lookup failed"
-    if (message.startsWith("We could not find these VINs:")) {
-      return NextResponse.json({ ok: true, found: false, message: "We could not find this VIN in our database or VIN provider. Check and correct the VIN." })
+  return withFleetApiRoute(request, async () => {
+    const vin = request.nextUrl.searchParams.get("vin")?.trim().toUpperCase() ?? ""
+    if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) {
+      return apiError("Enter a valid 17-character VIN")
     }
-    return NextResponse.json({ ok: false, message }, { status: 503 })
-  }
+
+    try {
+      const [vehicle] = await resolveVehicleVins([vin])
+      return apiOk({ found: true, vehicle })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "VIN lookup failed"
+      if (message.startsWith("We could not find these VINs:")) {
+        return apiOk({ found: false, message: "We could not find this VIN in our database or VIN provider. Check and correct the VIN." })
+      }
+      return apiError(message, 503)
+    }
+  })
 }

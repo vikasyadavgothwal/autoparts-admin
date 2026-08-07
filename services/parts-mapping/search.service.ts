@@ -1,4 +1,4 @@
-import { normalizePartNumber } from "@/lib/17vin"
+import { normalizePartNumber } from "@/lib/vin-17-api-client"
 import { db } from "@/lib/database/prisma"
 import { SupplierPartMappingStatus } from "@/lib/generated/prisma/client"
 import type { PartSearchResponse } from "@/types/parts-mapping/parts-mapping"

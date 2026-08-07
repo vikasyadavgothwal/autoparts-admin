@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getOptionalUserFromRequest } from "@/lib/parts-mapping/auth";
+import { getOptionalUserFromRequest } from "@/lib/auth/api-guards";
 import { createSignedS3ObjectUrl } from "@/lib/storage/s3";
 import { findOrderProofKeyForUser } from "@/services/order/order-proof-service";
 

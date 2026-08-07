@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 
 import { db } from "@/lib/database/prisma"
 import { Prisma, UserRole } from "@/lib/generated/prisma/client"
+import { logError } from "@/lib/logger"
 import {
   notificationChannel,
   publishNotification,
@@ -146,7 +147,7 @@ export async function createNotificationsSafely(
     try {
       await createNotification(input)
     } catch (error) {
-      console.error("Unable to create notification", error)
+      logError("Unable to create notification", error)
     }
   }
 }

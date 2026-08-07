@@ -10,7 +10,7 @@ import {
   searchPartIn17Vin,
   type Vin17PartCandidate,
   type Vin17VehicleCandidate,
-} from "@/lib/17vin"
+} from "@/lib/vin-17-api-client"
 import {
   PartNumberType,
   SupplierPartMappingSource,

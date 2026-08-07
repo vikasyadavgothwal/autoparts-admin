@@ -355,6 +355,8 @@ export async function loginUserViaApi(
           : null,
       )
 
+      if (result.challenge) return { ok: true, success: true, user: result.user, mfa: result.challenge, statusCode: 200 } as any
+
       return {
         ok: true,
         success: true,
@@ -386,6 +388,8 @@ export async function loginUserViaApi(
       },
       context,
     )
+    if (result.challenge) return { ok: true, success: true, user: result.user, mfa: result.challenge, statusCode: 200 } as any
+
     return {
       ok: true,
       success: true,

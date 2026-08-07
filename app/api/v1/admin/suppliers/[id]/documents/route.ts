@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { db } from "@/lib/database/prisma"
 import { UserRole } from "@/lib/generated/prisma/client"
-import { requireAdminFromRequest } from "@/lib/parts-mapping/auth"
+import { requireAdminFromRequest } from "@/lib/auth/api-guards"
 import {
   createSignedS3ObjectUrl,
   getS3ObjectKeyFromUrl,

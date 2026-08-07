@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import {
+  apiError,
+  apiErrorMessage,
+  apiOk,
   readJsonBody,
-  requireCustomerUserFromRequest,
-} from "@/lib/parts-mapping/auth";
+  withCustomerApiRoute,
+} from "@/lib/auth/api-guards";
 import { verifyUserMobileWithFirebase } from "@/services/user/user-settings-service";
 
 type VerifyOtpBody = {
@@ -13,44 +16,22 @@ type VerifyOtpBody = {
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request);
-  if (!auth.ok) return auth.response;
+  return withCustomerApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<VerifyOtpBody>(request);
+    if (!parsed.ok) return apiError(parsed.message);
 
-  const parsed = await readJsonBody<VerifyOtpBody>(request);
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    );
-  }
+    try {
+      const firebaseIdToken =
+        typeof parsed.body.firebaseIdToken === "string"
+          ? parsed.body.firebaseIdToken
+          : "";
+      if (!firebaseIdToken) return apiError("Firebase ID token is required");
 
-  try {
-    const firebaseIdToken =
-      typeof parsed.body.firebaseIdToken === "string"
-        ? parsed.body.firebaseIdToken
-        : "";
-    if (!firebaseIdToken) {
-      return NextResponse.json(
-        { ok: false, message: "Firebase ID token is required" },
-        { status: 400 },
-      );
+      return apiOk({
+        profile: await verifyUserMobileWithFirebase(user.id, firebaseIdToken),
+      });
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to verify OTP"));
     }
-
-    return NextResponse.json({
-      ok: true,
-      profile: await verifyUserMobileWithFirebase(
-        auth.user.id,
-        firebaseIdToken,
-      ),
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to verify OTP",
-      },
-      { status: 400 },
-    );
-  }
+  });
 }

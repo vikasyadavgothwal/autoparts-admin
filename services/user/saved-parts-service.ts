@@ -6,11 +6,42 @@ import {
 } from "@/services/marketplace/marketplace-service"
 import type {
   UserSavedPartProduct,
+  UserSavedPartStatus,
   UserSavedPartsPayload,
 } from "@/types/user/saved-parts"
 
+type UserSavedWatchRow = {
+  partUid: string
+  watchForPriceDrops: boolean
+  watchStockReturns: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
 const normalizePartUid = (value: unknown) =>
   typeof value === "string" ? value.trim() : ""
+
+const normalizeWatchFlag = (value: unknown) =>
+  value === true || value === "true" || value === 1 || value === "1"
+
+const getSavedPartRow = async (
+  userId: string,
+  partUid: string,
+): Promise<UserSavedWatchRow | null> => {
+  const rows = await db.$queryRaw<UserSavedWatchRow[]>`
+    SELECT
+      "partUid",
+      "watchPriceChanges" AS "watchForPriceDrops",
+      "watchStockReturns",
+      "createdAt",
+      "updatedAt"
+    FROM "user_saved_parts"
+    WHERE "userId" = ${userId} AND "partUid" = ${partUid}
+    LIMIT 1
+  `
+
+  return rows[0] ?? null
+}
 
 export async function assertUserCanSaveParts(userId: string) {
   const user = await db.user.findUnique({
@@ -26,19 +57,52 @@ export async function assertUserCanSaveParts(userId: string) {
   }
 }
 
-export async function isPartSavedByUser(userId: string, partUid: unknown) {
+export async function isPartSavedByUser(
+  userId: string,
+  partUid: unknown,
+): Promise<boolean> {
   const normalizedPartUid = normalizePartUid(partUid)
   if (!normalizedPartUid) return false
 
-  const savedPart = await db.userSavedPart.findUnique({
-    where: { userId_partUid: { userId, partUid: normalizedPartUid } },
-    select: { id: true },
-  })
-
+  const savedPart = await getSavedPartRow(userId, normalizedPartUid)
   return Boolean(savedPart)
 }
 
-export async function savePartForUser(userId: string, partUid: unknown) {
+export async function getSavedPartStatus(
+  userId: string,
+  partUid: unknown,
+): Promise<UserSavedPartStatus> {
+  const normalizedPartUid = normalizePartUid(partUid)
+  if (!normalizedPartUid) {
+    return {
+      saved: false,
+      watchForPriceDrops: false,
+      watchForStockReturns: false,
+    }
+  }
+
+  const row = await getSavedPartRow(userId, normalizedPartUid)
+  return row
+    ? {
+        saved: true,
+        watchForPriceDrops: Boolean(row.watchForPriceDrops),
+        watchForStockReturns: Boolean(row.watchStockReturns),
+      }
+    : {
+        saved: false,
+        watchForPriceDrops: false,
+        watchForStockReturns: false,
+      }
+}
+
+export async function savePartForUser(
+  userId: string,
+  partUid: unknown,
+  options: {
+    watchForPriceDrops?: unknown
+    watchForStockReturns?: unknown
+  } = {},
+) {
   const normalizedPartUid = normalizePartUid(partUid)
   if (!normalizedPartUid) {
     throw new Error("Product id is required")
@@ -50,13 +114,30 @@ export async function savePartForUser(userId: string, partUid: unknown) {
     throw new Error("Product is not available to save")
   }
 
-  await db.userSavedPart.upsert({
-    where: { userId_partUid: { userId, partUid: normalizedPartUid } },
-    update: {},
-    create: { userId, partUid: normalizedPartUid },
-  })
+  await db.$executeRaw`
+    INSERT INTO "user_saved_parts" (
+      "userId",
+      "partUid",
+      "watchPriceChanges",
+      "watchStockReturns"
+    )
+    VALUES (
+      ${userId},
+      ${normalizedPartUid},
+      ${Boolean(normalizeWatchFlag(options.watchForPriceDrops))},
+      ${Boolean(normalizeWatchFlag(options.watchForStockReturns))}
+    )
+    ON CONFLICT ("userId", "partUid")
+    DO UPDATE SET
+      "watchPriceChanges" = EXCLUDED."watchPriceChanges",
+      "watchStockReturns" = EXCLUDED."watchStockReturns",
+      "updatedAt" = CURRENT_TIMESTAMP
+  `
 
-  return { partUid: normalizedPartUid }
+  return {
+    partUid: normalizedPartUid,
+    ...(await getSavedPartRow(userId, normalizedPartUid)),
+  }
 }
 
 export async function removeSavedPartForUser(userId: string, partUid: unknown) {
@@ -77,14 +158,33 @@ export async function listSavedPartsForUser(
   userId: string,
 ): Promise<UserSavedPartsPayload> {
   await assertUserCanSaveParts(userId)
-  const savedParts = await db.userSavedPart.findMany({
-    where: { userId },
-    orderBy: [{ createdAt: "desc" }],
-    take: 100,
-  })
+
+  const savedParts = await db.$queryRaw<UserSavedWatchRow[]>`
+    SELECT
+      "partUid",
+      "watchPriceChanges" AS "watchForPriceDrops",
+      "watchStockReturns",
+      "createdAt",
+      "updatedAt"
+    FROM "user_saved_parts"
+    WHERE "userId" = ${userId}
+    ORDER BY "createdAt" DESC
+    LIMIT 100
+  `
+
   const savedAtByPartUid = new Map(
     savedParts.map((part) => [part.partUid, part.createdAt.toISOString()]),
   )
+  const watchByPartUid = new Map(
+    savedParts.map((part) => [
+      part.partUid,
+      {
+        watchForPriceDrops: Boolean(part.watchForPriceDrops),
+        watchForStockReturns: Boolean(part.watchStockReturns),
+      },
+    ]),
+  )
+
   const products = await listMarketplaceProductsByUids(
     savedParts.map((part) => part.partUid),
     100,
@@ -103,6 +203,10 @@ export async function listSavedPartsForUser(
     minPrice: product.minPrice,
     currency: product.currency,
     savedAt: savedAtByPartUid.get(product.partUid) ?? new Date().toISOString(),
+    watchForPriceDrops:
+      watchByPartUid.get(product.partUid)?.watchForPriceDrops ?? false,
+    watchForStockReturns:
+      watchByPartUid.get(product.partUid)?.watchForStockReturns ?? false,
   }))
 
   return {

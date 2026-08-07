@@ -20,21 +20,31 @@ const expiresSoon = (token: string) => {
 }
 
 export function proxy(request: NextRequest) {
+  const requestId =
+    request.headers.get("x-request-id") ??
+    (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`)
+
   if (request.nextUrl.pathname.startsWith("/api/")) {
     if (!isApiOriginAllowed(request)) {
-      return NextResponse.json(
+      const response = NextResponse.json(
         { ok: false, message: "Origin is not allowed" },
         { status: 403 },
       )
+      response.headers.set("x-request-id", requestId)
+      return response
     }
 
     if (request.method === "OPTIONS") {
       const response = new NextResponse(null, { status: 204 })
+      response.headers.set("x-request-id", requestId)
       setApiCorsHeaders(request, response)
       return response
     }
 
-    const response = NextResponse.next()
+    const requestHeaders = new Headers(request.headers)
+    requestHeaders.set("x-request-id", requestId)
+    const response = NextResponse.next({ request: { headers: requestHeaders } })
+    response.headers.set("x-request-id", requestId)
     setApiCorsHeaders(request, response)
     return response
   }

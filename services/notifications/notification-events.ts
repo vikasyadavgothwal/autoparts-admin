@@ -1,5 +1,6 @@
 import type { DashboardNotification } from "@/types/notifications/notifications"
 import { createClient, type RedisClientType } from "redis"
+import { logError } from "@/lib/logger"
 
 type NotificationListener = (notification: DashboardNotification) => void
 type NotificationEnvelope = {
@@ -62,13 +63,13 @@ async function getRedisPublisher() {
     try {
       const publisher = createClient({ url })
       publisher.on("error", (error) => {
-        console.error("Notification Redis publisher error", error)
+        logError("Notification Redis publisher error", error)
       })
       await publisher.connect()
       redisState.publisher = publisher as RedisClientType
       return redisState.publisher
     } catch (error) {
-      console.error("Notification Redis publisher unavailable", error)
+      logError("Notification Redis publisher unavailable", error)
       redisState.publisherReady = undefined
       return null
     }
@@ -86,13 +87,13 @@ async function getRedisSubscriber() {
     try {
       const subscriber = createClient({ url })
       subscriber.on("error", (error) => {
-        console.error("Notification Redis subscriber error", error)
+        logError("Notification Redis subscriber error", error)
       })
       await subscriber.connect()
       redisState.subscriber = subscriber as RedisClientType
       return redisState.subscriber
     } catch (error) {
-      console.error("Notification Redis subscriber unavailable", error)
+      logError("Notification Redis subscriber unavailable", error)
       redisState.subscriberReady = undefined
       return null
     }
@@ -120,12 +121,12 @@ async function subscribeToRedisChannel(channel: string) {
         }
         localPublish(channel, envelope.notification)
       } catch (error) {
-        console.error("Unable to process Redis notification event", error)
+        logError("Unable to process Redis notification event", error)
       }
     })
     redisState.subscribedChannels.add(channel)
   } catch (error) {
-    console.error("Unable to subscribe to notification Redis channel", error)
+    logError("Unable to subscribe to notification Redis channel", error)
   }
 }
 
@@ -139,7 +140,7 @@ async function unsubscribeFromRedisChannel(channel: string) {
     await subscriber.unsubscribe(redisChannel(channel))
     redisState.subscribedChannels.delete(channel)
   } catch (error) {
-    console.error("Unable to unsubscribe from notification Redis channel", error)
+    logError("Unable to unsubscribe from notification Redis channel", error)
   }
 }
 
@@ -158,7 +159,7 @@ async function publishToRedis(
     }
     await publisher.publish(redisChannel(channel), JSON.stringify(envelope))
   } catch (error) {
-    console.error("Unable to publish notification through Redis", error)
+    logError("Unable to publish notification through Redis", error)
   }
 }
 

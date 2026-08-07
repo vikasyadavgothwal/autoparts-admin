@@ -388,6 +388,21 @@ export async function createPublicGarageBooking(
     WHERE "id" = ${garageId}
       AND "isActive" = true
       AND ('Garage'::"UserRole" = ANY("roles") OR "activeRole" = 'Garage'::"UserRole")
+      AND EXISTS (
+        SELECT 1
+        FROM "business_accounts" ba
+        WHERE ba."ownerUserId" = "users"."id"
+          AND ba."type" = 'Garage'::"BusinessAccountType"
+          AND ba."isActive" = true
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM "business_account_members" bam
+        JOIN "business_accounts" member_ba ON member_ba."id" = bam."businessAccountId"
+        WHERE bam."userId" = "users"."id"
+          AND member_ba."type" = 'Garage'::"BusinessAccountType"
+          AND member_ba."ownerUserId" <> "users"."id"
+      )
     LIMIT 1
   `
 

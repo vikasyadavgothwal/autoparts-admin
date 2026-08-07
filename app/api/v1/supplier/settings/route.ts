@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import {
+  apiError,
+  apiErrorMessage,
+  apiOk,
   readJsonBody,
-  requireSupplierFromRequest,
-} from "@/lib/parts-mapping/auth";
+  withSupplierApiRoute,
+} from "@/lib/auth/api-guards";
 import {
   getSupplierProfile,
   updateSupplierProfile,
@@ -13,42 +16,22 @@ import type { SupplierProfileInput } from "@/types/supplier/settings";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const auth = await requireSupplierFromRequest(request);
-  if (!auth.ok) return auth.response;
-
-  return NextResponse.json({
-    ok: true,
-    profile: await getSupplierProfile(auth.user.id),
-  });
+  return withSupplierApiRoute(request, async (user) =>
+    apiOk({ profile: await getSupplierProfile(user.id) }),
+  );
 }
 
 export async function PATCH(request: NextRequest) {
-  const auth = await requireSupplierFromRequest(request);
-  if (!auth.ok) return auth.response;
+  return withSupplierApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<SupplierProfileInput>(request);
+    if (!parsed.ok) return apiError(parsed.message);
 
-  const parsed = await readJsonBody<SupplierProfileInput>(request);
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    );
-  }
-
-  try {
-    return NextResponse.json({
-      ok: true,
-      profile: await updateSupplierProfile(auth.user.id, parsed.body),
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to update supplier settings",
-      },
-      { status: 400 },
-    );
-  }
+    try {
+      return apiOk({
+        profile: await updateSupplierProfile(user.id, parsed.body),
+      });
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to update supplier settings"));
+    }
+  });
 }

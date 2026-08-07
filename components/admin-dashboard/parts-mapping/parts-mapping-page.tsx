@@ -43,7 +43,7 @@ const displayList = (values: string[]) => values.join(", ") || "-"
 const getImageUrl = (part: MappedCatalogPartRecord) => {
   const imageKey = part.imageKeys[0]
   if (imageKey) {
-    return `/api/admin/parts/product-image?key=${encodeURIComponent(imageKey)}`
+    return `/api/v1/admin/parts/product-image?key=${encodeURIComponent(imageKey)}`
   }
 
   return part.imageUrls[0] ?? null
@@ -69,7 +69,7 @@ export function PartsMappingPage({
         pageSize: "10",
         q: search.trim(),
       })
-      const response = await fetch(`/api/admin/parts/pending-review?${params}`, {
+      const response = await fetch(`/api/v1/admin/parts/pending-review?${params}`, {
         cache: "no-store",
       })
       const payload = await response.json() as {

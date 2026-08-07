@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 
 import { db } from "@/lib/database/prisma"
 import { getFirebaseMessaging } from "@/lib/firebase/admin"
+import { logError } from "@/lib/logger"
 import type {
   DashboardNotification,
   NotificationScope,
@@ -212,6 +213,6 @@ export async function sendNotificationPush(
 
     await revokeTokens(revokedTokens)
   } catch (error) {
-    console.error("Unable to send notification push", error)
+    logError("Unable to send notification push", error)
   }
 }

@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { readJsonBody, requireGarageFromRequest } from "@/lib/parts-mapping/auth"
+import { readJsonBody, requireGarageFromRequest } from "@/lib/auth/api-guards"
+import { db } from "@/lib/database/prisma"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import {
+  assertBusinessPlanLimit,
+  getMyBusinessAccess,
+  logBusinessActivity,
+} from "@/services/business/business-platform-service"
 import {
   createGarageOfflineBooking,
   listGarageBookings,
@@ -32,7 +39,43 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const booking = await createGarageOfflineBooking(auth.user.id, parsed.body)
+    const access = (await getMyBusinessAccess(auth.user.id)).find(
+      (item) => item.businessAccount.type === BusinessAccountType.Garage,
+    )
+    const appointmentAction = access?.actions["appointments.create"]
+    if (!appointmentAction?.allowed) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            appointmentAction?.reason ||
+            "Your current plan or role cannot add appointments",
+        },
+        { status: 403 },
+      )
+    }
+    const garageId = access?.businessAccount.ownerUserId ?? auth.user.id
+    const currentCount = await db.garageBooking.count({
+      where: { garageId },
+    })
+    const account = await assertBusinessPlanLimit({
+      userId: auth.user.id,
+      accountType: BusinessAccountType.Garage,
+      limit: "appointmentLimit",
+      currentCount,
+    })
+    const booking = await createGarageOfflineBooking(garageId, parsed.body)
+    await logBusinessActivity({
+      businessAccountId: account.id,
+      actorUserId: auth.user.id,
+      action: "garage_booking.created",
+      entityType: "garage_booking",
+      entityId: booking.id,
+      metadata: {
+        garageId,
+        createdByUserId: auth.user.id,
+      },
+    })
     return NextResponse.json({ ok: true, booking }, { status: 201 })
   } catch (error) {
     return NextResponse.json(

@@ -17,7 +17,7 @@ const ALLOWED_HEADERS = [
   "X-Requested-With",
 ].join(", ")
 
-function configuredOrigins(): Set<string> {
+const configuredOrigins = (() => {
   const configured = (process.env.USER_AUTH_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
@@ -26,12 +26,12 @@ function configuredOrigins(): Set<string> {
   const origins =
     configured.length > 0
       ? configured
-      : process.env.NODE_ENV === "production"
-        ? []
-        : [...DEVELOPMENT_ORIGINS]
+    : process.env.NODE_ENV === "production"
+      ? []
+      : [...DEVELOPMENT_ORIGINS]
 
   return new Set(origins)
-}
+})()
 
 export function isApiOriginAllowed(request: NextRequest): boolean {
   const origin = request.headers.get("origin")
@@ -40,7 +40,7 @@ export function isApiOriginAllowed(request: NextRequest): boolean {
   // clients normally do not send the browser Origin header.
   if (!origin) return true
 
-  return configuredOrigins().has(origin)
+  return configuredOrigins.has(origin)
 }
 
 export function setApiCorsHeaders(

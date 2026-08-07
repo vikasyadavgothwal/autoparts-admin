@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { requireFleetFromRequest, readJsonBody } from "@/lib/parts-mapping/auth"
+import { requireFleetFromRequest, readJsonBody } from "@/lib/auth/api-guards"
 import {
   getFleetProfile,
   updateFleetProfile,

@@ -1,9 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import {
+  apiCreated,
+  apiError,
+  apiErrorMessage,
+  apiOk,
   readJsonBody,
-  requireCustomerUserFromRequest,
-} from "@/lib/parts-mapping/auth";
+  withCustomerApiRoute,
+} from "@/lib/auth/api-guards";
 import {
   createUserAddress,
   listUserAddresses,
@@ -13,43 +17,22 @@ import type { UserAddressInput } from "@/types/user-addresses/user-addresses";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request);
-  if (!auth.ok) return auth.response;
-
-  return NextResponse.json({
-    ok: true,
-    addresses: await listUserAddresses(auth.user.id),
-  });
+  return withCustomerApiRoute(request, async (user) =>
+    apiOk({ addresses: await listUserAddresses(user.id) }),
+  );
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request);
-  if (!auth.ok) return auth.response;
+  return withCustomerApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<UserAddressInput>(request);
+    if (!parsed.ok) return apiError(parsed.message);
 
-  const parsed = await readJsonBody<UserAddressInput>(request);
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    );
-  }
-
-  try {
-    return NextResponse.json(
-      {
-        ok: true,
-        address: await createUserAddress(auth.user.id, parsed.body),
-      },
-      { status: 201 },
-    );
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to save address",
-      },
-      { status: 400 },
-    );
-  }
+    try {
+      return apiCreated({
+        address: await createUserAddress(user.id, parsed.body),
+      });
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to save address"));
+    }
+  });
 }

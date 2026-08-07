@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { listAdminBusinessQueries } from "@/actions/business-queries/business-queries"
-import { requireAdminFromRequest } from "@/lib/parts-mapping/auth"
+import { requireAdminFromRequest } from "@/lib/auth/api-guards"
 
 export const dynamic = "force-dynamic"
 

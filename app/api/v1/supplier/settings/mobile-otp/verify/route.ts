@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import {
+  apiError,
+  apiErrorMessage,
+  apiOk,
   readJsonBody,
-  requireSupplierFromRequest,
-} from "@/lib/parts-mapping/auth";
+  withSupplierApiRoute,
+} from "@/lib/auth/api-guards";
 import {
   verifySupplierContactPhoneWithFirebase,
   verifySupplierMobileWithFirebase,
@@ -17,54 +20,35 @@ type VerifyOtpBody = {
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const auth = await requireSupplierFromRequest(request);
-  if (!auth.ok) return auth.response;
+  return withSupplierApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<VerifyOtpBody>(request);
+    if (!parsed.ok) return apiError(parsed.message);
 
-  const parsed = await readJsonBody<VerifyOtpBody>(request);
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    );
-  }
+    try {
+      const firebaseIdToken =
+        typeof parsed.body.firebaseIdToken === "string"
+          ? parsed.body.firebaseIdToken
+          : "";
+      if (!firebaseIdToken) return apiError("Firebase ID token is required");
+      const target =
+        parsed.body.target === "supplierContactPhone"
+          ? "supplierContactPhone"
+          : "authorizedPhone";
 
-  try {
-    const firebaseIdToken =
-      typeof parsed.body.firebaseIdToken === "string"
-        ? parsed.body.firebaseIdToken
-        : "";
-    if (!firebaseIdToken) {
-      return NextResponse.json(
-        { ok: false, message: "Firebase ID token is required" },
-        { status: 400 },
-      );
+      return apiOk({
+        profile:
+          target === "supplierContactPhone"
+            ? await verifySupplierContactPhoneWithFirebase(
+                user.id,
+                firebaseIdToken,
+              )
+            : await verifySupplierMobileWithFirebase(
+                user.id,
+                firebaseIdToken,
+              ),
+      });
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to verify OTP"));
     }
-    const target =
-      parsed.body.target === "supplierContactPhone"
-        ? "supplierContactPhone"
-        : "authorizedPhone";
-
-    return NextResponse.json({
-      ok: true,
-      profile:
-        target === "supplierContactPhone"
-          ? await verifySupplierContactPhoneWithFirebase(
-              auth.user.id,
-              firebaseIdToken,
-            )
-          : await verifySupplierMobileWithFirebase(
-              auth.user.id,
-              firebaseIdToken,
-            ),
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to verify OTP",
-      },
-      { status: 400 },
-    );
-  }
+  });
 }

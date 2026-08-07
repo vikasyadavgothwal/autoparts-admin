@@ -2,6 +2,6 @@ import { SuppliersPage } from "@/components/admin-dashboard/suppliers/suppliers-
 
 export const dynamic = "force-dynamic";
 
-export default function FleetSuppliersPage() {
+export default function AdminSuppliersPage() {
   return <SuppliersPage />;
 }

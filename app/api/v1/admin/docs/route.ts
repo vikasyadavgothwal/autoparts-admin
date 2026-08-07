@@ -1,7 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { buildSwaggerUiHtml, getSwaggerSpec } from "@/lib/swagger"
-import { requireAdminFromRequest } from "@/lib/parts-mapping/auth"
+import { requireAdminFromRequest } from "@/lib/auth/api-guards"
 export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   const auth = await requireAdminFromRequest()

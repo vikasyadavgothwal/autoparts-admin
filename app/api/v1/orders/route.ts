@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getOptionalUserFromRequest,
   readJsonBody,
-} from "@/lib/parts-mapping/auth";
+} from "@/lib/auth/api-guards";
 import { OrderStatus, UserRole } from "@/lib/generated/prisma/client";
 import {
   createDirectOrders,

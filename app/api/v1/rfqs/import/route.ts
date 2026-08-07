@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { getOptionalUserFromRequest } from "@/lib/parts-mapping/auth"
+import { getOptionalUserFromRequest } from "@/lib/auth/api-guards"
 import { importRfqWorkbook } from "@/services/fleet/rfq-import-service"
 
 export const dynamic = "force-dynamic"

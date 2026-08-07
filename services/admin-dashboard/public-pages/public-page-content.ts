@@ -336,9 +336,12 @@ const resolveForBusinessBusinessSolutions = (
 
 const resolveForBusinessPricing = (value: unknown): ForBusinessPricingConfig => {
   const source = normalizeObject(value, FOR_BUSINESS_PAGE_DEFAULT_CONFIG.pricing)
-  const sourcePlans = Array.isArray(source.plans) ? source.plans : []
   const fallbackPlans = FOR_BUSINESS_PAGE_DEFAULT_CONFIG.pricing.plans
-  const count = Math.max(sourcePlans.length, fallbackPlans.length)
+  const sourcePlans =
+    Array.isArray(source.plans) && source.plans.length === fallbackPlans.length
+      ? source.plans
+      : fallbackPlans
+  const count = 3
   const normalizedPlans: ForBusinessPlan[] = []
 
   for (let index = 0; index < count; index += 1) {

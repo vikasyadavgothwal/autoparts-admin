@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { Buffer } from "node:buffer";
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireSupplierFromRequest } from "@/lib/parts-mapping/auth";
+import { requireSupplierFromRequest } from "@/lib/auth/api-guards";
 import { uploadObjectToS3 } from "@/lib/storage/s3";
 import {
   confirmSupplierOrder,

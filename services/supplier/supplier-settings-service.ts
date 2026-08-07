@@ -1,16 +1,17 @@
-import { Buffer } from "node:buffer";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer"
+import { createHash, randomBytes, randomUUID } from "node:crypto"
 
 import { db } from "@/lib/database/prisma";
 import { verifyFirebaseIdToken } from "@/lib/firebase/admin";
-import { Prisma, SupplierApprovalStatus } from "@/lib/generated/prisma/client";
-import { sendSmtpMail } from "@/lib/email/smtp";
+import { Prisma, SupplierApprovalStatus } from "@/lib/generated/prisma/client"
+import { sendSmtpMail } from "@/lib/email/smtp"
+import { logError } from "@/lib/logger"
 import {
   createSignedS3ObjectUrl,
   deleteObjectFromS3,
   getS3ObjectKeyFromUrl,
   uploadObjectToS3,
-} from "@/lib/storage/s3";
+} from "@/lib/storage/s3"
 import type {
   SupplierProfileInput,
   SupplierProfileRecord,
@@ -507,7 +508,7 @@ async function notifyAdminsSupplierDocumentsSubmitted(input: {
         subject: "New supplier documents submitted for review",
         text: `A supplier has uploaded verification documents and is waiting for admin review.\n\nSupplier: ${input.supplierName}\nSupplier email: ${input.supplierEmail ?? "Not added"}\nSupplier ID: ${input.supplierId}\n\nPlease check the Supplier Management area in AutoParts Pro Admin.`,
       }).catch((error) => {
-        console.error("Unable to send supplier document submission email", error);
+        logError("Unable to send supplier document submission email", error);
       }),
     ),
   );

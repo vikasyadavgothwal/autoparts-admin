@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { UserRole } from "@/lib/generated/prisma/client"
-import { getOptionalUserFromRequest } from "@/lib/parts-mapping/auth"
+import { getOptionalUserFromRequest } from "@/lib/auth/api-guards"
 import { listSupplierProductReviews } from "@/services/supplier-product-reviews/supplier-product-review-service"
 
 export const dynamic = "force-dynamic"

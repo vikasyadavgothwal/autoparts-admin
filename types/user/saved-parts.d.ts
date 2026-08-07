@@ -12,6 +12,8 @@ export type UserSavedPartProduct = {
   minPrice: number | null
   currency: string
   savedAt: string
+  watchForPriceDrops: boolean
+  watchForStockReturns: boolean
 }
 
 export type UserSavedPartsSummary = {
@@ -25,6 +27,14 @@ export type UserSavedPartsPayload = {
   summary: UserSavedPartsSummary
 }
 
+export type UserSavedPartStatus = {
+  saved: boolean
+  watchForPriceDrops: boolean
+  watchForStockReturns: boolean
+}
+
 export type SaveUserPartInput = {
   partUid?: unknown
+  watchForPriceDrops?: unknown
+  watchForStockReturns?: unknown
 }

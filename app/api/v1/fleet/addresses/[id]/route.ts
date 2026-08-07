@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   readJsonBody,
   requireFleetFromRequest,
-} from "@/lib/parts-mapping/auth"
+} from "@/lib/auth/api-guards"
 import {
   deleteUserAddress,
   updateUserAddress,

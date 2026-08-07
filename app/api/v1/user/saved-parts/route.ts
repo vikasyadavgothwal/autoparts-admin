@@ -7,59 +7,42 @@ import {
   saveUserPartAction,
 } from "@/actions/user/saved-parts"
 import {
+  apiError,
+  apiOk,
   readJsonBody,
-  requireCustomerUserFromRequest,
-} from "@/lib/parts-mapping/auth"
+  withCustomerApiRoute,
+} from "@/lib/auth/api-guards"
 import type { SaveUserPartInput } from "@/types/user/saved-parts"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request)
-  if (!auth.ok) return auth.response
+  return withCustomerApiRoute(request, async (user) => {
+    const partUid = request.nextUrl.searchParams.get("partUid")
+    if (partUid) {
+      return apiOk(await getUserSavedPartStatusAction(user.id, partUid))
+    }
 
-  const partUid = request.nextUrl.searchParams.get("partUid")
-  if (partUid) {
-    return NextResponse.json({
-      ok: true,
-      ...(await getUserSavedPartStatusAction(auth.user.id, partUid)),
-    })
-  }
-
-  return NextResponse.json({
-    ok: true,
-    ...(await listUserSavedPartsAction(auth.user.id)),
+    return apiOk(await listUserSavedPartsAction(user.id))
   })
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request)
-  if (!auth.ok) return auth.response
+  return withCustomerApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<SaveUserPartInput>(request)
+    if (!parsed.ok) return apiError(parsed.message)
 
-  const parsed = await readJsonBody<SaveUserPartInput>(request)
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    )
-  }
-
-  const result = await saveUserPartAction(auth.user.id, parsed.body)
-  return NextResponse.json(result, { status: result.statusCode })
+    const result = await saveUserPartAction(user.id, parsed.body)
+    return NextResponse.json(result, { status: result.statusCode })
+  })
 }
 
 export async function DELETE(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request)
-  if (!auth.ok) return auth.response
+  return withCustomerApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<SaveUserPartInput>(request)
+    if (!parsed.ok) return apiError(parsed.message)
 
-  const parsed = await readJsonBody<SaveUserPartInput>(request)
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    )
-  }
-
-  const result = await removeUserSavedPartAction(auth.user.id, parsed.body)
-  return NextResponse.json(result, { status: result.statusCode })
+    const result = await removeUserSavedPartAction(user.id, parsed.body)
+    return NextResponse.json(result, { status: result.statusCode })
+  })
 }

@@ -8,6 +8,7 @@ import {
 } from "firebase-admin/app"
 import { getAuth, type Auth, type DecodedIdToken } from "firebase-admin/auth"
 import { getMessaging, type Messaging } from "firebase-admin/messaging"
+import { logError } from "@/lib/logger"
 
 type ServiceAccountJson = {
   project_id?: unknown
@@ -92,7 +93,7 @@ export async function verifyFirebaseIdToken(
       throw new Error("Invalid Firebase ID token")
     }
 
-    console.error("Firebase ID token verification failed", error)
+    logError("Firebase ID token verification failed", error)
     throw new Error("Firebase authentication is unavailable")
   }
 }

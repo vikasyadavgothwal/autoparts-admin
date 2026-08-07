@@ -1,6 +1,15 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest } from "next/server"
 
-import { requireGarageFromRequest, readJsonBody } from "@/lib/parts-mapping/auth"
+import {
+  apiError,
+  apiErrorMessage,
+  apiOk,
+  readJsonBody,
+  withGarageApiRoute,
+} from "@/lib/auth/api-guards"
+import { db } from "@/lib/database/prisma"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getMyBusinessAccess } from "@/services/business/business-platform-service"
 import { deleteGarageService, updateGarageService } from "@/services/garage/garage-service"
 import type { GarageServiceInput } from "@/types/garage/services"
 
@@ -8,52 +17,69 @@ type RouteContext = { params: Promise<{ id: string }> }
 
 export const dynamic = "force-dynamic"
 
-export async function PATCH(request: NextRequest, context: RouteContext) {
-  const auth = await requireGarageFromRequest(request)
-  if (!auth.ok) return auth.response
-
-  const parsed = await readJsonBody<GarageServiceInput>(request)
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    )
-  }
-
-  try {
-    const service = await updateGarageService(
-      auth.user.id,
-      (await context.params).id,
-      parsed.body,
-    )
-    return NextResponse.json({ ok: true, service })
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Unable to update service",
+async function getGarageIdForUser(userId: string) {
+  const account = await db.businessAccount.findFirst({
+    where: {
+      type: BusinessAccountType.Garage,
+      isActive: true,
+      members: {
+        some: {
+          userId,
+          status: "Active",
+        },
       },
-      { status: 400 },
-    )
-  }
+    },
+    select: { ownerUserId: true },
+  })
+  return account?.ownerUserId ?? userId
+}
+
+export async function PATCH(request: NextRequest, context: RouteContext) {
+  return withGarageApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<GarageServiceInput>(request)
+    if (!parsed.ok) return apiError(parsed.message)
+
+    try {
+      const access = (await getMyBusinessAccess(user.id)).find(
+        (item) => item.businessAccount.type === BusinessAccountType.Garage,
+      )
+      const serviceAction = access?.actions["services.update"]
+      if (!serviceAction?.allowed) {
+        return apiError(
+          serviceAction?.reason || "Your current plan or role cannot update services",
+          403,
+        )
+      }
+      const garageId = await getGarageIdForUser(user.id)
+      const service = await updateGarageService(
+        garageId,
+        (await context.params).id,
+        parsed.body,
+      )
+      return apiOk({ service })
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to update service"))
+    }
+  })
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
-  const auth = await requireGarageFromRequest(request)
-  if (!auth.ok) return auth.response
-
-  try {
-    return NextResponse.json({
-      ok: true,
-      ...(await deleteGarageService(auth.user.id, (await context.params).id)),
-    })
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Unable to delete service",
-      },
-      { status: 400 },
-    )
-  }
+  return withGarageApiRoute(request, async (user) => {
+    try {
+      const access = (await getMyBusinessAccess(user.id)).find(
+        (item) => item.businessAccount.type === BusinessAccountType.Garage,
+      )
+      const serviceAction = access?.actions["services.delete"]
+      if (!serviceAction?.allowed) {
+        return apiError(
+          serviceAction?.reason || "Your current plan or role cannot delete services",
+          403,
+        )
+      }
+      const garageId = await getGarageIdForUser(user.id)
+      return apiOk(await deleteGarageService(garageId, (await context.params).id))
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to delete service"))
+    }
+  })
 }

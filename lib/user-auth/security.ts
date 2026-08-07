@@ -46,6 +46,8 @@ export function getDeviceName(userAgent: string | null): string | null {
 export function getUserRequestContext(
   request: NextRequest,
   requestedDeviceName?: string | null,
+  requestedDeviceIdentifier?: string | null,
+  requestedDeviceMacAddress?: string | null,
 ): UserSessionRequestContext {
   const userAgent = request.headers.get("user-agent")
 
@@ -53,6 +55,8 @@ export function getUserRequestContext(
     ipAddress: getClientIp(request),
     userAgent,
     deviceName: requestedDeviceName?.trim() || getDeviceName(userAgent),
+    deviceIdentifier: requestedDeviceIdentifier?.trim().slice(0, 200) || null,
+    deviceMacAddress: requestedDeviceMacAddress?.trim().slice(0, 120) || null,
   }
 }
 

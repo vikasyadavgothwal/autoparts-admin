@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   getOptionalUserFromRequest,
   requireAdminFromRequest,
-} from "@/lib/parts-mapping/auth"
+} from "@/lib/auth/api-guards"
 import type { NotificationScope } from "@/types/notifications/notifications"
 
 export async function getNotificationScopeFromRequest(

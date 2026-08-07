@@ -38,6 +38,33 @@ const INITIAL_SAVE_STATUS: SaveSectionStatus = {
   cta: "",
 }
 
+const validatePricing = (config: ForBusinessPageConfig): string | null => {
+  if (!config.pricing.heading.trim()) return "Pricing heading is required."
+  if (!config.pricing.subheading.trim()) return "Pricing subheading is required."
+  if (config.pricing.plans.length < 3) {
+    return "Pricing must include three plans."
+  }
+
+  for (const plan of config.pricing.plans.slice(0, 3)) {
+    if (!plan.heading.trim()) return "Every plan needs a heading."
+    if (!plan.subheading.trim()) return `${plan.heading} needs a subheading.`
+    if (!plan.price.trim()) return `${plan.heading} needs a price.`
+    if (
+      !/^custom$/i.test(plan.price.trim()) &&
+      !/^[A-Z]{2,4}\s?\d+(\.\d{1,2})?$/i.test(plan.price.trim())
+    ) {
+      return `${plan.heading} price must look like AED 299 or Custom.`
+    }
+    if (!plan.duration.trim()) return `${plan.heading} needs a duration.`
+    if (!plan.buttonText.trim()) return `${plan.heading} needs button text.`
+    if (plan.keyPoints.some((point) => !point.trim())) {
+      return `${plan.heading} has an empty key point.`
+    }
+  }
+
+  return null
+}
+
 export function ForBusinessPage({
   initialConfig,
   initialSeo,
@@ -59,6 +86,18 @@ export function ForBusinessPage({
   })
 
   const saveSection = async (section: keyof ForBusinessPageConfig) => {
+    if (section === "pricing") {
+      const validationError = validatePricing(config)
+      if (validationError) {
+        toast.error(validationError)
+        setSectionSaveStatus((previous: SaveSectionStatus) => ({
+          ...previous,
+          pricing: validationError,
+        }))
+        return
+      }
+    }
+
     setSectionSaving((previous: Record<keyof ForBusinessPageConfig, boolean>) => ({
       ...previous,
       [section]: true,

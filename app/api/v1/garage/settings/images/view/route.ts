@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { requireGarageFromRequest } from "@/lib/parts-mapping/auth"
+import { requireGarageFromRequest } from "@/lib/auth/api-guards"
 import { createSignedS3ObjectUrl } from "@/lib/storage/s3"
 
 export const dynamic = "force-dynamic"

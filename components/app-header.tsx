@@ -19,7 +19,11 @@ import { NotificationLiveListener } from "@/components/notification-live-listene
 import { NotificationPopup } from "@/components/notification-popup"
 import { logoutAdmin } from "@/actions/admin-auth"
 
-export function DashboardHeader() {
+export function DashboardHeader({
+  adminName,
+}: {
+  adminName: string | null
+}) {
   const [unreadNotifications, setUnreadNotifications] = useState(0)
 
   return (
@@ -75,7 +79,7 @@ export function DashboardHeader() {
               >
                 <User className="h-5 w-5 text-brand-muted" />
                 <span className="text-sm font-medium text-foreground">
-                  ABC Fleet
+                  {adminName ?? "Admin"}
                 </span>
                 <ChevronDown className="h-4 w-4 text-brand-muted" />
               </Button>

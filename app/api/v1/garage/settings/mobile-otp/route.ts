@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { requireGarageFromRequest } from "@/lib/parts-mapping/auth"
+import { requireGarageFromRequest } from "@/lib/auth/api-guards"
 import { requestGarageMobileOtp } from "@/services/garage/garage-settings-service"
 
 export const dynamic = "force-dynamic"

@@ -2,7 +2,7 @@ import crypto from "node:crypto"
 import { Buffer } from "node:buffer"
 import { NextRequest, NextResponse } from "next/server"
 
-import { requireGarageFromRequest } from "@/lib/parts-mapping/auth"
+import { requireGarageFromRequest } from "@/lib/auth/api-guards"
 import { uploadObjectToS3 } from "@/lib/storage/s3"
 
 export const dynamic = "force-dynamic"

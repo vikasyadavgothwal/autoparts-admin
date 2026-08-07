@@ -1,7 +1,7 @@
 import {
-  isPartSavedByUser,
   listSavedPartsForUser,
   removeSavedPartForUser,
+  getSavedPartStatus,
   savePartForUser,
 } from "@/services/user/saved-parts-service"
 import type { SaveUserPartInput } from "@/types/user/saved-parts"
@@ -23,7 +23,7 @@ export async function getUserSavedPartStatusAction(
   userId: string,
   partUid: string | null,
 ) {
-  return { saved: await isPartSavedByUser(userId, partUid ?? "") }
+  return getSavedPartStatus(userId, partUid ?? "")
 }
 
 export async function saveUserPartAction(
@@ -34,7 +34,7 @@ export async function saveUserPartAction(
     return {
       ok: true as const,
       statusCode: 201,
-      ...(await savePartForUser(userId, input.partUid)),
+      ...(await savePartForUser(userId, input.partUid, input)),
     }
   } catch (error) {
     return {

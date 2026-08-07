@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { reviewSupplierAccount } from "@/actions/admin-dashboard/suppliers/supplier-management"
-import { readJsonBody, requireAdminFromRequest } from "@/lib/parts-mapping/auth"
+import { readJsonBody, requireAdminFromRequest } from "@/lib/auth/api-guards"
 import type { SupplierStatus } from "@/types/admin-dashboard/suppliers/suppliers-types"
 
 type RouteContext = { params: Promise<{ id: string }> }

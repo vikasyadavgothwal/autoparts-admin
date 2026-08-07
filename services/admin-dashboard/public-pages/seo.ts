@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer"
 import { randomUUID } from "node:crypto"
+import { logError } from "@/lib/logger"
 import {
   createSignedS3ObjectUrl,
   deleteObjectFromS3,
@@ -207,7 +208,7 @@ export const resolvePublicPageSeoForResponse = async (
       ogImageKey,
     }
   } catch (error) {
-    console.error("[public-page-seo] signed image url failed", error)
+    logError("[public-page-seo] signed image url failed", error)
     return {
       ...seo,
       ogImageKey,
@@ -279,7 +280,7 @@ export const uploadPublicPageSeoImageToS3 = async (
       },
     }
   } catch (error) {
-    console.error("[public-page-seo] upload failed", error)
+    logError("[public-page-seo] upload failed", error)
     return {
       ok: false,
       error: toUploadError(error),
@@ -300,7 +301,7 @@ export const deletePublicPageSeoImageFromS3 = async (
     await deleteObjectFromS3(normalizedKey)
     return { ok: true }
   } catch (error) {
-    console.error("[public-page-seo] delete failed", error)
+    logError("[public-page-seo] delete failed", error)
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to delete image",

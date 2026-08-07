@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { readJsonBody } from "@/lib/parts-mapping/auth"
+import { readJsonBody } from "@/lib/auth/api-guards"
 import { USER_AUTH } from "@/lib/user-auth/config"
 import { requireUserAuth } from "@/actions/user-auth/user-auth"
 import { upsertUserGarageServiceReview } from "@/services/garage/garage-review-service"

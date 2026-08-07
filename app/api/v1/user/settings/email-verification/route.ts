@@ -1,9 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import {
+  apiError,
+  apiErrorMessage,
   readJsonBody,
-  requireCustomerUserFromRequest,
-} from "@/lib/parts-mapping/auth";
+  withCustomerApiRoute,
+} from "@/lib/auth/api-guards";
 import { requestUserEmailVerification } from "@/services/user/user-settings-service";
 
 type EmailVerificationBody = {
@@ -14,39 +16,24 @@ type EmailVerificationBody = {
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const auth = await requireCustomerUserFromRequest(request);
-  if (!auth.ok) return auth.response;
+  return withCustomerApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<EmailVerificationBody>(request);
+    if (!parsed.ok) return apiError(parsed.message);
 
-  const parsed = await readJsonBody<EmailVerificationBody>(request);
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const origin = new URL(request.url).origin;
-    return NextResponse.json(
-      await requestUserEmailVerification(
-        auth.user.id,
-        parsed.body.email,
-        origin,
-        typeof parsed.body.verificationBaseUrl === "string"
-          ? parsed.body.verificationBaseUrl
-          : null,
-      ),
-    );
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to send verification link",
-      },
-      { status: 400 },
-    );
-  }
+    try {
+      const origin = new URL(request.url).origin;
+      return Response.json(
+        await requestUserEmailVerification(
+          user.id,
+          parsed.body.email,
+          origin,
+          typeof parsed.body.verificationBaseUrl === "string"
+            ? parsed.body.verificationBaseUrl
+            : null,
+        ),
+      );
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to send verification link"));
+    }
+  });
 }

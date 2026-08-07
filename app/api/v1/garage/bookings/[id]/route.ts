@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { readJsonBody, requireGarageFromRequest } from "@/lib/parts-mapping/auth"
+import { readJsonBody, requireGarageFromRequest } from "@/lib/auth/api-guards"
 import { updateGarageBookingStatus } from "@/services/garage/garage-booking-service"
 
 type RouteContext = { params: Promise<{ id: string }> }

@@ -1,10 +1,11 @@
 import { db } from "@/lib/database/prisma"
-import { normalizePartNumber } from "@/lib/17vin"
+import { normalizePartNumber } from "@/lib/vin-17-api-client"
 import {
   createSignedS3ObjectUrl,
   getS3ObjectKeyFromUrl,
 } from "@/lib/storage/s3"
 import {
+  BusinessAccountType,
   Prisma,
   SupplierApprovalStatus,
   SupplierPartMappingStatus,
@@ -19,6 +20,35 @@ import type { SupplierProductReviewSummary } from "@/types/supplier-product-revi
 const DEFAULT_CURRENCY = "AED"
 const DEFAULT_PRODUCT_IMAGE =
   "https://images.unsplash.com/photo-1486262715619-67b85e0b08d3?w=900&h=900&fit=crop"
+const DEFAULT_RANKING_SCORE_MAX = 100
+
+const DEFAULT_SCORE_WEIGHTS = {
+  relevance: 25,
+  pricing: 20,
+  subscriptionBoost: 20,
+  productCompleteness: 10,
+  supplierRating: 10,
+  verifiedSupplier: 5,
+  stockAvailability: 5,
+  deliverySla: 5,
+} as const
+
+type RankedOfferSearchContext = {
+  queryText?: string | null
+  includeRankingMetadata?: boolean
+}
+
+export type MarketplaceOfferRankingScores = {
+  relevance: number
+  pricing: number
+  subscriptionBoost: number
+  productCompleteness: number
+  supplierRating: number
+  verifiedSupplier: number
+  stockAvailability: number
+  deliverySla: number
+  total: number
+}
 
 const mappedSupplierPartWhere = {
   mappingStatus: SupplierPartMappingStatus.mapped,
@@ -33,11 +63,25 @@ const mappedSupplierPartWhere = {
 const supplierPartInclude = {
   supplier: {
     select: {
+      id: true,
       companyName: true,
       firstName: true,
       lastName: true,
       email: true,
       avatarUrl: true,
+      supplierApprovalStatus: true,
+      ownedBusinessAccounts: {
+        where: { type: BusinessAccountType.Supplier, isActive: true },
+        select: {
+          plan: {
+            select: {
+              featuredVendor: true,
+              searchBoostLevel: true,
+            },
+          },
+        },
+        take: 1,
+      },
     },
   },
   pricing: true,
@@ -70,6 +114,9 @@ type SupplierPerformanceSummary = {
   deliveryRate: number
 }
 
+const supplierPlanForOffer = (offer: MarketplaceSupplierPart) =>
+  offer.supplier.ownedBusinessAccounts[0]?.plan ?? null
+
 type MarketplaceSearchInput = {
   partNumber?: string | null
   vin?: string | null
@@ -79,6 +126,7 @@ type MarketplaceSearchInput = {
   model?: string | null
   q?: string | null
   limit?: number | null
+  includeRankingMetadata?: boolean
 }
 
 const normalizeText = (value: unknown): string =>
@@ -167,45 +215,205 @@ const getSupplierPerformanceSummaries = async (supplierIds: string[]) => {
 
 const rankedOfferModels = async (
   offerModels: ReturnType<typeof getUniqueSellableOfferModels>,
-) => {
+  context?: RankedOfferSearchContext,
+): Promise<
+  Array<{
+    model: (typeof offerModels)[number]
+    reviewSummary?: SupplierProductReviewSummary
+    performanceSummary?: SupplierPerformanceSummary
+    ranking: MarketplaceOfferRankingScores
+  }>
+> => {
   const supplierIds = offerModels.map(({ offer }) => offer.supplierId)
   const [reviewSummaries, performanceSummaries] = await Promise.all([
     getSupplierReviewSummaries(supplierIds),
     getSupplierPerformanceSummaries(supplierIds),
   ])
+
   const cheapestPrice = Math.min(
     ...offerModels.map(({ offer }) => getSupplierPartEffectivePriceCents(offer)),
   )
-
-  return [...offerModels].sort((left, right) => {
-    const leftReview = reviewSummaries.get(left.offer.supplierId)
-    const rightReview = reviewSummaries.get(right.offer.supplierId)
-    const leftPerf = performanceSummaries.get(left.offer.supplierId)
-    const rightPerf = performanceSummaries.get(right.offer.supplierId)
-    const score = (
-      model: (typeof offerModels)[number],
-      review?: SupplierProductReviewSummary,
-      performance?: SupplierPerformanceSummary,
-    ) => {
-      const price = getSupplierPartEffectivePriceCents(model.offer)
-      const priceScore = price > 0 && Number.isFinite(cheapestPrice)
-        ? Math.min(1, cheapestPrice / price)
-        : 0
-      return (
-        (review?.ratingAverage ?? 0) * 20 +
-        Math.min(20, (review?.reviewCount ?? 0) * 2) +
-        Math.min(25, (performance?.completedOrders ?? 0) * 2.5) +
-        (performance?.deliveryRate ?? 0) * 20 +
-        priceScore * 10 +
-        Math.min(5, model.offer.stock / 10)
-      )
+  const queryTextTokens = context?.queryText
+    ? getSearchTokens(context.queryText)
+    : []
+  const getLeadTimeDays = (value: string | null | undefined): number | null => {
+    if (!value) {
+      return null
     }
+
+    const normalized = value.trim().toLowerCase()
+    const numericMatches = Array.from(
+      normalized.matchAll(/\d+(?:\.\d+)?/g),
+      (match) => Number.parseFloat(match[0]),
+    ).filter(Number.isFinite)
+
+    if (numericMatches.length === 0) {
+      return null
+    }
+
+    const largestValue = Math.max(...numericMatches)
+    const multiplier = /month/.test(normalized)
+      ? 30
+      : /week/.test(normalized)
+        ? 7
+        : /hour/.test(normalized)
+          ? 1 / 24
+          : 1
+
+    return Math.max(1, Math.ceil(largestValue * multiplier))
+  }
+
+  const clampScore = (value: number, max: number) => {
+    if (!Number.isFinite(value) || max <= 0) {
+      return 0
+    }
+    return Math.max(0, Math.min(1, value / max))
+  }
+
+  const clampRange = (value: number, min: number, max: number) => {
+    if (!Number.isFinite(value)) {
+      return min
+    }
+    return Math.max(min, Math.min(max, value))
+  }
+
+  const buildOfferSearchText = (
+    offer: MarketplaceSupplierPart,
+    offerContent: ReturnType<typeof extractVendorContent>,
+  ) =>
+    `${offer.originalPartName} ${offer.originalMpn} ${offer.originalOemNumber} ${offer.originalBrand} ${offer.category} ${offer.vendorSku} ${offerContent.productName} ${offerContent.shortDescription} ${offerContent.longDescription}`
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, " ")
+
+  const scoreOffer = (
+    model: (typeof offerModels)[number],
+    review?: SupplierProductReviewSummary,
+    performance?: SupplierPerformanceSummary,
+  ): MarketplaceOfferRankingScores => {
+    const price = getSupplierPartEffectivePriceCents(model.offer)
+    const plan = supplierPlanForOffer(model.offer)
+    const content = extractVendorContent(model.offer)
+    const offerSearchText = buildOfferSearchText(model.offer, content)
+
+    const relevanceMatchCount = queryTextTokens.length
+      ? queryTextTokens.reduce(
+          (total, token) =>
+            total +
+            (offerSearchText.includes(normalizeToken(token)) ? 1 : 0),
+          0,
+        )
+      : 0
+
+    const relevance = queryTextTokens.length
+      ? queryTextTokens.length > 0
+        ? relevanceMatchCount / queryTextTokens.length
+        : 1
+      : 1
+
+    const pricing = Number.isFinite(cheapestPrice) && price > 0
+      ? clampScore(price, cheapestPrice)
+      : 0
+
+    const subscriptionBoostRaw = clampRange(plan?.searchBoostLevel ?? 0, 0, 5)
+    const subscriptionBoost = clampScore(subscriptionBoostRaw, 5)
+
+    const productCompletenessFields = [
+      Boolean(content.productName),
+      Boolean(content.shortDescription),
+      Boolean(content.longDescription),
+      content.features.length > 0,
+      Boolean(content.manufacturerPartNumber),
+      Boolean(content.condition),
+    ]
+    const productCompleteness = productCompletenessFields.filter(Boolean).length / 6
+
+    const supplierRating = clampScore(
+      (review?.ratingAverage ?? 0) * 20,
+      100,
+    )
+
+    const verifiedSupplier =
+      model.offer.supplier.supplierApprovalStatus ===
+      SupplierApprovalStatus.Approved
+        ? 1
+        : 0
+
+    const stockAvailability = clampScore(model.offer.stock, 100)
+
+    const fastestLeadTime = model.offer.stockRows.reduce(
+      (best, row) => {
+        const rowLeadTime = getLeadTimeDays(row.leadTime)
+        if (rowLeadTime === null) {
+          return best
+        }
+        return best === null ? rowLeadTime : Math.min(best, rowLeadTime)
+      },
+      null as number | null,
+    )
+    const days = fastestLeadTime ?? (model.offer.updatedAt?.getTime() ? 7 : null)
+    const deliverySla = days === null
+      ? 0
+      : clampScore(21 - clampRange(days, 1, 30), 20) * 0.7 +
+        (performance?.deliveryRate ?? 0) * 0.3
+
+    const relevanceScore = relevance * DEFAULT_SCORE_WEIGHTS.relevance
+    const pricingScore = pricing * DEFAULT_SCORE_WEIGHTS.pricing
+    const subscriptionBoostScore =
+      subscriptionBoost * DEFAULT_SCORE_WEIGHTS.subscriptionBoost
+    const productCompletenessScore =
+      productCompleteness * DEFAULT_SCORE_WEIGHTS.productCompleteness
+    const supplierRatingScore =
+      supplierRating * DEFAULT_SCORE_WEIGHTS.supplierRating
+    const verifiedSupplierScore =
+      verifiedSupplier * DEFAULT_SCORE_WEIGHTS.verifiedSupplier
+    const stockAvailabilityScore =
+      stockAvailability * DEFAULT_SCORE_WEIGHTS.stockAvailability
+    const deliverySlaScore = deliverySla * DEFAULT_SCORE_WEIGHTS.deliverySla
+
+    const total = relevanceScore +
+      pricingScore +
+      subscriptionBoostScore +
+      productCompletenessScore +
+      supplierRatingScore +
+      verifiedSupplierScore +
+      stockAvailabilityScore +
+      deliverySlaScore
+
+    const normalizeScore = (value: number) =>
+      clampRange(value, 0, DEFAULT_RANKING_SCORE_MAX)
+
+    return {
+      relevance: normalizeScore(relevance * DEFAULT_SCORE_WEIGHTS.relevance),
+      pricing: normalizeScore(pricingScore),
+      subscriptionBoost: normalizeScore(subscriptionBoostScore),
+      productCompleteness: normalizeScore(productCompletenessScore),
+      supplierRating: normalizeScore(supplierRatingScore),
+      verifiedSupplier: normalizeScore(verifiedSupplierScore),
+      stockAvailability: normalizeScore(stockAvailabilityScore),
+      deliverySla: normalizeScore(deliverySlaScore),
+      total: normalizeScore(total),
+    }
+  }
+
+  const scoredOfferModels = offerModels.map((model) => {
+    const reviewSummary = reviewSummaries.get(model.offer.supplierId)
+    const performanceSummary = performanceSummaries.get(model.offer.supplierId)
+    return {
+      model,
+      reviewSummary,
+      performanceSummary,
+      ranking: scoreOffer(model, reviewSummary, performanceSummary),
+    }
+  })
+
+  return scoredOfferModels.sort((left, right) => {
+    const leftScore = left.ranking.total
+    const rightScore = right.ranking.total
     return (
-      score(right, rightReview, rightPerf) -
-        score(left, leftReview, leftPerf) ||
-      getSupplierPartEffectivePriceCents(left.offer) -
-        getSupplierPartEffectivePriceCents(right.offer) ||
-      right.offer.updatedAt.getTime() - left.offer.updatedAt.getTime()
+      rightScore - leftScore ||
+      getSupplierPartEffectivePriceCents(left.model.offer) -
+        getSupplierPartEffectivePriceCents(right.model.offer) ||
+      right.model.offer.updatedAt.getTime() - left.model.offer.updatedAt.getTime()
     )
   })
 }
@@ -554,6 +762,7 @@ const buildOffer = async (
   offer: MarketplaceSupplierPart,
   recommended: boolean,
   reviewSummary?: SupplierProductReviewSummary,
+  ranking?: MarketplaceOfferRankingScores,
 ) => {
   const content = extractVendorContent(offer)
   const effectivePrice = getSupplierPartEffectivePriceCents(offer)
@@ -577,19 +786,36 @@ const buildOffer = async (
     ratingAverage: reviewSummary?.ratingAverage ?? 0,
     reviewCount: reviewSummary?.reviewCount ?? 0,
     recommended,
+    featuredVendor: supplierPlanForOffer(offer)?.featuredVendor ?? false,
+    searchBoostLevel: supplierPlanForOffer(offer)?.searchBoostLevel ?? 0,
+    ...(ranking ? { ranking } : {}),
     images,
     content,
     warehouseStock: offer.stockRows,
   }
 }
 
-const summarizeProduct = async (part: MarketplacePart) => {
-  const offerModels = (await rankedOfferModels(
+const summarizeProduct = async (
+  part: MarketplacePart,
+  searchContext?: RankedOfferSearchContext,
+  includeRankingMeta = false,
+) => {
+  const rankedOffers = await rankedOfferModels(
     getUniqueSellableOfferModels(part.supplierParts),
-  )).slice(0, 5)
-  const sellableOffers = offerModels.map(({ offer }) => offer)
+    searchContext,
+  )
+  const offerModels = rankedOffers.slice(0, 5)
   const offers = (
-    await Promise.all(sellableOffers.map((offer) => buildOffer(offer, false)))
+    await Promise.all(
+      offerModels.map((offerModel) =>
+        buildOffer(
+          offerModel.model.offer,
+          false,
+          offerModel.reviewSummary,
+          includeRankingMeta ? offerModel.ranking : undefined,
+        ),
+      ),
+    )
   ).sort((left, right) => left.price - right.price)
   const minOffer = offers[0] ?? null
   const vendorContentOffers = part.supplierParts.filter(hasVendorContent)
@@ -673,7 +899,7 @@ export async function listMarketplaceProductsByUids(
   limit = 100,
 ) {
   const parts = await loadPartsByUids(partUids, Math.min(Math.max(limit, 1), 100))
-  return Promise.all(parts.map(summarizeProduct))
+  return Promise.all(parts.map((part) => summarizeProduct(part)))
 }
 
 const findPartUidsByPartSearch = async (query: string) => {
@@ -880,8 +1106,10 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
   const partNumber = normalizeText(input.partNumber)
   const vin = normalizeText(input.vin)
   const textQuery = normalizeText(input.q)
+  const includeRankingMetadata = input.includeRankingMetadata === true
   let parts: MarketplacePart[] = []
   let searchType: "partNumber" | "vin" | "text" = "text"
+  const searchContext = partNumber || textQuery || null
 
   if (partNumber) {
     searchType = "partNumber"
@@ -895,7 +1123,11 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
   } else {
     parts = await searchPartsByText(textQuery, limit)
   }
-  const products = await Promise.all(parts.map(summarizeProduct))
+  const products = await Promise.all(
+    parts.map((part) =>
+      summarizeProduct(part, { queryText: searchContext }, includeRankingMetadata),
+    ),
+  )
 
   return {
     ok: true,
@@ -939,23 +1171,20 @@ export async function getMarketplaceProduct(partUid: string) {
     return { ok: false as const, message: "Product was not found" }
   }
 
-  const offerModels = (await rankedOfferModels(
-    getUniqueSellableOfferModels(part.supplierParts),
-  )).slice(0, 5)
-  const recommendedOfferId = offerModels[0]?.offer.id ?? null
-  const supplierReviewSummaries = await getSupplierReviewSummaries(
-    offerModels.map(({ offer }) => offer.supplierId),
-  )
+  const offerModels = (
+    await rankedOfferModels(getUniqueSellableOfferModels(part.supplierParts))
+  ).slice(0, 5)
+  const recommendedOfferId = offerModels[0]?.model.offer.id ?? null
   const offers = await Promise.all(
-    offerModels.map(({ offer }) =>
+    offerModels.map((offerModel) =>
       buildOffer(
-        offer,
-        offer.id === recommendedOfferId,
-        supplierReviewSummaries.get(offer.supplierId),
+        offerModel.model.offer,
+        offerModel.model.offer.id === recommendedOfferId,
+        offerModel.reviewSummary,
       ),
     ),
   )
-  const sellableOffers = offerModels.map(({ offer }) => offer)
+  const sellableOffers = offerModels.map(({ model }) => model.offer)
   const vendorContentOffers = sellableOffers.filter(hasVendorContent)
   const selectedContentOffer =
     vendorContentOffers[

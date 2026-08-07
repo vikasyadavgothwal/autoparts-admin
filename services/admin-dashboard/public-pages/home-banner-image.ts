@@ -1,8 +1,9 @@
 import { Buffer } from "node:buffer"
 import { randomUUID } from "node:crypto"
+import { logError } from "@/lib/logger"
 import {
-  deleteObjectFromS3,
   createSignedS3ObjectUrl,
+  deleteObjectFromS3,
   getS3ObjectKeyFromUrl,
   uploadObjectToS3,
 } from "@/lib/storage/s3"
@@ -127,7 +128,7 @@ export const deleteHomeBannerImageFromS3 = async (
     await deleteObjectFromS3(normalizedKey)
     return { ok: true }
   } catch (error) {
-    console.error("[home-banner-image] delete failed", error)
+    logError("[home-banner-image] delete failed", error)
     return { ok: false, error: toDeleteResult(error) }
   }
 }
@@ -216,7 +217,7 @@ export const createHomeBannerImageSignedUrl = async (
       url,
     }
   } catch (error) {
-    console.error("[home-banner-image] signed url failed", error)
+    logError("[home-banner-image] signed url failed", error)
     return {
       ok: false,
       error: toErrorMessage(error),
@@ -263,7 +264,7 @@ export const uploadHomeBannerImageToS3 = async (
       ),
     }
   } catch (error) {
-    console.error("[home-banner-image] upload failed", error)
+    logError("[home-banner-image] upload failed", error)
     return {
       ok: false,
       error: toErrorMessage(error),

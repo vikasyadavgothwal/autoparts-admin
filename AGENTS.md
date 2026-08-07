@@ -117,7 +117,14 @@ Admin dashboard and main backend/API surface for approvals, users, suppliers, ga
 - Admin pages and API routes compile
 - Prisma schema/API contract changes are coordinated with every frontend app
 - Auth, S3, VIN, marketplace, RFQ, order, and supplier inventory flows are verified after changes
-- Run the commands documented in this app README when relevant.
+- Preferred validation: `npm run lint`, `npx tsc --noEmit`, and `npm run build` when relevant.
 - Update project root `docs/AI_HANDOFF.md` after major changes.
+
+### App-Specific Boundaries
+
+- Own backend enforcement for accounts, users, plans, role permissions, menu visibility data, plan feature limits, device/session records, support settings, notifications, and reports.
+- API handlers must verify identity, tenant/business ownership, role permissions, and plan limits server-side before any mutation or sensitive read.
+- Admin UI may configure Free, Pro, and Enterprise plans, but route handlers/services must be the source of truth for enforcement.
+- Visual/design standard: any newly created UI element (including button, input, select, card, modal, table, or any new pattern) must use the existing ShadCN UI system and preserve the established visual style and interaction language of the admin dashboard.
 
 <!-- END:autoparts-pro-codex-docs -->

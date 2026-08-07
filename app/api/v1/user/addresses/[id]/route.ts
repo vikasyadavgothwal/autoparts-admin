@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import {
+  apiError,
+  apiErrorMessage,
+  apiOk,
   readJsonBody,
-  requireCustomerUserFromRequest,
-} from "@/lib/parts-mapping/auth";
+  withCustomerApiRoute,
+} from "@/lib/auth/api-guards";
 import {
   deleteUserAddress,
   updateUserAddress,
@@ -17,50 +20,28 @@ type AddressContext = {
 };
 
 export async function PATCH(request: NextRequest, context: AddressContext) {
-  const auth = await requireCustomerUserFromRequest(request);
-  if (!auth.ok) return auth.response;
+  return withCustomerApiRoute(request, async (user) => {
+    const parsed = await readJsonBody<UserAddressInput>(request);
+    if (!parsed.ok) return apiError(parsed.message);
 
-  const parsed = await readJsonBody<UserAddressInput>(request);
-  if (!parsed.ok) {
-    return NextResponse.json(
-      { ok: false, message: parsed.message },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const { id } = await context.params;
-    return NextResponse.json({
-      ok: true,
-      address: await updateUserAddress(auth.user.id, id, parsed.body),
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to update address",
-      },
-      { status: 400 },
-    );
-  }
+    try {
+      const { id } = await context.params;
+      return apiOk({
+        address: await updateUserAddress(user.id, id, parsed.body),
+      });
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to update address"));
+    }
+  });
 }
 
 export async function DELETE(request: NextRequest, context: AddressContext) {
-  const auth = await requireCustomerUserFromRequest(request);
-  if (!auth.ok) return auth.response;
-
-  try {
-    const { id } = await context.params;
-    return NextResponse.json(await deleteUserAddress(auth.user.id, id));
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : "Unable to delete address",
-      },
-      { status: 400 },
-    );
-  }
+  return withCustomerApiRoute(request, async (user) => {
+    try {
+      const { id } = await context.params;
+      return apiOk(await deleteUserAddress(user.id, id));
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "Unable to delete address"));
+    }
+  });
 }

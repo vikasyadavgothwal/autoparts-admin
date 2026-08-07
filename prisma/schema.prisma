@@ -2,16 +2,57 @@ generator client {
   provider = "prisma-client"
   output   = "../lib/generated/prisma"
 }
-
 datasource db {
   provider = "postgresql"
 }
-
 enum UserRole {
   Fleet
   User
   Garage
   Supplier
+}
+enum BusinessPlanCode {
+  Free
+  Pro
+  Enterprise
+}
+enum BusinessAccountType {
+  Fleet
+  Garage
+  Supplier
+}
+enum BusinessMemberStatus {
+  Invited
+  Active
+  Suspended
+  Removed
+}
+
+enum BusinessInvitationStatus {
+  Pending
+  Accepted
+  Revoked
+  Expired
+}
+
+enum BusinessAddOnRequestStatus {
+  Requested
+  Approved
+  Enabled
+  Rejected
+}
+
+enum BusinessSupportTicketStatus {
+  Open
+  InProgress
+  Resolved
+  Closed
+}
+
+enum BusinessSupportTicketPriority {
+  Standard
+  Priority
+  Urgent
 }
 
 enum SupplierApprovalStatus {
@@ -32,7 +73,7 @@ enum SupplierPartMappingSource {
   local_db
   vin17    @map("17vin")
   manual
-}
+} 
 
 enum PartNumberType {
   mpn
@@ -265,6 +306,14 @@ model User {
   createdAt                       DateTime                    @default(now())
   updatedAt                       DateTime                    @updatedAt
   sessions                        UserSession[]
+  ownedBusinessAccounts           BusinessAccount[]           @relation("BusinessAccountOwner")
+  businessMemberships             BusinessAccountMember[]
+  sentBusinessInvitations         BusinessInvitation[]        @relation("BusinessInvitationInviter")
+  businessActivityLogs            BusinessActivityLog[]
+  createdBusinessSupportTickets   BusinessSupportTicket[]     @relation("BusinessSupportTicketCreator")
+  createdBusinessAddOnRequests    BusinessAddOnRequest[]      @relation("BusinessAddOnRequester")
+  createdBusinessSavedSearches    BusinessSavedSearch[]       @relation("BusinessSavedSearchCreator")
+  createdBusinessWishlistItems    BusinessWishlistItem[]      @relation("BusinessWishlistItemCreator")
   supplierParts                   SupplierPart[]
   supplierPartStocks              SupplierPartStock[]
   supplierPartPricings            SupplierPartPricing[]
@@ -640,6 +689,266 @@ model PlatformSetting {
   @@map("platform_settings")
 }
 
+model BusinessPlan {
+  id                      String              @id @default(cuid())
+  code                    BusinessPlanCode
+  accountType             BusinessAccountType
+  name                    String
+  description             String?
+  priceAmount             Int                 @default(0)
+  yearlyPriceAmount       Int                 @default(0)
+  priceCurrency           String              @default("AED")
+  billingPeriod           String              @default("monthly")
+  staffLimit              Int?
+  roleLimit               Int?
+  permissionLimit         Int?
+  brandLimit              Int?
+  categoryLimit           Int?
+  vehicleLimit            Int?
+  appointmentLimit        Int?
+  productLimit            Int?
+  rfqLimit                Int?
+  orderLimit              Int?
+  serviceLimit            Int?
+  savedSearchLimit        Int?
+  wishlistLimit           Int?
+  integrationLimit        Int?
+  dashboardReports        Boolean             @default(false)
+  usageReports            Boolean             @default(false)
+  activityReports         Boolean             @default(false)
+  featuredVendor          Boolean             @default(false)
+  searchBoostLevel        Int                 @default(0)
+  apiAccessLevel          String              @default("none")
+  approvalWorkflowEnabled Boolean             @default(false)
+  customRolesEnabled      Boolean             @default(false)
+  helpSupport             Boolean             @default(true)
+  onboarding              Boolean             @default(false)
+  training                Boolean             @default(false)
+  accountAssistance       Boolean             @default(false)
+  prioritySupport         Boolean             @default(false)
+  emailNotifications      Boolean             @default(true)
+  whatsappNotifications   Boolean             @default(false)
+  enabledFeatures         String[]            @default([])
+  enabledMenus            String[]            @default([])
+  isActive                Boolean             @default(true)
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  businessAccounts BusinessAccount[]
+
+  @@unique([accountType, code])
+  @@map("business_plans")
+}
+
+model BusinessAccount {
+  id          String              @id @default(cuid())
+  publicId    String              @unique @default(dbgenerated("'BAC-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8))"))
+  type        BusinessAccountType
+  name        String
+  ownerUserId String
+  planId      String
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  owner         User                    @relation("BusinessAccountOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  plan          BusinessPlan            @relation(fields: [planId], references: [id], onDelete: Restrict)
+  members       BusinessAccountMember[]
+  roles         BusinessRole[]
+  permissions   BusinessPermission[]
+  invitations   BusinessInvitation[]
+  activityLogs  BusinessActivityLog[]
+  addOnRequests BusinessAddOnRequest[]
+  supportTickets BusinessSupportTicket[]
+  savedSearches BusinessSavedSearch[]
+  wishlistItems BusinessWishlistItem[]
+
+  @@unique([ownerUserId, type])
+  @@index([type, planId])
+  @@index([ownerUserId])
+  @@map("business_accounts")
+}
+
+model BusinessSavedSearch {
+  id                String   @id @default(cuid())
+  businessAccountId String
+  name              String
+  scope             String
+  query             Json
+  createdByUserId   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+  createdBy       User?           @relation("BusinessSavedSearchCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([businessAccountId, scope])
+  @@index([createdByUserId])
+  @@map("business_saved_searches")
+}
+
+model BusinessWishlistItem {
+  id                String   @id @default(cuid())
+  businessAccountId String
+  itemType          String
+  itemId            String
+  title             String?
+  metadata          Json?
+  createdByUserId   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+  createdBy       User?           @relation("BusinessWishlistItemCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([businessAccountId, itemType, itemId])
+  @@index([businessAccountId, createdAt])
+  @@index([createdByUserId])
+  @@map("business_wishlist_items")
+}
+
+model BusinessAccountMember {
+  id                String               @id @default(cuid())
+  businessAccountId String
+  userId            String
+  roleIds           String[]             @default([])
+  status            BusinessMemberStatus @default(Active)
+  invitedByUserId   String?
+  joinedAt          DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessAccountId, userId])
+  @@index([userId, status])
+  @@index([businessAccountId, status])
+  @@map("business_account_members")
+}
+
+model BusinessRole {
+  id                String   @id @default(cuid())
+  businessAccountId String
+  name              String
+  description       String?
+  permissionIds     String[] @default([])
+  isOwnerRole       Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([businessAccountId, name])
+  @@index([businessAccountId])
+  @@map("business_roles")
+}
+
+model BusinessPermission {
+  id                String   @id @default(cuid())
+  businessAccountId String?
+  code              String
+  name              String
+  description       String?
+  menuKey           String?
+  featureKey        String?
+  actionKey         String?
+  isSystem          Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  businessAccount BusinessAccount? @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([businessAccountId, code])
+  @@index([businessAccountId])
+  @@index([code])
+  @@map("business_permissions")
+}
+
+model BusinessInvitation {
+  id                String                   @id @default(cuid())
+  businessAccountId String
+  email             String
+  roleIds           String[]                 @default([])
+  tokenHash         String                   @unique
+  invitedByUserId   String
+  status            BusinessInvitationStatus @default(Pending)
+  expiresAt         DateTime
+  acceptedAt        DateTime?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+  invitedBy       User            @relation("BusinessInvitationInviter", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([businessAccountId, status])
+  @@index([email, status])
+  @@map("business_invitations")
+}
+
+model BusinessActivityLog {
+  id                String   @id @default(cuid())
+  businessAccountId String?
+  actorUserId       String?
+  action            String
+  entityType        String?
+  entityId          String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+
+  businessAccount BusinessAccount? @relation(fields: [businessAccountId], references: [id], onDelete: SetNull)
+  actorUser       User?            @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([businessAccountId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("business_activity_logs")
+}
+
+model BusinessAddOnRequest {
+  id                String                     @id @default(cuid())
+  businessAccountId String
+  featureKey        String
+  label             String
+  note              String?
+  status            BusinessAddOnRequestStatus @default(Requested)
+  requestedByUserId String?
+  decidedByAdminId  String?
+  decidedAt         DateTime?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+  requestedBy     User?           @relation("BusinessAddOnRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  decidedBy       admin?          @relation("BusinessAddOnDecider", fields: [decidedByAdminId], references: [id], onDelete: SetNull)
+
+  @@unique([businessAccountId, featureKey])
+  @@index([businessAccountId, status])
+  @@index([status, createdAt])
+  @@map("business_add_on_requests")
+}
+
+model BusinessSupportTicket {
+  id                String                        @id @default(cuid())
+  businessAccountId String
+  subject           String
+  message           String
+  status            BusinessSupportTicketStatus   @default(Open)
+  priority          BusinessSupportTicketPriority @default(Standard)
+  createdByUserId   String?
+  assignedAdminId   String?
+  createdAt         DateTime                      @default(now())
+  updatedAt         DateTime                      @updatedAt
+
+  businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+  createdBy       User?           @relation("BusinessSupportTicketCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  assignedAdmin   admin?          @relation("BusinessSupportTicketAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
+
+  @@index([businessAccountId, status])
+  @@index([status, createdAt])
+  @@map("business_support_tickets")
+}
+
 model GarageServiceReview {
   id            String    @id @default(cuid())
   garageId      String
@@ -744,6 +1053,8 @@ model UserSession {
   refreshTokenHash String    @unique
   accessJti        String
   deviceName       String?
+  deviceMacAddress String?
+  deviceIdentifier String?
   userAgent        String?
   ipHash           String?
   lastUsedAt       DateTime?
@@ -755,6 +1066,7 @@ model UserSession {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([userId, deviceIdentifier])
   @@index([expiresAt])
   @@map("user_sessions")
 }
@@ -776,6 +1088,8 @@ model admin {
   notifications       Notification[]       @relation("AdminNotificationRecipient")
   sentNotifications   Notification[]       @relation("AdminNotificationActor")
   notificationDevices NotificationDevice[] @relation("AdminNotificationDevice")
+  decidedBusinessAddOnRequests BusinessAddOnRequest[] @relation("BusinessAddOnDecider")
+  assignedBusinessSupportTickets BusinessSupportTicket[] @relation("BusinessSupportTicketAssignee")
 }
 
 model Notification {
@@ -1013,6 +1327,8 @@ model UserSavedPart {
   id        String   @id @default(cuid())
   userId    String
   partUid   String
+  watchPriceChanges Boolean @default(false)
+  watchStockReturns  Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

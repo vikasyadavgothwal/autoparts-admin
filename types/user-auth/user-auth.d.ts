@@ -84,6 +84,8 @@ export type UserSessionRequestContext = {
   ipAddress: string | null
   userAgent: string | null
   deviceName: string | null
+  deviceMacAddress?: string | null
+  deviceIdentifier?: string | null
 }
 
 export type IssuedUserSession = {
@@ -106,6 +108,8 @@ export type AuthenticatedUserSession = {
 export type UserDeviceSession = {
   id: string
   deviceName: string | null
+  deviceMacAddress: string | null
+  deviceIdentifier: string | null
   userAgent: string | null
   createdAt: string
   lastUsedAt: string | null
@@ -154,6 +158,8 @@ export type LoginUserApiBody = {
   deviceName?: unknown
   firebaseIdToken?: unknown
   installationId?: unknown
+  deviceMacAddress?: unknown
+  deviceIdentifier?: unknown
   requestedRole?: unknown
   requestedRoleUid?: unknown
   requestedDisplayName?: unknown

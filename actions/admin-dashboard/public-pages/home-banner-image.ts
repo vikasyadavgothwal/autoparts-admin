@@ -1,5 +1,6 @@
 "use server"
 
+import { logError } from "@/lib/logger"
 import { revalidatePath } from "next/cache"
 import { getCurrentAdminSession } from "@/actions/admin-auth/me"
 import { saveHomePageContent } from "@/actions/admin-dashboard/public-pages/public-content"
@@ -156,7 +157,7 @@ export async function uploadHomeBannerImage(
       data: saveResult.data,
     }
   } catch (error) {
-    console.error("[home-banner-image] uploadHomeBannerImage failed", error)
+    logError("[home-banner-image] uploadHomeBannerImage failed", error)
     return { ok: false, error: toUploadError(error) }
   }
 }

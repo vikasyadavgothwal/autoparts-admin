@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getOptionalUserFromRequest } from "@/lib/parts-mapping/auth";
+import { getOptionalUserFromRequest } from "@/lib/auth/api-guards";
 import { UserRole } from "@/lib/generated/prisma/client";
 import { confirmOrderItemReceipt } from "@/services/orders/order-service";
 

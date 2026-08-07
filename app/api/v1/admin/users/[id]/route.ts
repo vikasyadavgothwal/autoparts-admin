@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { setUserAccountStatus } from "@/actions/admin-dashboard/users/user-management"
-import { readJsonBody, requireAdminFromRequest } from "@/lib/parts-mapping/auth"
+import { readJsonBody, requireAdminFromRequest } from "@/lib/auth/api-guards"
 
 type RouteContext = { params: Promise<{ id: string }> }
 type UpdateUserBody = { isActive?: unknown }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { readJsonBody, requireAdminFromRequest } from "@/lib/parts-mapping/auth"
+import { readJsonBody, requireAdminFromRequest } from "@/lib/auth/api-guards"
 import {
   deleteAdminGarage,
   updateAdminGarage,
