@@ -6,6 +6,8 @@ import {
 } from "@/components/admin-dashboard/orders/live-orders-page"
 import { listAllOrders } from "@/services/orders/order-service"
 
+export const dynamic = "force-dynamic"
+
 const toClientOrders = (orders: LiveOrder[]): LiveOrder[] =>
   orders.map((order) => ({
     ...order,
