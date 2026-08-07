@@ -124,8 +124,8 @@ export async function POST(
     ))
   }
 
-  if ((result as any).mfa) {
-    return withCors(request, NextResponse.json({ ok: true, success: true, user: result.user, mfa: (result as any).mfa }, { status: result.statusCode }))
+  if (result.mfa) {
+    return withCors(request, NextResponse.json({ ok: true, success: true, user: result.user, mfa: result.mfa }, { status: result.statusCode }))
   }
 
   if (

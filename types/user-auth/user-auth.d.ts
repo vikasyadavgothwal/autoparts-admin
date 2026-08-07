@@ -1,4 +1,5 @@
 import type { UserRole } from "@/lib/generated/prisma/client"
+import type { BusinessLoginChallenge } from "@/services/business-login-security/business-login-security-service"
 
 export type UserProfile = {
   id: string
@@ -144,6 +145,7 @@ export type UserAuthActionResult =
       accessToken?: string
       refreshToken?: string
       refreshExpiresAt?: string
+      mfa?: BusinessLoginChallenge
       statusCode: 200 | 201
     })
   | (UserAuthApiError & {
