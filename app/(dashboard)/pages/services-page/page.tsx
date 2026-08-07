@@ -6,6 +6,8 @@ import { ProfessionalPageForm } from "@/components/admin-dashboard/public-pages/
 import { DEFAULT_PUBLIC_PAGE_SEO_CONFIG } from "@/services/admin-dashboard/public-pages/seo"
 import type { PublicPageSectionContent } from "@/types/admin-dashboard/public-pages/public-page-content"
 
+export const dynamic = "force-dynamic"
+
 const DEFAULT_SERVICES_CONTENT: PublicPageSectionContent = {
   heading: "",
   subheading: "",

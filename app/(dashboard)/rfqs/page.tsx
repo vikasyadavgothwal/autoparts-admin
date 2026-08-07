@@ -4,6 +4,8 @@ import {
 } from "@/components/admin-dashboard/rfqs/rfqs-live-page"
 import { listAdminRfqs } from "@/services/fleet/fleet-service"
 
+export const dynamic = "force-dynamic"
+
 const toClientRfqs = (rfqs: AdminRfq[]): AdminRfq[] =>
   rfqs.map((rfq) => ({
     ...rfq,
