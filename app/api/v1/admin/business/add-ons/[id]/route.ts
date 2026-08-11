@@ -9,7 +9,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const auth = await requireAdminFromRequest()
   if (!auth.ok) return auth.response
 
-  const body = await readJsonBody<{ status?: unknown }>(request)
+  const body = await readJsonBody<{ status?: unknown; validFrom?: unknown; validUntil?: unknown; renewalAt?: unknown }>(request)
   if (!body.ok) return apiError(body.message)
 
   try {
@@ -18,6 +18,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       adminId: auth.admin.id,
       id,
       status: body.body.status,
+      validFrom: body.body.validFrom,
+      validUntil: body.body.validUntil,
+      renewalAt: body.body.renewalAt,
     })
     return NextResponse.json({ ok: true, addOnRequest })
   } catch (error) {

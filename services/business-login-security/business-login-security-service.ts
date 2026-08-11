@@ -8,13 +8,18 @@ import { createUserSession } from "@/services/user-auth/user-session-service"
 import { mapUserProfile } from "@/services/user-auth/user-profile"
 import type { UserSessionRequestContext } from "@/types/user-auth/user-auth"
 
+export type StaffLoginMethod = "any" | "google" | "password"
+export type BusinessLoginProvider = "password" | "google" | "other"
+
 const BUSINESS_ROLES = new Set<UserRole>(["Fleet", "Garage", "Supplier"] as UserRole[])
+const STAFF_LOGIN_METHODS = new Set<StaffLoginMethod>(["any", "google", "password"])
 const token = () => randomBytes(32).toString("hex")
 const otp = () => String(randomInt(100000, 1000000))
 const accountTypeForRole = (role: UserRole) => role as unknown as BusinessAccountType
 let tableReady = false
+let policyTableReady = false
 
-type BusinessLoginAccount = { id: string; type: BusinessAccountType; plan: { code: BusinessPlanCode; name: string } }
+type BusinessLoginAccount = { id: string; type: BusinessAccountType; plan: { code: BusinessPlanCode; name: string; loginSecurityMode: string } }
 
 export type BusinessLoginChallenge = {
   required: true
@@ -66,6 +71,46 @@ async function ensureRow(accountId: string, userId: string) {
   return row
 }
 
+async function ensurePolicyTable() {
+  if (policyTableReady) return
+  await db.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "business_login_policies" (
+      "id" TEXT PRIMARY KEY,
+      "businessAccountId" TEXT NOT NULL UNIQUE REFERENCES "business_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      "staffLoginMethod" TEXT NOT NULL DEFAULT 'any',
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "business_login_policies_businessAccountId_idx" ON "business_login_policies"("businessAccountId")`)
+  policyTableReady = true
+}
+
+const normalizeStaffLoginMethod = (value: unknown): StaffLoginMethod =>
+  STAFF_LOGIN_METHODS.has(value as StaffLoginMethod) ? value as StaffLoginMethod : "any"
+
+async function getBusinessLoginPolicy(accountId: string) {
+  await ensurePolicyTable()
+  await db.$executeRaw`
+    INSERT INTO "business_login_policies" ("id", "businessAccountId")
+    VALUES (${token()}, ${accountId})
+    ON CONFLICT ("businessAccountId") DO NOTHING
+  `
+  const [row] = await db.$queryRaw<Array<{ staffLoginMethod: string }>>`
+    SELECT "staffLoginMethod" FROM "business_login_policies" WHERE "businessAccountId" = ${accountId}
+  `
+  return { staffLoginMethod: normalizeStaffLoginMethod(row?.staffLoginMethod) }
+}
+
+async function saveBusinessLoginPolicy(accountId: string, staffLoginMethod: StaffLoginMethod) {
+  await ensurePolicyTable()
+  await db.$executeRaw`
+    INSERT INTO "business_login_policies" ("id", "businessAccountId", "staffLoginMethod")
+    VALUES (${token()}, ${accountId}, ${staffLoginMethod})
+    ON CONFLICT ("businessAccountId") DO UPDATE SET "staffLoginMethod" = ${staffLoginMethod}, "updatedAt" = CURRENT_TIMESTAMP
+  `
+}
+
 async function sendOtp(email: string | null, code: string, subject: string) {
   if (!email) throw new Error("This account does not have an email for OTP verification")
   await sendSmtpMail({ to: email, subject, text: `Your AutoParts Pro verification code is ${code}. It expires in 10 minutes.`, html: `<p>Your AutoParts Pro verification code is <strong>${code}</strong>.</p><p>It expires in 10 minutes.</p>` })
@@ -73,7 +118,8 @@ async function sendOtp(email: string | null, code: string, subject: string) {
 
 export async function createBusinessLoginChallenge(input: { user: User; role: UserRole | null }) {
   const account = await findBusinessAccount(input.user.id, input.role)
-  if (!account || account.plan.code === "Free") return null
+  const mode = account?.plan.loginSecurityMode ?? (account?.plan.code === "Enterprise" || account?.plan.code === "Pro" ? "otp" : "password")
+  if (!account || mode === "password") return null
   const row = await ensureRow(account.id, input.user.id)
   const challengeId = token()
   const code = otp()
@@ -88,11 +134,18 @@ export async function createBusinessLoginChallenge(input: { user: User; role: Us
   return {
     required: true as const,
     challengeId,
-    method: account.plan.code === "Enterprise" ? "pin_or_otp" as const : "otp" as const,
+    method: row.pinHash ? "pin_or_otp" as const : "otp" as const,
     planCode: account.plan.code,
     hasPin: Boolean(row.pinHash),
-    message: account.plan.code === "Enterprise" ? "Enter your 6-digit PIN or email OTP to continue." : "Enter the OTP sent to your email to continue.",
+    message: "Enter the OTP sent to your email to continue.",
   }
+}
+
+export async function ensureBusinessStaffLoginMethodAllowed(input: { businessAccountId: string; provider: BusinessLoginProvider }) {
+  const { staffLoginMethod } = await getBusinessLoginPolicy(input.businessAccountId)
+  if (staffLoginMethod === "any" || staffLoginMethod === input.provider) return
+  if (staffLoginMethod === "google") throw new Error("Your owner requires staff to sign in with Google.")
+  throw new Error("Your owner requires staff to sign in with email and password.")
 }
 
 export async function verifyBusinessLoginChallenge(input: { challengeId: unknown; code: unknown; method: unknown; context: UserSessionRequestContext }) {
@@ -116,10 +169,20 @@ export async function verifyBusinessLoginChallenge(input: { challengeId: unknown
 }
 
 export async function getBusinessLoginSecurityStatus(userId: string) {
-  const access = await db.businessAccount.findFirst({ where: { OR: [{ ownerUserId: userId }, { members: { some: { userId, status: "Active" } } }], isActive: true, plan: { code: "Enterprise" } }, include: { plan: true } })
-  if (!access) return { enterprise: false, hasPin: false }
+  const access = await db.businessAccount.findFirst({
+    where: { OR: [{ ownerUserId: userId }, { members: { some: { userId, status: "Active" } } }], isActive: true, plan: { code: "Enterprise" } },
+    select: { id: true, ownerUserId: true },
+  })
+  if (!access) return { enterprise: false, hasPin: false, staffLoginMethod: "any", canManageStaffLoginPolicy: false }
   const row = await ensureRow(access.id, userId)
-  return { enterprise: true, hasPin: Boolean(row.pinHash), businessAccountId: access.id }
+  const policy = await getBusinessLoginPolicy(access.id)
+  return {
+    enterprise: true,
+    hasPin: Boolean(row.pinHash),
+    businessAccountId: access.id,
+    staffLoginMethod: policy.staffLoginMethod,
+    canManageStaffLoginPolicy: access.ownerUserId === userId,
+  }
 }
 
 export async function requestBusinessPinOtp(userId: string) {
@@ -148,4 +211,24 @@ export async function saveBusinessPin(input: { userId: string; pin: unknown; otp
   if (!row?.otpHash || !verifyPassword(code, row.otpHash)) throw new Error("Invalid or expired OTP")
   await db.$executeRaw`UPDATE "business_login_security" SET "pinHash" = ${hashPassword(pin)}, "otpConsumedAt" = NOW(), "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = ${row.id}`
   return { message: "PIN saved successfully" }
+}
+
+export async function saveBusinessStaffLoginMethod(input: { userId: string; businessAccountId: unknown; staffLoginMethod: unknown }) {
+  const staffLoginMethod = typeof input.staffLoginMethod === "string" && STAFF_LOGIN_METHODS.has(input.staffLoginMethod as StaffLoginMethod)
+    ? input.staffLoginMethod as StaffLoginMethod
+    : null
+  const businessAccountId = typeof input.businessAccountId === "string" ? input.businessAccountId.trim() : ""
+  if (!staffLoginMethod) throw new Error("Choose a valid staff login method")
+  const account = await db.businessAccount.findFirst({
+    where: {
+      ownerUserId: input.userId,
+      isActive: true,
+      plan: { code: "Enterprise" },
+      ...(businessAccountId ? { id: businessAccountId } : {}),
+    },
+    select: { id: true },
+  })
+  if (!account) throw new Error("Only Enterprise owners can manage staff login policy")
+  await saveBusinessLoginPolicy(account.id, staffLoginMethod)
+  return { message: "Staff login policy saved", businessAccountId: account.id, staffLoginMethod }
 }

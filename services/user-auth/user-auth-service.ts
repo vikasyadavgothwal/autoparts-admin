@@ -1,10 +1,14 @@
 import { db } from "@/lib/database/prisma"
 import { getFirebaseAuth } from "@/lib/firebase/admin"
-import { Prisma, UserRole } from "@/lib/generated/prisma/client"
+import { BusinessAccountType, BusinessMemberStatus, Prisma, UserRole } from "@/lib/generated/prisma/client"
 import { hashPassword, verifyPassword } from "@/lib/auth/password"
 import { ensureBusinessAccountForOwner } from "@/services/business/business-platform-service"
 import { createUserSession } from "@/services/user-auth/user-session-service"
-import { createBusinessLoginChallenge } from "@/services/business-login-security/business-login-security-service"
+import {
+  createBusinessLoginChallenge,
+  ensureBusinessStaffLoginMethodAllowed,
+  type BusinessLoginProvider,
+} from "@/services/business-login-security/business-login-security-service"
 import { mapUserProfile } from "@/services/user-auth/user-profile"
 import { logError } from "@/lib/logger"
 import type {
@@ -19,6 +23,17 @@ CreateUserInput,
 const VERIFIED_ACCOUNT_ROLE_REQUIRED_MESSAGE =
   "Choose an account type to finish creating your account"
 
+type BusinessUserRole = Extract<UserRole, "Fleet" | "Garage" | "Supplier">
+
+const isBusinessUserRole = (role: UserRole): role is BusinessUserRole =>
+  role === UserRole.Fleet || role === UserRole.Garage || role === UserRole.Supplier
+
+const userRoleToAccountType = (role: BusinessUserRole): BusinessAccountType => {
+  if (role === UserRole.Fleet) return BusinessAccountType.Fleet
+  if (role === UserRole.Garage) return BusinessAccountType.Garage
+  return BusinessAccountType.Supplier
+}
+
 const getFirebaseWebApiKey = (apiKey?: string | null) =>
   apiKey?.trim() ||
   process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim() ||
@@ -28,6 +43,38 @@ const getFirebaseWebApiKey = (apiKey?: string | null) =>
 const normalizeText = (value: string | null | undefined): string | null => {
   const normalized = value?.trim().replace(/\s+/g, " ") ?? ""
   return normalized || null
+}
+
+const firebaseProvider = (provider: string | null): BusinessLoginProvider =>
+  provider === "google.com" || provider === "google"
+    ? "google"
+    : provider === "password"
+      ? "password"
+      : "other"
+
+async function ensureBusinessStaffCanLogin(user: { id: string; activeRole: UserRole }, provider: BusinessLoginProvider) {
+  if (!isBusinessUserRole(user.activeRole)) return
+  const membership = await db.businessAccountMember.findFirst({
+    where: {
+      userId: user.id,
+      businessAccount: {
+        type: userRoleToAccountType(user.activeRole),
+        ownerUserId: { not: user.id },
+        isActive: true,
+      },
+    },
+    select: {
+      businessAccountId: true,
+      status: true,
+      businessAccount: { select: { plan: { select: { code: true } } } },
+    },
+  })
+  if (membership && membership.status !== BusinessMemberStatus.Active) {
+    throw new Error("Your account is disabled by your owner.")
+  }
+  if (membership?.businessAccount.plan.code === "Enterprise") {
+    await ensureBusinessStaffLoginMethodAllowed({ businessAccountId: membership.businessAccountId, provider })
+  }
 }
 
 const normalizeEmail = (value: string | null | undefined): string | null => {
@@ -324,7 +371,7 @@ export async function loginUser(
   context: UserSessionRequestContext,
 ): Promise<{
   user: UserProfile
-  issued: IssuedUserSession
+  issued?: IssuedUserSession
   challenge?: Awaited<ReturnType<typeof createBusinessLoginChallenge>>
 }> {
   const user = await db.user.findUnique({
@@ -342,19 +389,20 @@ export async function loginUser(
   if (!user.isActive) {
     throw new Error("User account is inactive")
   }
+  await ensureBusinessStaffCanLogin(user, "password")
+
+  const challenge = await createBusinessLoginChallenge({ user, role: user.activeRole })
+  if (challenge) return { user: mapUserProfile(user), challenge }
 
   const loggedInAt = new Date()
-  const issued = await createUserSession(user, context)
   const updatedUser = await db.user.update({
     where: { id: user.id },
     data: { lastLoginAt: loggedInAt },
   })
-
-  const challenge = await createBusinessLoginChallenge({ user: updatedUser, role: updatedUser.activeRole })
+  const issued = await createUserSession(updatedUser, context)
   return {
     user: mapUserProfile(updatedUser),
     issued,
-    challenge,
   }
 }
 
@@ -370,7 +418,7 @@ export async function loginUserWithFirebase(
   } | null = null,
 ): Promise<{
   user: UserProfile
-  issued: IssuedUserSession
+  issued?: IssuedUserSession
   challenge?: Awaited<ReturnType<typeof createBusinessLoginChallenge>>
 }> {
   const firebaseUid = identity.uid.trim()
@@ -435,6 +483,9 @@ export async function loginUserWithFirebase(
 
   if (existingUser && !existingUser.isActive) {
     throw new Error("User account is inactive")
+  }
+  if (existingUser) {
+    await ensureBusinessStaffCanLogin(existingUser, firebaseProvider(identity.signInProvider))
   }
 
   if (!existingUser && !requestedRole) {
@@ -503,7 +554,9 @@ export async function loginUserWithFirebase(
     })
   }
 
-  const issued = await createUserSession(user, context)
   const challenge = await createBusinessLoginChallenge({ user, role: requestedRole ?? user.activeRole })
+  if (challenge) return { user: mapUserProfile(user), challenge }
+
+  const issued = await createUserSession(user, context)
   return { user: mapUserProfile(user), issued, challenge }
 }

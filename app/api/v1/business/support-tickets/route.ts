@@ -18,11 +18,14 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   return withUserApiRoute(request, async (auth) => {
     try {
-      const supportTickets = await listBusinessSupportTickets({
+      const ticketPage = await listBusinessSupportTickets({
         userId: auth.user.id,
         businessAccountId: request.nextUrl.searchParams.get("businessAccountId"),
+        page: request.nextUrl.searchParams.get("page"),
+        pageSize: request.nextUrl.searchParams.get("pageSize"),
       })
-      return apiOk({ supportTickets })
+      const { items: supportTickets, ...pagination } = ticketPage
+      return apiOk({ supportTickets, pagination })
     } catch (error) {
       return apiError(apiErrorMessage(error, "Unable to list support tickets"))
     }
@@ -35,6 +38,7 @@ export async function POST(request: NextRequest) {
       businessAccountId?: unknown
       subject?: unknown
       message?: unknown
+      category?: unknown
     }>(request)
     if (!body.ok) return apiError(body.message)
 
@@ -44,6 +48,7 @@ export async function POST(request: NextRequest) {
         businessAccountId: body.body.businessAccountId,
         subject: body.body.subject,
         message: body.body.message,
+        category: body.body.category,
       })
       return apiCreated({ supportTicket })
     } catch (error) {

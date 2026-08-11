@@ -192,7 +192,7 @@ export function NotificationPopup({ onUnreadChange }: NotificationPopupProps) {
   )
 
   return (
-    <div className="w-full">
+    <div className="w-full overflow-x-hidden">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>
           <h3 className="text-sm font-semibold text-foreground">
@@ -226,7 +226,7 @@ export function NotificationPopup({ onUnreadChange }: NotificationPopupProps) {
           </Button>
         </div>
       ) : null}
-      <div className="max-h-[22rem] overflow-y-auto">
+      <div className="max-h-[22rem] overflow-y-auto overflow-x-hidden">
         {isLoading ? (
           <div className="py-10 text-center text-sm text-muted-foreground">
             Loading notifications...
@@ -246,7 +246,7 @@ export function NotificationPopup({ onUnreadChange }: NotificationPopupProps) {
                 key={notification.id}
                 disabled={isMutating}
                 onClick={() => void openNotification(notification)}
-                className={`flex w-full items-start gap-3 border-b border-border/70 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/70 focus-visible:bg-muted/70 focus-visible:outline-none ${
+                className={`flex min-w-0 w-full items-start gap-3 border-b border-border/70 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/70 focus-visible:bg-muted/70 focus-visible:outline-none ${
                   isUnread ? "bg-primary/5" : ""
                 }`}
               >
@@ -263,7 +263,7 @@ export function NotificationPopup({ onUnreadChange }: NotificationPopupProps) {
                       {relativeTime(notification.createdAt)}
                     </span>
                   </span>
-                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                  <span className="mt-1 block break-words text-xs leading-5 text-muted-foreground">
                     {notification.body}
                   </span>
                 </span>

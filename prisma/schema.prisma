@@ -86,6 +86,7 @@ enum FleetVehicleStatus {
   active
   maintenance
   inactive
+  plan_suspended
 }
 
 enum RfqSource {
@@ -130,6 +131,7 @@ enum OrderSource {
 enum GarageServiceStatus {
   active
   inactive
+  plan_suspended
 }
 
 enum GarageVerificationTarget {
@@ -402,6 +404,8 @@ model FleetVehicle {
   mileage     Int
   driver      String?
   status      FleetVehicleStatus @default(active)
+  planSuspendedAt DateTime?
+  planSuspensionReason String?
   year        Int
   make        String
   model       String
@@ -624,6 +628,8 @@ model GarageService {
   currency        String              @default("AED")
   bookingsCount   Int                 @default(0)
   status          GarageServiceStatus @default(active)
+  planSuspendedAt DateTime?
+  planSuspensionReason String?
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
 
@@ -699,6 +705,11 @@ model BusinessPlan {
   yearlyPriceAmount       Int                 @default(0)
   priceCurrency           String              @default("AED")
   billingPeriod           String              @default("monthly")
+  monthlyBillingDays      Int                 @default(30)
+  securityTier            String              @default("Basic")
+  supportTier             String              @default("Basic")
+  loginSecurityMode       String              @default("password")
+  reportLevel             String              @default("dashboard")
   staffLimit              Int?
   roleLimit               Int?
   permissionLimit         Int?
@@ -759,6 +770,7 @@ model BusinessAccount {
   invitations   BusinessInvitation[]
   activityLogs  BusinessActivityLog[]
   addOnRequests BusinessAddOnRequest[]
+  apiKeys       BusinessApiKey[]
   supportTickets BusinessSupportTicket[]
   savedSearches BusinessSavedSearch[]
   wishlistItems BusinessWishlistItem[]
@@ -915,6 +927,9 @@ model BusinessAddOnRequest {
   requestedByUserId String?
   decidedByAdminId  String?
   decidedAt         DateTime?
+  validFrom         DateTime?
+  validUntil        DateTime?
+  renewalAt         DateTime?
   createdAt         DateTime                   @default(now())
   updatedAt         DateTime                   @updatedAt
 
@@ -925,7 +940,31 @@ model BusinessAddOnRequest {
   @@unique([businessAccountId, featureKey])
   @@index([businessAccountId, status])
   @@index([status, createdAt])
+  @@index([validUntil])
   @@map("business_add_on_requests")
+}
+
+model BusinessApiKey {
+  id                String    @id
+  businessAccountId String
+  name              String
+  keyPrefix         String    @unique
+  keyHash           String    @unique
+  scopes            String[]  @default([])
+  status            String    @default("Active")
+  createdByUserId   String?
+  revokedByUserId   String?
+  revokedAt         DateTime?
+  lastUsedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+
+  @@index([businessAccountId, status])
+  @@index([keyHash])
+  @@index([lastUsedAt])
+  @@map("business_api_keys")
 }
 
 model BusinessSupportTicket {
@@ -933,6 +972,7 @@ model BusinessSupportTicket {
   businessAccountId String
   subject           String
   message           String
+  category          String?
   status            BusinessSupportTicketStatus   @default(Open)
   priority          BusinessSupportTicketPriority @default(Standard)
   createdByUserId   String?
@@ -947,6 +987,37 @@ model BusinessSupportTicket {
   @@index([businessAccountId, status])
   @@index([status, createdAt])
   @@map("business_support_tickets")
+}
+
+model BusinessSupportVideo {
+  id          String              @id @default(cuid())
+  accountType BusinessAccountType
+  supportTier String              @default("Basic")
+  title       String
+  description String?
+  videoUrl    String
+  sortOrder   Int                 @default(0)
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([accountType, supportTier, isActive])
+  @@map("business_support_videos")
+}
+
+model BusinessSupportFaq {
+  id          String              @id @default(cuid())
+  accountType BusinessAccountType
+  supportTier String              @default("Basic")
+  question    String
+  answer      String
+  sortOrder   Int                 @default(0)
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([accountType, supportTier, isActive])
+  @@map("business_support_faqs")
 }
 
 model GarageServiceReview {
@@ -1219,6 +1290,9 @@ model SupplierPart {
   mappingSource          SupplierPartMappingSource?
   mappingError           String?
   rawUploadData          Json?
+  isActive               Boolean                    @default(true)
+  planSuspendedAt        DateTime?
+  planSuspensionReason   String?
   createdAt              DateTime                   @default(now())
   updatedAt              DateTime                   @updatedAt
 

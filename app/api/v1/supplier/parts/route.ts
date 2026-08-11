@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       categories: ["category" in parsed.body ? parsed.body.category : null],
     })
     const currentCount = await db.supplierPart.count({
-      where: { supplierId: auth.user.id },
+      where: { supplierId: auth.user.id, isActive: true },
     })
     const account = await assertBusinessPlanLimit({
       userId: auth.user.id,

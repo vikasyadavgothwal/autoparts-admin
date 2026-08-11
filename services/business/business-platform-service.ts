@@ -4,6 +4,8 @@ import { sendSmtpMail } from "@/lib/email/smtp"
 import { getFirebaseAuth } from "@/lib/firebase/admin"
 import { hashPassword } from "@/lib/auth/password"
 import { db } from "@/lib/database/prisma"
+import { logError } from "@/lib/logger"
+import { createNotificationsSafely } from "@/services/notifications/notification-service"
 import {
   BusinessAccountType,
   BusinessAddOnRequestStatus,
@@ -20,11 +22,24 @@ import {
   type Prisma,
 } from "@/lib/generated/prisma/client"
 
-const businessRoles = new Set<UserRole>([
-  UserRole.Fleet,
-  UserRole.Garage,
-  UserRole.Supplier,
-])
+type BusinessUserRole = Extract<UserRole, "Fleet" | "Garage" | "Supplier">
+
+const isBusinessUserRole = (role: UserRole): role is BusinessUserRole =>
+  role === UserRole.Fleet || role === UserRole.Garage || role === UserRole.Supplier
+
+const userRoleToAccountType = (role: BusinessUserRole): BusinessAccountType => {
+  if (role === UserRole.Fleet) return BusinessAccountType.Fleet
+  if (role === UserRole.Garage) return BusinessAccountType.Garage
+  return BusinessAccountType.Supplier
+}
+
+const allowedSecurityTiers = ["Basic", "Standard", "Premium"] as const
+const allowedSupportTiers = ["Basic", "Standard", "Premium"] as const
+const allowedLoginSecurityModes = ["password", "otp"] as const
+const allowedReportLevels = ["dashboard", "standard", "premium"] as const
+
+const pickAllowed = <T extends readonly string[]>(values: T, value: string | null): T[number] | undefined =>
+  values.includes(value as T[number]) ? value as T[number] : undefined
 
 const staffPasswordAlphabet =
   "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*"
@@ -357,7 +372,23 @@ const planInclude = {
   _count: { select: { businessAccounts: true } },
 } satisfies Prisma.BusinessPlanInclude
 
-const accountInclude = {
+const activeAddOnStatuses: BusinessAddOnRequestStatus[] = [
+  BusinessAddOnRequestStatus.Approved,
+  BusinessAddOnRequestStatus.Enabled,
+]
+
+const activeAddOnRequestWhere = (): Prisma.BusinessAddOnRequestWhereInput => {
+  const now = new Date()
+  return {
+    status: { in: activeAddOnStatuses },
+    AND: [
+      { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
+      { OR: [{ validUntil: null }, { validUntil: { gt: now } }] },
+    ],
+  }
+}
+
+const accountInclude = () => ({
   plan: true,
   owner: {
     select: {
@@ -369,6 +400,10 @@ const accountInclude = {
       lastName: true,
       companyName: true,
       sessions: {
+        where: {
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
         orderBy: { lastUsedAt: "desc" },
         take: 20,
         select: {
@@ -398,6 +433,10 @@ const accountInclude = {
           lastName: true,
           companyName: true,
           sessions: {
+            where: {
+              revokedAt: null,
+              expiresAt: { gt: new Date() },
+            },
             orderBy: { lastUsedAt: "desc" },
             take: 10,
             select: {
@@ -420,6 +459,7 @@ const accountInclude = {
   },
   roles: { orderBy: { createdAt: "asc" } },
   permissions: { orderBy: { code: "asc" } },
+  addOnRequests: { where: activeAddOnRequestWhere() },
   invitations: {
     orderBy: { createdAt: "desc" },
     take: 20,
@@ -432,20 +472,10 @@ const accountInclude = {
       invitations: true,
     },
   },
-} satisfies Prisma.BusinessAccountInclude
+}) satisfies Prisma.BusinessAccountInclude
 
 type BusinessPlanWithCount = Prisma.BusinessPlanGetPayload<{ include: typeof planInclude }>
-type BusinessAccountFull = Prisma.BusinessAccountGetPayload<{ include: typeof accountInclude }>
-
-const defaultPlanUpdateData = (
-  plan: Prisma.BusinessPlanUncheckedCreateInput,
-): Prisma.BusinessPlanUncheckedUpdateInput => {
-  const data: Prisma.BusinessPlanUncheckedUpdateInput = { ...plan }
-  delete data.id
-  delete data.code
-  delete data.accountType
-  return data
-}
+type BusinessAccountFull = Prisma.BusinessAccountGetPayload<{ include: ReturnType<typeof accountInclude> }>
 
 export const businessEntitlementFeatures = {
   Fleet: [
@@ -470,6 +500,7 @@ export const businessEntitlementFeatures = {
   Garage: [
     "dashboard.access",
     "garage.bookings.manage",
+    "garage.schedule.manage",
     "garage.services.manage",
     "business.saved-searches.create",
     "integrations.manage",
@@ -515,6 +546,7 @@ export const businessRequestableFeatureLabels = {
   "reports.activity": "Activity reports",
   "support.priority": "Priority support",
   "integrations.manage": "Integrations",
+  "garage.schedule.manage": "Garage schedule management",
   "api.standard": "API access",
   "api.enterprise": "Enterprise API access",
   "approval-workflows.manage": "Approval workflows",
@@ -526,6 +558,30 @@ const cleanText = (value: unknown, max = 120): string | null => {
   if (typeof value !== "string") return null
   const normalized = value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim()
   return normalized ? normalized.slice(0, max) : null
+}
+
+const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#039;",
+})[character] ?? character)
+
+const supportTicketStatusLabel = (status: BusinessSupportTicketStatus) =>
+  status === BusinessSupportTicketStatus.InProgress ? "In Progress" : status
+
+const supportTicketStatusColor = (status: BusinessSupportTicketStatus) => {
+  if (status === BusinessSupportTicketStatus.Resolved) return "#047857"
+  if (status === BusinessSupportTicketStatus.Closed) return "#475569"
+  if (status === BusinessSupportTicketStatus.InProgress) return "#b45309"
+  return "#2563eb"
+}
+
+const addOnStatusColor = (status: BusinessAddOnRequestStatus) => {
+  if (status === BusinessAddOnRequestStatus.Rejected) return "#dc2626"
+  if (activeAddOnStatuses.includes(status)) return "#047857"
+  return "#2563eb"
 }
 
 const cleanTextArray = (value: unknown): string[] =>
@@ -540,6 +596,54 @@ const cleanTextArray = (value: unknown): string[] =>
     : []
 
 const toIso = (value: Date | null | undefined) => value?.toISOString() ?? null
+
+const cleanDate = (value: unknown, label: string, endOfDay = false) => {
+  if (value === null || value === undefined || value === "") return null
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw new Error(`${label} must be a valid date`)
+    return value
+  }
+  if (typeof value !== "string") throw new Error(`${label} must be a valid date`)
+  const normalized = value.trim()
+  if (!normalized) return null
+  const date = new Date(
+    /^\d{4}-\d{2}-\d{2}$/.test(normalized)
+      ? `${normalized}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`
+      : normalized,
+  )
+  if (Number.isNaN(date.getTime())) throw new Error(`${label} must be a valid date`)
+  return date
+}
+
+const cleanAddOnValidity = (input: { validFrom?: unknown; validUntil?: unknown; renewalAt?: unknown }) => {
+  const validFrom = cleanDate(input.validFrom, "Valid from")
+  const validUntil = cleanDate(input.validUntil, "Valid until", true)
+  const renewalAt = cleanDate(input.renewalAt, "Renewal date")
+  if (validFrom && validUntil && validUntil <= validFrom) {
+    throw new Error("Valid until must be after valid from")
+  }
+  return { validFrom, validUntil, renewalAt }
+}
+
+const sameDateValue = (left: Date | null | undefined, right: Date | null | undefined) =>
+  (left?.getTime() ?? null) === (right?.getTime() ?? null)
+
+const formatMailDate = (value: Date | null | undefined) =>
+  value ? value.toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC", year: "numeric" }) : "Not set"
+
+const addPlanPeriod = (date: Date, plan: { billingPeriod: string; monthlyBillingDays: number }) => {
+  const next = new Date(date)
+  const period = plan.billingPeriod.toLowerCase()
+  if (period.includes("year")) {
+    next.setFullYear(next.getFullYear() + 1)
+    return next
+  }
+  if (period.includes("month")) {
+    next.setDate(next.getDate() + plan.monthlyBillingDays)
+    return next
+  }
+  return null
+}
 
 const fullName = (user: {
   firstName: string | null
@@ -563,16 +667,12 @@ const assertBusinessAccountOwnership = async (input: {
   if (!businessAccountId) throw new Error("Business account id is required")
 
   if (input.includeMembers) {
+    const include = accountInclude()
     const account = await db.businessAccount.findFirst({
       where: { id: businessAccountId, ownerUserId: input.ownerUserId, isActive: true },
       include: {
-        ...accountInclude,
-        members: {
-          ...accountInclude.members,
-          where: {
-            status: { in: [BusinessMemberStatus.Active, BusinessMemberStatus.Invited] },
-          },
-        },
+        ...include,
+        members: include.members,
       },
     })
     if (!account) throw new Error("Business account was not found")
@@ -581,7 +681,7 @@ const assertBusinessAccountOwnership = async (input: {
 
   const account = await db.businessAccount.findFirst({
     where: { id: businessAccountId, ownerUserId: input.ownerUserId, isActive: true },
-    include: accountInclude,
+    include: accountInclude(),
   })
   if (!account) throw new Error("Business account was not found")
   return account
@@ -598,7 +698,12 @@ const mapPlan = (plan: BusinessPlanWithCount) => ({
     yearlyAmount: plan.yearlyPriceAmount,
     currency: plan.priceCurrency,
     billingPeriod: plan.billingPeriod,
+    monthlyBillingDays: plan.monthlyBillingDays,
   },
+  securityTier: pickAllowed(allowedSecurityTiers, plan.securityTier),
+  supportTier: pickAllowed(allowedSupportTiers, plan.supportTier),
+  loginSecurityMode: pickAllowed(allowedLoginSecurityModes, plan.loginSecurityMode),
+  reportLevel: pickAllowed(allowedReportLevels, plan.reportLevel),
   limits: {
     staff: plan.staffLimit,
     roles: plan.roleLimit,
@@ -662,6 +767,32 @@ const mapSessions = (
     revokedAt: toIso(session.revokedAt),
   }))
 
+type BusinessActiveAddOnRow = {
+  id: string
+  label: string
+  featureKey: string
+  status: BusinessAddOnRequestStatus
+  note: string | null
+  validFrom: Date | null
+  validUntil: Date | null
+  renewalAt: Date | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+const mapActiveAddOn = (request: BusinessActiveAddOnRow) => ({
+  id: request.id,
+  label: request.label,
+  featureKey: request.featureKey,
+  status: request.status,
+  note: request.note,
+  validFrom: toIso(request.validFrom),
+  validUntil: toIso(request.validUntil),
+  renewalAt: toIso(request.renewalAt),
+  createdAt: request.createdAt.toISOString(),
+  updatedAt: request.updatedAt.toISOString(),
+})
+
 const mapAccount = (account: BusinessAccountFull) => ({
   id: account.id,
   publicId: account.publicId,
@@ -710,6 +841,7 @@ const mapAccount = (account: BusinessAccountFull) => ({
     actionKey: permission.actionKey,
     isSystem: permission.isSystem,
   })),
+  activeAddOns: account.addOnRequests.map(mapActiveAddOn),
   invitations: account.invitations.map((invitation) => ({
     id: invitation.id,
     email: invitation.email,
@@ -747,9 +879,7 @@ const assertBusinessAccountReader = async (input: {
         },
       ],
     },
-    include: {
-      ...accountInclude,
-    },
+    include: accountInclude(),
   })
 
   if (!account) {
@@ -783,6 +913,12 @@ export async function logBusinessActivity(input: {
 }
 
 export async function ensureDefaultBusinessPlans() {
+  const tierForPlan = (code: BusinessPlanCode) =>
+    code === BusinessPlanCode.Enterprise
+      ? { securityTier: "Premium", supportTier: "Premium", loginSecurityMode: "otp", reportLevel: "premium" }
+      : code === BusinessPlanCode.Pro
+        ? { securityTier: "Standard", supportTier: "Standard", loginSecurityMode: "otp", reportLevel: "standard" }
+        : { securityTier: "Basic", supportTier: "Basic", loginSecurityMode: "password", reportLevel: "dashboard" }
   await Promise.all(
     defaultPlanSeeds.map((plan) =>
       db.businessPlan.upsert({
@@ -792,8 +928,8 @@ export async function ensureDefaultBusinessPlans() {
             code: plan.code,
           },
         },
-        update: defaultPlanUpdateData(plan),
-        create: plan,
+        update: {},
+        create: { ...tierForPlan(plan.code), ...plan },
       }),
     ),
   )
@@ -826,7 +962,7 @@ export async function ensureFreeBusinessAccountsForExistingUsers() {
       [user.firstName, user.lastName].filter(Boolean).join(" ") ||
       user.email
     for (const role of user.roles) {
-      if (businessRoles.has(role)) {
+      if (isBusinessUserRole(role)) {
         await ensureBusinessAccountForOwner({
           userId: user.id,
           role,
@@ -868,6 +1004,17 @@ export async function updateBusinessPlan(
   if (priceCurrency) data.priceCurrency = priceCurrency.toUpperCase()
   const billingPeriod = cleanText(input.billingPeriod, 30)
   if (billingPeriod) data.billingPeriod = billingPeriod
+  if (Number.isInteger(input.monthlyBillingDays) && Number(input.monthlyBillingDays) >= 1 && Number(input.monthlyBillingDays) <= 366) {
+    data.monthlyBillingDays = Number(input.monthlyBillingDays)
+  }
+  const securityTier = cleanText(input.securityTier, 30)
+  if (securityTier && ["Basic", "Standard", "Premium"].includes(securityTier)) data.securityTier = securityTier
+  const supportTier = cleanText(input.supportTier, 30)
+  if (supportTier && ["Basic", "Standard", "Premium"].includes(supportTier)) data.supportTier = supportTier
+  const loginSecurityMode = cleanText(input.loginSecurityMode, 30)
+  if (loginSecurityMode && ["password", "otp"].includes(loginSecurityMode)) data.loginSecurityMode = loginSecurityMode
+  const reportLevel = cleanText(input.reportLevel, 30)
+  if (reportLevel && ["dashboard", "standard", "premium"].includes(reportLevel)) data.reportLevel = reportLevel
 
   for (const [inputKey, modelKey] of [
     ["staffLimit", "staffLimit"],
@@ -960,15 +1107,15 @@ const usageForAccount = async (account: {
       where: { businessAccountId: account.id, status: BusinessMemberStatus.Active },
     }),
     db.businessRole.count({ where: { businessAccountId: account.id } }),
-    db.businessPermission.count({ where: { businessAccountId: account.id } }),
+    db.businessPermission.count({ where: { businessAccountId: account.id, isSystem: false } }),
     account.type === BusinessAccountType.Fleet
-      ? db.fleetVehicle.count({ where: { fleetId: account.ownerUserId } })
+      ? db.fleetVehicle.count({ where: { fleetId: account.ownerUserId, status: { not: "plan_suspended" } } })
       : Promise.resolve(0),
     account.type === BusinessAccountType.Garage
       ? db.garageBooking.count({ where: { garageId: account.ownerUserId, createdAt: { gte: monthStart } } })
       : Promise.resolve(0),
     account.type === BusinessAccountType.Supplier
-      ? db.supplierPart.count({ where: { supplierId: account.ownerUserId } })
+      ? db.supplierPart.count({ where: { supplierId: account.ownerUserId, isActive: true } })
       : Promise.resolve(0),
     account.type === BusinessAccountType.Supplier
       ? db.supplierPart.findMany({
@@ -995,7 +1142,7 @@ const usageForAccount = async (account: {
         ? db.order.count({ where: { supplierId: account.ownerUserId, status: { not: OrderStatus.cancelled } } })
         : Promise.resolve(0),
     account.type === BusinessAccountType.Garage
-      ? db.garageService.count({ where: { garageId: account.ownerUserId } })
+      ? db.garageService.count({ where: { garageId: account.ownerUserId, status: { not: "plan_suspended" } } })
       : Promise.resolve(0),
     db.businessSavedSearch.count({ where: { businessAccountId: account.id } }),
     db.businessWishlistItem.count({ where: { businessAccountId: account.id } }),
@@ -1052,12 +1199,150 @@ const limitsForPlan = (plan: {
 })
 
 type BusinessLimits = ReturnType<typeof limitsForPlan>
+type BusinessLimitMetric = keyof BusinessLimits
 type BusinessUsageCounts = ReturnType<typeof usageWithZeroes>
 type BusinessActionRule = {
   feature?: string
   metric?: keyof BusinessUsageCounts
   limit?: keyof BusinessLimits
   flag?: "customRolesEnabled" | "approvalWorkflowEnabled"
+}
+
+const limitAddOnMetrics = {
+  Garage: ["services", "appointments", "staff", "roles", "integrations", "savedSearches"],
+  Fleet: ["vehicles", "rfqs", "orders", "staff", "roles", "integrations", "savedSearches", "wishlist"],
+  Supplier: ["products", "brands", "categories", "rfqs", "staff", "roles", "integrations", "savedSearches", "wishlist"],
+} satisfies Record<BusinessAccountType, BusinessLimitMetric[]>
+
+const limitAddOnLabels = {
+  staff: "staff users",
+  roles: "custom roles",
+  permissions: "custom permissions",
+  brands: "brands",
+  categories: "categories",
+  vehicles: "vehicles",
+  appointments: "appointments",
+  products: "products",
+  rfqs: "RFQs",
+  orders: "orders",
+  services: "services",
+  savedSearches: "saved searches",
+  wishlist: "wishlist items",
+  integrations: "integrations",
+} satisfies Record<BusinessLimitMetric, string>
+
+const limitMetricFeatures = {
+  staff: ["staff.manage"],
+  roles: ["roles.manage"],
+  permissions: ["permissions.manage"],
+  vehicles: ["fleet.vehicles.manage"],
+  rfqs: ["fleet.rfqs.create", "supplier.rfqs.quote"],
+  orders: ["fleet.orders.create"],
+  services: ["garage.services.manage"],
+  appointments: ["garage.bookings.manage", "garage.schedule.manage"],
+  products: ["supplier.inventory.manage"],
+  savedSearches: ["business.saved-searches.create"],
+  wishlist: ["business.wishlist.create"],
+  integrations: ["integrations.manage"],
+  brands: [],
+  categories: [],
+} satisfies Record<BusinessLimitMetric, string[]>
+
+const isLimitMetric = (value: string): value is BusinessLimitMetric =>
+  Object.prototype.hasOwnProperty.call(limitAddOnLabels, value)
+
+const limitAddOnKey = (metric: BusinessLimitMetric, target: number) => `limit.${metric}.${target}`
+
+const parseLimitAddOnKey = (featureKey: string) => {
+  const [prefix, metric, target] = featureKey.split(".")
+  const targetLimit = Number(target)
+  if (prefix !== "limit" || !isLimitMetric(metric) || !Number.isInteger(targetLimit) || targetLimit < 1 || targetLimit > 100000) return null
+  return { metric, targetLimit }
+}
+type ParsedLimitAddOn = NonNullable<ReturnType<typeof parseLimitAddOnKey>>
+
+const addOnFeatureSet = (addOnKeys: string[], accountType: BusinessAccountType) => {
+  const features = new Set(addOnKeys)
+  if (features.has("api.enterprise")) features.add("api.standard")
+  for (const key of addOnKeys) {
+    const parsed = parseLimitAddOnKey(key)
+    if (!parsed) continue
+    for (const feature of limitMetricFeatures[parsed.metric]) {
+      if (businessEntitlementFeatures[accountType].includes(feature)) features.add(feature)
+    }
+  }
+  return features
+}
+
+const applyLimitAddOns = (limits: BusinessLimits, addOnKeys: string[]) => {
+  const next = { ...limits }
+  for (const key of addOnKeys) {
+    const parsed = parseLimitAddOnKey(key)
+    if (!parsed) continue
+    const current = next[parsed.metric]
+    if (current !== null && parsed.targetLimit > current) next[parsed.metric] = parsed.targetLimit
+  }
+  return next
+}
+
+const effectiveLimitsForAccount = (account: { plan: Parameters<typeof limitsForPlan>[0]; addOnRequests?: Array<{ featureKey: string }> }) =>
+  applyLimitAddOns(limitsForPlan(account.plan), account.addOnRequests?.map((request) => request.featureKey) ?? [])
+
+const limitNameToMetric = (limit: string): BusinessLimitMetric => ({
+  staffLimit: "staff",
+  roleLimit: "roles",
+  permissionLimit: "permissions",
+  brandLimit: "brands",
+  categoryLimit: "categories",
+  vehicleLimit: "vehicles",
+  appointmentLimit: "appointments",
+  productLimit: "products",
+  rfqLimit: "rfqs",
+  orderLimit: "orders",
+  serviceLimit: "services",
+  savedSearchLimit: "savedSearches",
+  wishlistLimit: "wishlist",
+  integrationLimit: "integrations",
+} as Record<string, BusinessLimitMetric>)[limit]
+
+const limitAddOnOptions = (accountType: BusinessAccountType, baseLimits: BusinessLimits, limits: BusinessLimits, usage: BusinessUsageCounts, enabledAddOnKeys: string[]) =>
+  limitAddOnMetrics[accountType]
+    .filter((metric) => baseLimits[metric] !== null)
+    .map((metric) => {
+      const currentLimit = limits[metric]
+      const currentUsage = usage[metric]
+      const enabledTarget = enabledAddOnKeys
+        .map((key) => parseLimitAddOnKey(key))
+        .filter((item): item is ParsedLimitAddOn => item !== null && item.metric === metric)
+        .reduce((max, item) => Math.max(max, item.targetLimit), currentLimit ?? 0)
+      const suggestedLimit = Math.max((enabledTarget || currentLimit || 0) + 5, currentUsage + 1)
+      return {
+        key: limitAddOnKey(metric, suggestedLimit),
+        metric,
+        label: `Increase ${limitAddOnLabels[metric]} limit`,
+        currentLimit,
+        currentUsage,
+        suggestedLimit,
+      }
+    })
+
+const featureBlockedReason = (feature: string) => {
+  if (feature === "garage.services.manage") {
+    return "Service management is not included in your current plan or assigned role."
+  }
+  if (feature === "garage.bookings.manage") {
+    return "Appointment management is not included in your current plan or assigned role."
+  }
+  if (feature === "garage.schedule.manage") {
+    return "Schedule management is not included in your current plan or assigned role."
+  }
+  return `${feature} is not enabled for this plan`
+}
+
+const limitBlockedReason = (metric: keyof BusinessUsageCounts, limit: number | null | undefined) => {
+  if (metric === "services") return `Your current plan allows up to ${limit ?? "unlimited"} active services. Extra services are temporarily inactive and not deleted.`
+  if (metric === "appointments") return `Your current plan allows up to ${limit ?? "unlimited"} appointments for this period. Upgrade your plan or wait for the next cycle.`
+  return `${metric} limit reached`
 }
 
 const usageWithZeroes = (usage: BusinessUsage) => ({
@@ -1144,6 +1429,8 @@ const featureSetForPlan = (plan: {
   savedSearchLimit: number | null
   wishlistLimit: number | null
   integrationLimit: number | null
+  serviceLimit: number | null
+  appointmentLimit: number | null
   apiAccessLevel: string
   approvalWorkflowEnabled: boolean
   featuredVendor: boolean
@@ -1160,6 +1447,11 @@ const featureSetForPlan = (plan: {
   if (plan.apiAccessLevel === "standard" || plan.apiAccessLevel === "enterprise") features.add("api.standard")
   if (plan.apiAccessLevel === "enterprise") features.add("api.enterprise")
   if (plan.approvalWorkflowEnabled) features.add("approval-workflows.manage")
+  if (plan.serviceLimit === null || plan.serviceLimit > 0) features.add("garage.services.manage")
+  if (plan.appointmentLimit === null || plan.appointmentLimit > 0) {
+    features.add("garage.bookings.manage")
+    features.add("garage.schedule.manage")
+  }
   if (plan.customRolesEnabled) {
     features.add("roles.manage")
     features.add("permissions.manage")
@@ -1184,6 +1476,8 @@ const allowedActionFor = (
       wishlistLimit: number | null
       approvalWorkflowEnabled: boolean
       integrationLimit: number | null
+      serviceLimit: number | null
+      appointmentLimit: number | null
       apiAccessLevel: string
       featuredVendor: boolean
       searchBoostLevel: number
@@ -1191,19 +1485,21 @@ const allowedActionFor = (
   },
   usage: ReturnType<typeof usageWithZeroes>,
   limits: BusinessLimits,
+  addOnFeatures = new Set<string>(),
 ) => {
   const rules = businessEntitlementActionRules[account.type] as Record<string, BusinessActionRule>
   const rule = rules[action]
   if (!rule) return { allowed: false, reason: "Unknown action" }
   const features = featureSetForPlan(account.plan)
+  addOnFeatures.forEach((feature) => features.add(feature))
   if (rule.feature && !features.has(rule.feature)) {
-    return { allowed: false, reason: `${rule.feature} is not enabled for this plan` }
+    return { allowed: false, reason: featureBlockedReason(rule.feature) }
   }
-  if (rule.flag && !account.plan[rule.flag]) {
+  if (rule.flag && !account.plan[rule.flag] && !(rule.feature && addOnFeatures.has(rule.feature))) {
     return { allowed: false, reason: `${rule.flag} is not enabled for this plan` }
   }
-  if (rule.metric && rule.limit && !hasCapacity(usage[rule.metric], limits[rule.limit])) {
-    return { allowed: false, reason: `${rule.metric} limit reached` }
+  if (rule.metric && rule.limit && !(rule.feature && addOnFeatures.has(rule.feature)) && !hasCapacity(usage[rule.metric], limits[rule.limit])) {
+    return { allowed: false, reason: limitBlockedReason(rule.metric, limits[rule.limit]) }
   }
   return { allowed: true, reason: null }
 }
@@ -1213,10 +1509,16 @@ const buildEntitlementPayload = (
     include: { plan: true; roles: true; permissions: true }
   }>,
   usage: BusinessUsage,
+  enabledAddOnFeatures: string[] = [],
+  activeAddOns: BusinessActiveAddOnRow[] = [],
 ) => {
-  const limits = limitsForPlan(account.plan)
+  const baseLimits = limitsForPlan(account.plan)
+  const limits = applyLimitAddOns(baseLimits, enabledAddOnFeatures)
   const usageCounts = usageWithZeroes(usage)
-  const enabledFeatures = Array.from(featureSetForPlan(account.plan)).sort()
+  const featureSet = featureSetForPlan(account.plan)
+  const addOnFeatures = addOnFeatureSet(enabledAddOnFeatures, account.type)
+  addOnFeatures.forEach((feature) => featureSet.add(feature))
+  const enabledFeatures = Array.from(featureSet).sort()
   const knownFeatures = businessEntitlementFeatures[account.type]
   const requestableLabels = businessRequestableFeatureLabels as Record<string, string>
   const lockedFeatures = knownFeatures
@@ -1231,19 +1533,26 @@ const buildEntitlementPayload = (
   const actions = Object.fromEntries(
     Object.keys(businessEntitlementActionRules[account.type]).map((action) => [
       action,
-      allowedActionFor(action, account, usageCounts, limits),
+      allowedActionFor(action, account, usageCounts, limits, addOnFeatures),
     ]),
   )
+  const limitAddOns = limitAddOnOptions(account.type, baseLimits, limits, usageCounts, enabledAddOnFeatures)
 
   return {
     plan: mapPlan({ ...account.plan, _count: { businessAccounts: 0 } }),
+    subscription: {
+      activatedAt: account.updatedAt.toISOString(),
+      endsAt: toIso(addPlanPeriod(account.updatedAt, account.plan)),
+    },
     usage: usageCounts,
     limits,
     enabledMenus: account.plan.enabledMenus,
     enabledFeatures,
     lockedFeatures,
     requestableFeatures,
+    limitAddOns,
     addOns: requestableFeatures,
+    activeAddOns: activeAddOns.map(mapActiveAddOn),
     actions,
   }
 }
@@ -1287,6 +1596,95 @@ const assertUsageFitsPlan = (
   }
 }
 
+const planLimitMessage = (planName: string, itemLabel: string, limit: number) =>
+  `Your ${planName} plan allows up to ${limit} active ${itemLabel}. Extra ${itemLabel} were temporarily inactive and were not deleted. Upgrade your plan to restore them.`
+
+async function enforcePlanLimitedRecords(input: {
+  account: { id: string; type: BusinessAccountType; ownerUserId: string }
+  plan: {
+    name: string
+    vehicleLimit: number | null
+    productLimit: number | null
+    serviceLimit: number | null
+  }
+}) {
+  const now = new Date()
+  if (input.account.type === BusinessAccountType.Garage) {
+    const limit = input.plan.serviceLimit
+    if (limit === null) {
+      await db.garageService.updateMany({
+        where: { garageId: input.account.ownerUserId, status: "plan_suspended" },
+        data: { status: "active", planSuspendedAt: null, planSuspensionReason: null },
+      })
+      return
+    }
+    const services = await db.garageService.findMany({
+      where: { garageId: input.account.ownerUserId },
+      orderBy: [{ status: "asc" }, { bookingsCount: "desc" }, { updatedAt: "desc" }],
+      select: { id: true, status: true },
+    })
+    const keepIds = services.slice(0, limit).map((item) => item.id)
+    await db.garageService.updateMany({
+      where: { garageId: input.account.ownerUserId, id: { in: keepIds }, status: "plan_suspended" },
+      data: { status: "active", planSuspendedAt: null, planSuspensionReason: null },
+    })
+    await db.garageService.updateMany({
+      where: { garageId: input.account.ownerUserId, id: { notIn: keepIds }, status: "active" },
+      data: { status: "plan_suspended", planSuspendedAt: now, planSuspensionReason: planLimitMessage(input.plan.name, "services", limit) },
+    })
+  }
+
+  if (input.account.type === BusinessAccountType.Supplier) {
+    const limit = input.plan.productLimit
+    if (limit === null) {
+      await db.supplierPart.updateMany({
+        where: { supplierId: input.account.ownerUserId, planSuspendedAt: { not: null } },
+        data: { isActive: true, planSuspendedAt: null, planSuspensionReason: null },
+      })
+      return
+    }
+    const parts = await db.supplierPart.findMany({
+      where: { supplierId: input.account.ownerUserId },
+      orderBy: [{ isActive: "desc" }, { updatedAt: "desc" }],
+      select: { id: true, isActive: true },
+    })
+    const keepIds = parts.slice(0, limit).map((item) => item.id)
+    await db.supplierPart.updateMany({
+      where: { supplierId: input.account.ownerUserId, id: { in: keepIds }, planSuspendedAt: { not: null } },
+      data: { isActive: true, planSuspendedAt: null, planSuspensionReason: null },
+    })
+    await db.supplierPart.updateMany({
+      where: { supplierId: input.account.ownerUserId, id: { notIn: keepIds }, isActive: true },
+      data: { isActive: false, planSuspendedAt: now, planSuspensionReason: planLimitMessage(input.plan.name, "products", limit) },
+    })
+  }
+
+  if (input.account.type === BusinessAccountType.Fleet) {
+    const limit = input.plan.vehicleLimit
+    if (limit === null) {
+      await db.fleetVehicle.updateMany({
+        where: { fleetId: input.account.ownerUserId, status: "plan_suspended" },
+        data: { status: "active", planSuspendedAt: null, planSuspensionReason: null },
+      })
+      return
+    }
+    const vehicles = await db.fleetVehicle.findMany({
+      where: { fleetId: input.account.ownerUserId },
+      orderBy: [{ status: "asc" }, { isPrimary: "desc" }, { updatedAt: "desc" }],
+      select: { id: true, status: true },
+    })
+    const keepIds = vehicles.slice(0, limit).map((item) => item.id)
+    await db.fleetVehicle.updateMany({
+      where: { fleetId: input.account.ownerUserId, id: { in: keepIds }, status: "plan_suspended" },
+      data: { status: "active", planSuspendedAt: null, planSuspensionReason: null },
+    })
+    await db.fleetVehicle.updateMany({
+      where: { fleetId: input.account.ownerUserId, id: { notIn: keepIds }, status: { in: ["active", "maintenance"] } },
+      data: { status: "plan_suspended", planSuspendedAt: now, planSuspensionReason: planLimitMessage(input.plan.name, "vehicles", limit) },
+    })
+  }
+}
+
 export async function changeBusinessAccountPlan(input: {
   ownerUserId: string
   businessAccountId: unknown
@@ -1318,13 +1716,11 @@ export async function changeBusinessAccountPlan(input: {
   if (!nextPlan) throw new Error("Selected plan is not available for this business")
   if (nextPlan.id === account.planId) return mapPlan(nextPlan)
 
-  const usage = await usageForAccount(account)
-  assertUsageFitsPlan(usage, nextPlan)
-
   await db.businessAccount.update({
     where: { id: account.id },
     data: { planId: nextPlan.id },
   })
+  await enforcePlanLimitedRecords({ account, plan: nextPlan })
   await logBusinessActivity({
     businessAccountId: account.id,
     actorUserId: input.ownerUserId,
@@ -1335,6 +1731,51 @@ export async function changeBusinessAccountPlan(input: {
       fromPlan: account.plan.name,
       toPlan: nextPlan.name,
       accountType: account.type,
+    },
+  })
+  return mapPlan(nextPlan)
+}
+
+export async function assignAdminBusinessAccountPlan(input: {
+  adminId: string
+  businessAccountId: unknown
+  planId: unknown
+}) {
+  const businessAccountId = cleanText(input.businessAccountId, 80)
+  const planId = cleanText(input.planId, 80)
+  if (!businessAccountId) throw new Error("Business account id is required")
+  if (!planId) throw new Error("Plan id is required")
+
+  const account = await db.businessAccount.findFirst({
+    where: { id: businessAccountId, isActive: true },
+    include: { plan: true },
+  })
+  if (!account) throw new Error("Business account was not found")
+
+  const nextPlan = await db.businessPlan.findFirst({
+    where: { id: planId, accountType: account.type, isActive: true },
+    include: planInclude,
+  })
+  if (!nextPlan) throw new Error("Selected plan is not available for this business type")
+  if (nextPlan.id === account.planId) return mapPlan(nextPlan)
+
+  await db.businessAccount.update({
+    where: { id: account.id },
+    data: { planId: nextPlan.id },
+  })
+  await enforcePlanLimitedRecords({ account, plan: nextPlan })
+  await logBusinessActivity({
+    businessAccountId: account.id,
+    actorUserId: null,
+    action: "business_plan.admin_assigned",
+    entityType: "business_plan",
+    entityId: nextPlan.id,
+    metadata: {
+      fromPlan: account.plan.name,
+      toPlan: nextPlan.name,
+      accountType: account.type,
+      assignedBy: "admin",
+      adminId: input.adminId,
     },
   })
   return mapPlan(nextPlan)
@@ -1353,7 +1794,7 @@ async function findUserBusinessAccount(userId: string, accountType: BusinessAcco
         },
       },
     },
-    include: { plan: true },
+    include: { plan: true, addOnRequests: { where: activeAddOnRequestWhere() } },
   })
 }
 
@@ -1375,15 +1816,25 @@ export async function assertBusinessPlanLimit(input: {
   if (!account) {
     throw new Error("Business account plan is required")
   }
-  const limit = account.plan[input.limit]
+  const metric = limitNameToMetric(input.limit)
+  const limit = metric ? effectiveLimitsForAccount(account)[metric] : account.plan[input.limit]
   if (limit !== null && input.currentCount >= limit) {
     const label = input.limit
       .replace("Limit", "")
       .replace(/([A-Z])/g, " $1")
       .toLowerCase()
-    throw new Error(`${account.plan.name} ${label} limit reached. Upgrade your plan.`)
+    throw new Error(`${account.plan.name} ${label} limit reached. Request an add-on or upgrade your plan.`)
   }
   return account
+}
+
+export async function getEffectiveBusinessLimits(input: { userId: string; accountType: BusinessAccountType }) {
+  const account = await findUserBusinessAccount(input.userId, input.accountType)
+  if (!account) throw new Error("Business account plan is required")
+  return {
+    account,
+    limits: effectiveLimitsForAccount(account),
+  }
 }
 
 async function findWritableBusinessAccount(userId: string, businessAccountId: unknown) {
@@ -1401,7 +1852,7 @@ async function findWritableBusinessAccount(userId: string, businessAccountId: un
         },
       },
     },
-    include: { plan: true },
+    include: { plan: true, addOnRequests: { where: activeAddOnRequestWhere() } },
   })
   if (!account) throw new Error("Business account was not found")
   return account
@@ -1531,6 +1982,40 @@ export async function deleteBusinessSavedSearch(input: {
   return { id }
 }
 
+type BusinessPlanForAddOn = Parameters<typeof limitsForPlan>[0] & Parameters<typeof featureSetForPlan>[0]
+
+const businessAddOnDetailsForAccount = (
+  account: {
+    type: BusinessAccountType
+    plan: BusinessPlanForAddOn
+    addOnRequests?: Array<{ featureKey: string }>
+  },
+  featureKey: string,
+) => {
+  const limitAddOn = parseLimitAddOnKey(featureKey)
+  if (limitAddOn) {
+    if (!(limitAddOnMetrics[account.type] as readonly BusinessLimitMetric[]).includes(limitAddOn.metric)) {
+      throw new Error("This limit is not available for this dashboard")
+    }
+    const baseLimit = limitsForPlan(account.plan)[limitAddOn.metric]
+    const currentLimit = effectiveLimitsForAccount(account)[limitAddOn.metric]
+    if (baseLimit === null) throw new Error("This limit is already unlimited in the current plan")
+    if (limitAddOn.targetLimit <= (currentLimit ?? 0)) {
+      throw new Error(`Add a ${limitAddOnLabels[limitAddOn.metric]} limit higher than ${currentLimit ?? 0}`)
+    }
+    return { label: `Increase ${limitAddOnLabels[limitAddOn.metric]} limit to ${limitAddOn.targetLimit}` }
+  }
+
+  const featureLabel = (businessRequestableFeatureLabels as Record<string, string>)[featureKey]
+  if (!featureLabel || !businessEntitlementFeatures[account.type].includes(featureKey)) {
+    throw new Error("This feature is not available as an add-on")
+  }
+  if (featureSetForPlan(account.plan).has(featureKey)) {
+    throw new Error("This feature is already included in the current plan")
+  }
+  return { label: featureLabel }
+}
+
 export async function requestBusinessAddOn(input: {
   userId: string
   businessAccountId: unknown
@@ -1540,7 +2025,13 @@ export async function requestBusinessAddOn(input: {
   const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
   const featureKey = cleanText(input.featureKey, 120)
   if (!featureKey) throw new Error("Feature key is required")
-  const label = (businessRequestableFeatureLabels as Record<string, string>)[featureKey] ?? featureKey
+  const { label } = businessAddOnDetailsForAccount(account, featureKey)
+  const currentRequest = await db.businessAddOnRequest.findUnique({
+    where: { businessAccountId_featureKey: { businessAccountId: account.id, featureKey } },
+  })
+  if (currentRequest && activeAddOnStatuses.includes(currentRequest.status)) {
+    throw new Error("This add-on is already approved")
+  }
   const note = cleanText(input.note, 500)
 
   const row = await db.businessAddOnRequest.upsert({
@@ -1603,6 +2094,9 @@ const mapAddOnRequest = (row: Prisma.BusinessAddOnRequestGetPayload<{
   requestedBy: row.requestedBy ? { id: row.requestedBy.id, name: fullName(row.requestedBy), email: row.requestedBy.email } : null,
   decidedBy: row.decidedBy ? { id: row.decidedBy.id, name: row.decidedBy.name, email: row.decidedBy.email } : null,
   decidedAt: toIso(row.decidedAt),
+  validFrom: toIso(row.validFrom),
+  validUntil: toIso(row.validUntil),
+  renewalAt: toIso(row.renewalAt),
   businessAccount: {
     id: row.businessAccount.id,
     publicId: row.businessAccount.publicId,
@@ -1639,10 +2133,240 @@ export async function listAdminBusinessAddOnRequests(status?: unknown) {
   return rows.map(mapAddOnRequest)
 }
 
+export async function listAdminBusinessAddOnRequestsPage(input: {
+  page?: number
+  pageSize?: number
+  query?: string
+  status?: string
+  accountType?: string
+}) {
+  const page = Math.max(1, input.page ?? 1)
+  const pageSize = Math.min(50, Math.max(1, input.pageSize ?? 20))
+  const query = cleanText(input.query, 120)
+  const statuses = Object.values(BusinessAddOnRequestStatus)
+  const accountTypes = Object.values(BusinessAccountType)
+  const where: Prisma.BusinessAddOnRequestWhereInput = {
+    ...(statuses.includes(input.status as BusinessAddOnRequestStatus) ? { status: input.status as BusinessAddOnRequestStatus } : {}),
+    ...(accountTypes.includes(input.accountType as BusinessAccountType) ? { businessAccount: { type: input.accountType as BusinessAccountType } } : {}),
+    ...(query ? { OR: [
+      { label: { contains: query, mode: "insensitive" } },
+      { featureKey: { contains: query, mode: "insensitive" } },
+      { businessAccount: { name: { contains: query, mode: "insensitive" } } },
+      { businessAccount: { publicId: { contains: query, mode: "insensitive" } } },
+      { requestedBy: { email: { contains: query, mode: "insensitive" } } },
+    ] } : {}),
+  }
+  const [rows, total] = await Promise.all([
+    db.businessAddOnRequest.findMany({
+      where,
+      include: { businessAccount: { include: { plan: true } }, requestedBy: true, decidedBy: true },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    db.businessAddOnRequest.count({ where }),
+  ])
+  return { items: rows.map(mapAddOnRequest), total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) }
+}
+
+export async function createAdminBusinessAddOnRequest(input: {
+  adminId: string
+  businessAccountId: unknown
+  featureKey: unknown
+  note?: unknown
+  status?: unknown
+  validFrom?: unknown
+  validUntil?: unknown
+  renewalAt?: unknown
+}) {
+  const businessAccountId = cleanText(input.businessAccountId, 80)
+  if (!businessAccountId) throw new Error("Business account ID or public ID is required")
+  const featureKey = cleanText(input.featureKey, 120)
+  if (!featureKey) throw new Error("Feature key is required")
+  const status = (cleanText(input.status, 40) as BusinessAddOnRequestStatus | null) ?? BusinessAddOnRequestStatus.Approved
+  if (!Object.values(BusinessAddOnRequestStatus).includes(status)) {
+    throw new Error("Valid add-on status is required")
+  }
+  const validity = cleanAddOnValidity(input)
+
+  const account = await db.businessAccount.findFirst({
+    where: {
+      isActive: true,
+      OR: [{ id: businessAccountId }, { publicId: businessAccountId }],
+    },
+    include: {
+      plan: true,
+      owner: { select: { id: true, email: true, phone: true, firstName: true, lastName: true, companyName: true } },
+      addOnRequests: { where: activeAddOnRequestWhere() },
+    },
+  })
+  if (!account) throw new Error("Business account was not found")
+
+  const { label } = businessAddOnDetailsForAccount(account, featureKey)
+  const current = await db.businessAddOnRequest.findUnique({
+    where: { businessAccountId_featureKey: { businessAccountId: account.id, featureKey } },
+    select: { status: true },
+  })
+
+  const decidedAt = status === BusinessAddOnRequestStatus.Requested ? null : new Date()
+  const note = cleanText(input.note, 500)
+  const row = await db.businessAddOnRequest.upsert({
+    where: {
+      businessAccountId_featureKey: {
+        businessAccountId: account.id,
+        featureKey,
+      },
+    },
+    create: {
+      businessAccountId: account.id,
+      featureKey,
+      label,
+      note,
+      status,
+      decidedByAdminId: decidedAt ? input.adminId : null,
+      decidedAt,
+      validFrom: validity.validFrom,
+      validUntil: validity.validUntil,
+      renewalAt: validity.renewalAt,
+    },
+    update: {
+      label,
+      note,
+      status,
+      decidedByAdminId: decidedAt ? input.adminId : null,
+      decidedAt,
+      validFrom: validity.validFrom,
+      validUntil: validity.validUntil,
+      renewalAt: validity.renewalAt,
+    },
+    include: {
+      businessAccount: {
+        include: {
+          plan: true,
+          owner: { select: { id: true, email: true, phone: true, firstName: true, lastName: true, companyName: true } },
+          addOnRequests: { where: activeAddOnRequestWhere() },
+        },
+      },
+      requestedBy: true,
+      decidedBy: true,
+    },
+  })
+
+  const limitAddOn = parseLimitAddOnKey(row.featureKey)
+  if (activeAddOnStatuses.includes(status) && limitAddOn && ["services", "products", "vehicles"].includes(limitAddOn.metric)) {
+    const limits = effectiveLimitsForAccount(row.businessAccount)
+    await enforcePlanLimitedRecords({
+      account: row.businessAccount,
+      plan: {
+        ...row.businessAccount.plan,
+        serviceLimit: limits.services,
+        productLimit: limits.products,
+        vehicleLimit: limits.vehicles,
+      },
+    })
+  }
+
+  await logBusinessActivity({
+    businessAccountId: row.businessAccountId,
+    action: "business_addon.admin_created",
+    entityType: "business_addon",
+    entityId: row.id,
+    metadata: {
+      featureKey,
+      label,
+      note,
+      previousStatus: current?.status ?? null,
+      status,
+      validFrom: toIso(row.validFrom),
+      validUntil: toIso(row.validUntil),
+      renewalAt: toIso(row.renewalAt),
+      adminId: input.adminId,
+    },
+  })
+
+  const recipient = row.requestedBy ?? row.businessAccount.owner
+  await createNotificationsSafely([{
+    recipientUserId: recipient.id,
+    actorAdminId: input.adminId,
+    type: "business.addon.status.updated",
+    title: "Add-on permission updated",
+    body: `${row.label} is now ${status}.`,
+    linkUrl: "/add-ons",
+    entityType: "business_addon",
+    entityId: row.id,
+  }])
+  if (recipient.email) {
+    const safeLabel = escapeHtml(row.label)
+    const safeBusiness = escapeHtml(row.businessAccount.name)
+    const safeStatus = escapeHtml(status)
+    const validFromText = formatMailDate(row.validFrom)
+    const validUntilText = formatMailDate(row.validUntil)
+    const renewalText = formatMailDate(row.renewalAt)
+    const statusColor = addOnStatusColor(status)
+    await sendSmtpMail({
+      to: recipient.email,
+      subject: `AutoParts Pro add-on permission update - ${row.label}`,
+      text: [
+        "Hello,",
+        "",
+        `AutoParts Pro Admin updated an add-on permission for "${row.businessAccount.name}".`,
+        "",
+        `Add-on: ${row.label}`,
+        `Business: ${row.businessAccount.name}`,
+        `Status: ${status}`,
+        `Valid from: ${validFromText}`,
+        `Expires on: ${validUntilText}`,
+        `Renewal date: ${renewalText}`,
+        "",
+        activeAddOnStatuses.includes(status)
+          ? "This add-on is now active for your business account. Sign in to your dashboard to use the enabled feature."
+          : "Sign in to your dashboard and open Add-ons to review the request.",
+        "",
+        "AutoParts Pro Support",
+      ].join("\n"),
+      html: [
+        `<div style="margin:0;background:#f8fafc;padding:24px 0;font-family:Arial,Helvetica,sans-serif;color:#111827">`,
+        `<div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">`,
+        `<div style="background:#0f172a;color:#ffffff;padding:24px 28px">`,
+        `<p style="margin:0 0 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#cbd5e1">AutoParts Pro Add-ons</p>`,
+        `<h1 style="margin:0;font-size:22px;line-height:1.3">Add-on permission updated</h1>`,
+        `</div>`,
+        `<div style="padding:28px">`,
+        `<p style="margin:0 0 14px;font-size:15px;line-height:1.6">Hello,</p>`,
+        `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#334155">AutoParts Pro Admin updated an add-on permission for your business account.</p>`,
+        `<div style="margin:0 0 22px;padding:16px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc">`,
+        `<p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b">Current status</p>`,
+        `<p style="margin:0;font-size:20px;font-weight:700;color:${statusColor}">${safeStatus}</p>`,
+        `</div>`,
+        `<table role="presentation" style="width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 22px">`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Add-on</td><td style="padding:10px 0;font-weight:600;word-break:break-word">${safeLabel}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Business</td><td style="padding:10px 0;word-break:break-word">${safeBusiness}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Status</td><td style="padding:10px 0;font-weight:600;color:${statusColor}">${safeStatus}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Valid from</td><td style="padding:10px 0">${escapeHtml(validFromText)}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Expires on</td><td style="padding:10px 0">${escapeHtml(validUntilText)}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Renewal date</td><td style="padding:10px 0">${escapeHtml(renewalText)}</td></tr>`,
+        `</table>`,
+        `<p style="margin:0;font-size:14px;line-height:1.6;color:#64748b">${
+          activeAddOnStatuses.includes(status)
+            ? "This add-on is now active for your business account. Sign in to your dashboard to use the enabled feature."
+            : "Sign in to your dashboard and open Add-ons to review the request."
+        }</p>`,
+        `<p style="margin:22px 0 0;font-size:14px;color:#334155">AutoParts Pro Support</p>`,
+        `</div></div></div>`,
+      ].join(""),
+    }).catch((error) => logError("Unable to email admin-created add-on update", error))
+  }
+
+  return mapAddOnRequest(row)
+}
+
 export async function updateAdminBusinessAddOnRequest(input: {
   adminId: string
   id: unknown
   status: unknown
+  validFrom?: unknown
+  validUntil?: unknown
+  renewalAt?: unknown
 }) {
   const id = cleanText(input.id, 80)
   if (!id) throw new Error("Add-on request id is required")
@@ -1650,22 +2374,158 @@ export async function updateAdminBusinessAddOnRequest(input: {
   if (!status || !Object.values(BusinessAddOnRequestStatus).includes(status)) {
     throw new Error("Valid add-on status is required")
   }
+  const current = await db.businessAddOnRequest.findUnique({
+    where: { id },
+    select: { status: true, validFrom: true, validUntil: true, renewalAt: true },
+  })
+  if (!current) throw new Error("Add-on request was not found")
+  const hasValidityField = (key: "validFrom" | "validUntil" | "renewalAt") => input[key] !== undefined
+  const validity = {
+    validFrom: hasValidityField("validFrom") ? cleanDate(input.validFrom, "Valid from") : current.validFrom,
+    validUntil: hasValidityField("validUntil") ? cleanDate(input.validUntil, "Valid until", true) : current.validUntil,
+    renewalAt: hasValidityField("renewalAt") ? cleanDate(input.renewalAt, "Renewal date") : current.renewalAt,
+  }
+  if (validity.validFrom && validity.validUntil && validity.validUntil <= validity.validFrom) {
+    throw new Error("Valid until must be after valid from")
+  }
+  const validityChanged =
+    !sameDateValue(current.validFrom, validity.validFrom) ||
+    !sameDateValue(current.validUntil, validity.validUntil) ||
+    !sameDateValue(current.renewalAt, validity.renewalAt)
+  if (current.status === status && !validityChanged) {
+    const existing = await db.businessAddOnRequest.findUniqueOrThrow({
+      where: { id },
+      include: { businessAccount: { include: { plan: true } }, requestedBy: true, decidedBy: true },
+    })
+    return mapAddOnRequest(existing)
+  }
   const row = await db.businessAddOnRequest.update({
     where: { id },
     data: {
       status,
       decidedByAdminId: input.adminId,
       decidedAt: new Date(),
+      validFrom: validity.validFrom,
+      validUntil: validity.validUntil,
+      renewalAt: validity.renewalAt,
     },
-    include: { businessAccount: { include: { plan: true } }, requestedBy: true, decidedBy: true },
+    include: {
+      businessAccount: {
+        include: {
+          plan: true,
+          owner: { select: { id: true, email: true, phone: true, firstName: true, lastName: true, companyName: true } },
+          addOnRequests: { where: activeAddOnRequestWhere() },
+        },
+      },
+      requestedBy: true,
+      decidedBy: true,
+    },
   })
+  const limitAddOn = parseLimitAddOnKey(row.featureKey)
+  if (limitAddOn && ["services", "products", "vehicles"].includes(limitAddOn.metric)) {
+    const limits = effectiveLimitsForAccount(row.businessAccount)
+    await enforcePlanLimitedRecords({
+      account: row.businessAccount,
+      plan: {
+        ...row.businessAccount.plan,
+        serviceLimit: limits.services,
+        productLimit: limits.products,
+        vehicleLimit: limits.vehicles,
+      },
+    })
+  }
   await logBusinessActivity({
     businessAccountId: row.businessAccountId,
     action: "business_addon.status_changed",
     entityType: "business_addon",
     entityId: row.id,
-    metadata: { featureKey: row.featureKey, label: row.label, status },
+    metadata: {
+      featureKey: row.featureKey,
+      label: row.label,
+      previousStatus: current.status,
+      status,
+      validFrom: toIso(row.validFrom),
+      validUntil: toIso(row.validUntil),
+      renewalAt: toIso(row.renewalAt),
+    },
   })
+  const recipient = row.requestedBy ?? row.businessAccount.owner
+  if (recipient) {
+    await createNotificationsSafely([{
+      recipientUserId: recipient.id,
+      actorAdminId: input.adminId,
+      type: "business.addon.status.updated",
+      title: "Add-on request updated",
+      body: `${row.label} changed from ${current.status} to ${status}.`,
+      linkUrl: "/add-ons",
+      entityType: "business_addon",
+      entityId: row.id,
+    }])
+    if (recipient.email) {
+      const safeLabel = escapeHtml(row.label)
+      const safeBusiness = escapeHtml(row.businessAccount.name)
+      const safePreviousStatus = escapeHtml(current.status)
+      const safeStatus = escapeHtml(status)
+      const validFromText = formatMailDate(row.validFrom)
+      const validUntilText = formatMailDate(row.validUntil)
+      const renewalText = formatMailDate(row.renewalAt)
+      const statusColor = addOnStatusColor(status)
+      await sendSmtpMail({
+        to: recipient.email,
+        subject: `AutoParts Pro add-on request update - ${row.label}`,
+        text: [
+          "Hello,",
+          "",
+          `The status of your AutoParts Pro add-on request "${row.label}" has been updated.`,
+          "",
+          `Add-on: ${row.label}`,
+          `Business: ${row.businessAccount.name}`,
+          `Previous status: ${current.status}`,
+          `New status: ${status}`,
+          `Valid from: ${validFromText}`,
+          `Expires on: ${validUntilText}`,
+          `Renewal date: ${renewalText}`,
+          "",
+          activeAddOnStatuses.includes(status)
+            ? "Your add-on is now active for this business account. Sign in to your dashboard to use the enabled feature."
+            : "Sign in to your dashboard and open Add-ons to review the request.",
+          "",
+          "AutoParts Pro Support",
+        ].join("\n"),
+        html: [
+          `<div style="margin:0;background:#f8fafc;padding:24px 0;font-family:Arial,Helvetica,sans-serif;color:#111827">`,
+          `<div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">`,
+          `<div style="background:#0f172a;color:#ffffff;padding:24px 28px">`,
+          `<p style="margin:0 0 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#cbd5e1">AutoParts Pro Add-ons</p>`,
+          `<h1 style="margin:0;font-size:22px;line-height:1.3">Add-on request updated</h1>`,
+          `</div>`,
+          `<div style="padding:28px">`,
+          `<p style="margin:0 0 14px;font-size:15px;line-height:1.6">Hello,</p>`,
+          `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#334155">We updated the status of your AutoParts Pro add-on request.</p>`,
+          `<div style="margin:0 0 22px;padding:16px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc">`,
+          `<p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b">Current status</p>`,
+          `<p style="margin:0;font-size:20px;font-weight:700;color:${statusColor}">${safeStatus}</p>`,
+          `</div>`,
+          `<table role="presentation" style="width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 22px">`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Add-on</td><td style="padding:10px 0;font-weight:600;word-break:break-word">${safeLabel}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Business</td><td style="padding:10px 0;word-break:break-word">${safeBusiness}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Previous status</td><td style="padding:10px 0">${safePreviousStatus}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">New status</td><td style="padding:10px 0;font-weight:600;color:${statusColor}">${safeStatus}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Valid from</td><td style="padding:10px 0">${escapeHtml(validFromText)}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Expires on</td><td style="padding:10px 0">${escapeHtml(validUntilText)}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Renewal date</td><td style="padding:10px 0">${escapeHtml(renewalText)}</td></tr>`,
+          `</table>`,
+          `<p style="margin:0;font-size:14px;line-height:1.6;color:#64748b">${
+            activeAddOnStatuses.includes(status)
+              ? "Your add-on is now active for this business account. Sign in to your dashboard to use the enabled feature."
+              : "Sign in to your dashboard and open Add-ons to review the request."
+          }</p>`,
+          `<p style="margin:22px 0 0;font-size:14px;color:#334155">AutoParts Pro Support</p>`,
+          `</div></div></div>`,
+        ].join(""),
+      }).catch((error) => logError("Unable to email add-on status update", error))
+    }
+  }
   return mapAddOnRequest(row)
 }
 
@@ -1678,6 +2538,7 @@ const mapSupportTicket = (row: Prisma.BusinessSupportTicketGetPayload<{
   id: row.id,
   subject: row.subject,
   message: row.message,
+  category: row.category,
   status: row.status,
   priority: row.priority,
   createdBy: row.createdBy ? { id: row.createdBy.id, name: fullName(row.createdBy), email: row.createdBy.email } : null,
@@ -1696,15 +2557,24 @@ const mapSupportTicket = (row: Prisma.BusinessSupportTicketGetPayload<{
 export async function listBusinessSupportTickets(input: {
   userId: string
   businessAccountId: unknown
+  page?: unknown
+  pageSize?: unknown
 }) {
   const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
-  const rows = await db.businessSupportTicket.findMany({
-    where: { businessAccountId: account.id },
-    include: { businessAccount: { include: { plan: true } }, createdBy: true, assignedAdmin: true },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  })
-  return rows.map(mapSupportTicket)
+  const page = Math.max(1, Number(input.page) || 1)
+  const pageSize = Math.min(25, Math.max(1, Number(input.pageSize) || 10))
+  const where = { businessAccountId: account.id }
+  const [rows, total] = await Promise.all([
+    db.businessSupportTicket.findMany({
+      where,
+      include: { businessAccount: { include: { plan: true } }, createdBy: true, assignedAdmin: true },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    db.businessSupportTicket.count({ where }),
+  ])
+  return { items: rows.map(mapSupportTicket), total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) }
 }
 
 export async function createBusinessSupportTicket(input: {
@@ -1712,18 +2582,28 @@ export async function createBusinessSupportTicket(input: {
   businessAccountId: unknown
   subject: unknown
   message: unknown
+  category?: unknown
 }) {
   const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
   const subject = cleanText(input.subject, 160)
   const message = cleanText(input.message, 2000)
+  const category = cleanText(input.category, 80)
   if (!subject) throw new Error("Support subject is required")
   if (!message) throw new Error("Support message is required")
+  const allowedCategories =
+    account.plan.supportTier === "Premium"
+      ? new Set(["account_assistance", "onboarding_training"])
+      : account.plan.supportTier === "Standard"
+        ? new Set(["account_assistance"])
+        : new Set<string>()
+  if (category && !allowedCategories.has(category)) throw new Error("This support option is not included in your current plan")
 
   const row = await db.businessSupportTicket.create({
     data: {
       businessAccountId: account.id,
       subject,
       message,
+      category,
       priority: ticketPriorityForPlan(account),
       createdByUserId: input.userId,
     },
@@ -1735,9 +2615,152 @@ export async function createBusinessSupportTicket(input: {
     action: "business_support_ticket.created",
     entityType: "business_support_ticket",
     entityId: row.id,
-    metadata: { subject, priority: row.priority },
+    metadata: { subject, priority: row.priority, category },
   })
   return mapSupportTicket(row)
+}
+
+const supportTierRank: Record<string, number> = { Basic: 1, Standard: 2, Premium: 3 }
+
+const visibleSupportTiers = (tier: string | null | undefined) => {
+  const rank = supportTierRank[tier ?? "Basic"] ?? 1
+  return Object.entries(supportTierRank).filter(([, value]) => value <= rank).map(([key]) => key)
+}
+
+const mapSupportVideo = (row: {
+  id: string
+  accountType: BusinessAccountType
+  supportTier: string
+  title: string
+  description: string | null
+  videoUrl: string
+  sortOrder: number
+  isActive: boolean
+  createdAt: Date
+  updatedAt: Date
+}) => ({
+  id: row.id,
+  accountType: row.accountType,
+  supportTier: row.supportTier,
+  title: row.title,
+  description: row.description,
+  videoUrl: row.videoUrl,
+  sortOrder: row.sortOrder,
+  isActive: row.isActive,
+  createdAt: row.createdAt.toISOString(),
+  updatedAt: row.updatedAt.toISOString(),
+})
+
+const mapSupportFaq = (row: {
+  id: string
+  accountType: BusinessAccountType
+  supportTier: string
+  question: string
+  answer: string
+  sortOrder: number
+  isActive: boolean
+  createdAt: Date
+  updatedAt: Date
+}) => ({
+  id: row.id,
+  accountType: row.accountType,
+  supportTier: row.supportTier,
+  question: row.question,
+  answer: row.answer,
+  sortOrder: row.sortOrder,
+  isActive: row.isActive,
+  createdAt: row.createdAt.toISOString(),
+  updatedAt: row.updatedAt.toISOString(),
+})
+
+export async function listAdminBusinessSupportContent() {
+  const [videos, faqs] = await Promise.all([
+    db.businessSupportVideo.findMany({ orderBy: [{ accountType: "asc" }, { supportTier: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
+    db.businessSupportFaq.findMany({ orderBy: [{ accountType: "asc" }, { supportTier: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
+  ])
+  return { videos: videos.map(mapSupportVideo), faqs: faqs.map(mapSupportFaq) }
+}
+
+export async function listBusinessSupportContent(input: { userId: string; businessAccountId: unknown }) {
+  const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
+  const tiers = visibleSupportTiers(account.plan.supportTier)
+  const [videos, faqs] = await Promise.all([
+    db.businessSupportVideo.findMany({ where: { accountType: account.type, supportTier: { in: tiers }, isActive: true }, orderBy: [{ supportTier: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
+    db.businessSupportFaq.findMany({ where: { accountType: account.type, supportTier: { in: tiers }, isActive: true }, orderBy: [{ supportTier: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
+  ])
+  return {
+    supportTier: account.plan.supportTier,
+    supportSummary:
+      account.plan.supportTier === "Premium"
+        ? "Help videos, FAQ, priority support, faster response, account assistance, onboarding, and training support."
+        : account.plan.supportTier === "Standard"
+          ? "Help videos, FAQ, support request, faster response, and basic account assistance."
+          : "Help videos, FAQ, and standard support request.",
+    ticketCategories:
+      account.plan.supportTier === "Premium"
+        ? [
+            { value: "account_assistance", label: "Account assistance" },
+            { value: "onboarding_training", label: "Onboarding / training support" },
+          ]
+        : account.plan.supportTier === "Standard"
+          ? [{ value: "account_assistance", label: "Account assistance" }]
+          : [],
+    videos: videos.map(mapSupportVideo),
+    faqs: faqs.map(mapSupportFaq),
+  }
+}
+
+export async function upsertAdminBusinessSupportContent(input: {
+  adminId: string
+  kind: unknown
+  id?: unknown
+  accountType: unknown
+  supportTier: unknown
+  title?: unknown
+  description?: unknown
+  videoUrl?: unknown
+  question?: unknown
+  answer?: unknown
+  sortOrder?: unknown
+  isActive?: unknown
+}) {
+  const kind = cleanText(input.kind, 20)
+  const id = cleanText(input.id, 80)
+  const accountType = cleanText(input.accountType, 20) as BusinessAccountType | null
+  const supportTier = cleanText(input.supportTier, 20) ?? "Basic"
+  if (kind !== "video" && kind !== "faq") throw new Error("Content type is required")
+  if (!accountType || !Object.values(BusinessAccountType).includes(accountType)) throw new Error("Valid dashboard type is required")
+  if (!["Basic", "Standard", "Premium"].includes(supportTier)) throw new Error("Valid support tier is required")
+  const sortOrder = Number(input.sortOrder ?? 0)
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 9999) throw new Error("Sort order must be a whole number between 0 and 9999")
+  const isActive = typeof input.isActive === "boolean" ? input.isActive : true
+
+  if (kind === "video") {
+    const title = cleanText(input.title, 160)
+    const videoUrl = cleanText(input.videoUrl, 1000)
+    if (!title || title.length < 2) throw new Error("Video title must be at least 2 characters")
+    if (!videoUrl) throw new Error("Video URL is required")
+    let parsedVideoUrl: URL
+    try {
+      parsedVideoUrl = new URL(videoUrl)
+    } catch {
+      throw new Error("Video URL must be valid")
+    }
+    if (!["http:", "https:"].includes(parsedVideoUrl.protocol)) throw new Error("Video URL must start with http or https")
+    const data = { accountType, supportTier, title, description: cleanText(input.description, 500), videoUrl, sortOrder, isActive }
+    const row = id ? await db.businessSupportVideo.update({ where: { id }, data }) : await db.businessSupportVideo.create({ data })
+    await logBusinessActivity({ action: "business_support_video.saved", entityType: "business_support_video", entityId: row.id, metadata: { adminId: input.adminId, accountType, supportTier } })
+    return { video: mapSupportVideo(row) }
+  }
+
+  const question = cleanText(input.question, 300)
+  const answer = cleanText(input.answer, 2000)
+  if (!question || question.length < 5) throw new Error("FAQ question must be at least 5 characters")
+  if (!answer || answer.length < 10) throw new Error("FAQ answer must be at least 10 characters")
+  const data = { accountType, supportTier, question, answer, sortOrder, isActive }
+  const row = id ? await db.businessSupportFaq.update({ where: { id }, data }) : await db.businessSupportFaq.create({ data })
+  await logBusinessActivity({ action: "business_support_faq.saved", entityType: "business_support_faq", entityId: row.id, metadata: { adminId: input.adminId, accountType, supportTier } })
+  return { faq: mapSupportFaq(row) }
 }
 
 export async function listAdminBusinessSupportTickets(status?: unknown) {
@@ -1752,6 +2775,51 @@ export async function listAdminBusinessSupportTickets(status?: unknown) {
   return rows.map(mapSupportTicket)
 }
 
+export async function listAdminBusinessSupportTicketsPage(input: {
+  page?: number
+  pageSize?: number
+  query?: string
+  status?: string
+  accountType?: string
+}) {
+  const page = Math.max(1, input.page ?? 1)
+  const pageSize = Math.min(50, Math.max(1, input.pageSize ?? 20))
+  const query = cleanText(input.query, 120)
+  const statuses = Object.values(BusinessSupportTicketStatus)
+  const accountTypes = Object.values(BusinessAccountType)
+  const where: Prisma.BusinessSupportTicketWhereInput = {
+    ...(statuses.includes(input.status as BusinessSupportTicketStatus) ? { status: input.status as BusinessSupportTicketStatus } : {}),
+    ...(accountTypes.includes(input.accountType as BusinessAccountType) ? { businessAccount: { type: input.accountType as BusinessAccountType } } : {}),
+    ...(query ? { OR: [
+      { subject: { contains: query, mode: "insensitive" } },
+      { message: { contains: query, mode: "insensitive" } },
+      { category: { contains: query, mode: "insensitive" } },
+      { businessAccount: { name: { contains: query, mode: "insensitive" } } },
+      { businessAccount: { publicId: { contains: query, mode: "insensitive" } } },
+      { createdBy: { email: { contains: query, mode: "insensitive" } } },
+    ] } : {}),
+  }
+  const [rows, total] = await Promise.all([
+    db.businessSupportTicket.findMany({
+      where,
+      include: { businessAccount: { include: { plan: true } }, createdBy: true, assignedAdmin: true },
+      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    db.businessSupportTicket.count({ where }),
+  ])
+  return { items: rows.map(mapSupportTicket), total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) }
+}
+
+export async function getAdminBusinessWorkflowCounts() {
+  const [pendingAddOns, activeTickets] = await Promise.all([
+    db.businessAddOnRequest.count({ where: { status: { in: [BusinessAddOnRequestStatus.Requested, BusinessAddOnRequestStatus.Approved] } } }),
+    db.businessSupportTicket.count({ where: { status: { in: [BusinessSupportTicketStatus.Open, BusinessSupportTicketStatus.InProgress] } } }),
+  ])
+  return { pendingAddOns, activeTickets }
+}
+
 export async function updateAdminBusinessSupportTicket(input: {
   adminId: string
   id: unknown
@@ -1763,6 +2831,12 @@ export async function updateAdminBusinessSupportTicket(input: {
   if (!status || !Object.values(BusinessSupportTicketStatus).includes(status)) {
     throw new Error("Valid support ticket status is required")
   }
+  const current = await db.businessSupportTicket.findUnique({
+    where: { id },
+    include: { businessAccount: { include: { plan: true } }, createdBy: true, assignedAdmin: true },
+  })
+  if (!current) throw new Error("Support ticket was not found")
+  if (current.status === status) return mapSupportTicket(current)
   const row = await db.businessSupportTicket.update({
     where: { id },
     data: {
@@ -1776,9 +2850,86 @@ export async function updateAdminBusinessSupportTicket(input: {
     action: "business_support_ticket.status_changed",
     entityType: "business_support_ticket",
     entityId: row.id,
-    metadata: { subject: row.subject, status },
+    metadata: { subject: row.subject, previousStatus: current.status, status },
   })
+  const displayStatus = supportTicketStatusLabel(status)
+  const previousDisplayStatus = supportTicketStatusLabel(current.status)
+  if (row.createdBy) {
+    await createNotificationsSafely([{
+      recipientUserId: row.createdBy.id,
+      actorAdminId: input.adminId,
+      type: "business.support.status.updated",
+      title: "Support ticket updated",
+      body: `${row.subject} changed from ${previousDisplayStatus} to ${displayStatus}.`,
+      linkUrl: "/support",
+      entityType: "business_support_ticket",
+      entityId: row.id,
+    }])
+    if (row.createdBy.email) {
+      const safeSubject = escapeHtml(row.subject)
+      const safeBusiness = escapeHtml(row.businessAccount.name)
+      const safePreviousStatus = escapeHtml(previousDisplayStatus)
+      const safeStatus = escapeHtml(displayStatus)
+      const statusColor = supportTicketStatusColor(status)
+      await sendSmtpMail({
+        to: row.createdBy.email,
+        subject: `AutoParts Pro support ticket update - ${row.subject}`,
+        text: [
+          "Hello,",
+          "",
+          `The status of your AutoParts Pro support ticket "${row.subject}" has been updated.`,
+          "",
+          `Ticket: ${row.subject}`,
+          `Business: ${row.businessAccount.name}`,
+          `Previous status: ${previousDisplayStatus}`,
+          `New status: ${displayStatus}`,
+          "",
+          "No action is required unless you need to add more information. Sign in to your dashboard and open Support to view the full ticket history.",
+          "",
+          "AutoParts Pro Support",
+        ].join("\n"),
+        html: [
+          `<div style="margin:0;background:#f8fafc;padding:24px 0;font-family:Arial,Helvetica,sans-serif;color:#111827">`,
+          `<div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">`,
+          `<div style="background:#0f172a;color:#ffffff;padding:24px 28px">`,
+          `<p style="margin:0 0 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#cbd5e1">AutoParts Pro Support</p>`,
+          `<h1 style="margin:0;font-size:22px;line-height:1.3">Ticket status updated</h1>`,
+          `</div>`,
+          `<div style="padding:28px">`,
+          `<p style="margin:0 0 14px;font-size:15px;line-height:1.6">Hello,</p>`,
+          `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#334155">We updated the status of your AutoParts Pro support ticket.</p>`,
+          `<div style="margin:0 0 22px;padding:16px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc">`,
+          `<p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b">Current status</p>`,
+          `<p style="margin:0;font-size:20px;font-weight:700;color:${statusColor}">${safeStatus}</p>`,
+          `</div>`,
+          `<table role="presentation" style="width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 22px">`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Ticket</td><td style="padding:10px 0;font-weight:600;word-break:break-word">${safeSubject}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Business</td><td style="padding:10px 0;word-break:break-word">${safeBusiness}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Previous status</td><td style="padding:10px 0">${safePreviousStatus}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">New status</td><td style="padding:10px 0;font-weight:600;color:${statusColor}">${safeStatus}</td></tr>`,
+          `</table>`,
+          `<p style="margin:0;font-size:14px;line-height:1.6;color:#64748b">No action is required unless you need to add more information. Sign in to your dashboard and open Support to view the full ticket history.</p>`,
+          `<p style="margin:22px 0 0;font-size:14px;color:#334155">AutoParts Pro Support</p>`,
+          `</div></div></div>`,
+        ].join(""),
+      }).catch((error) => logError("Unable to email support ticket status update", error))
+    }
+  }
   return mapSupportTicket(row)
+}
+
+export async function deleteAdminBusinessSupportTicket(input: { adminId: string; id: unknown }) {
+  const id = cleanText(input.id, 80)
+  if (!id) throw new Error("Support ticket id is required")
+  const row = await db.businessSupportTicket.delete({ where: { id } })
+  await logBusinessActivity({
+    businessAccountId: row.businessAccountId,
+    action: "business_support_ticket.deleted",
+    entityType: "business_support_ticket",
+    entityId: row.id,
+    metadata: { subject: row.subject, deletedByAdminId: input.adminId },
+  })
+  return { id: row.id }
 }
 
 const mapActivityLog = (row: Prisma.BusinessActivityLogGetPayload<{
@@ -1965,10 +3116,11 @@ export async function assertSupplierCatalogPlanLimits(input: {
     if (normalized) categoryValues.add(normalized)
   }
 
-  if (account.plan.brandLimit !== null && brandValues.size > account.plan.brandLimit) {
+  const limits = effectiveLimitsForAccount(account)
+  if (limits.brands !== null && brandValues.size > limits.brands) {
     throw new Error(`${account.plan.name} brand limit reached. Upgrade your plan.`)
   }
-  if (account.plan.categoryLimit !== null && categoryValues.size > account.plan.categoryLimit) {
+  if (limits.categories !== null && categoryValues.size > limits.categories) {
     throw new Error(`${account.plan.name} category limit reached. Upgrade your plan.`)
   }
 
@@ -1978,17 +3130,75 @@ export async function assertSupplierCatalogPlanLimits(input: {
 export async function listBusinessAccounts() {
   await ensureFreeBusinessAccountsForExistingUsers()
   const accounts = await db.businessAccount.findMany({
-    include: accountInclude,
+    include: accountInclude(),
     orderBy: { createdAt: "desc" },
   })
   return accounts.map(mapAccount)
+}
+
+export async function searchBusinessAccountOptions(input: {
+  query?: unknown
+  limit?: unknown
+}) {
+  await ensureFreeBusinessAccountsForExistingUsers()
+  const query = cleanText(input.query, 100)
+  const limit = Math.min(Math.max(Number(input.limit) || 12, 5), 25)
+  const where: Prisma.BusinessAccountWhereInput = {
+    isActive: true,
+    ...(query
+      ? {
+          OR: [
+            { publicId: { contains: query, mode: "insensitive" } },
+            { name: { contains: query, mode: "insensitive" } },
+            { owner: { is: { email: { contains: query, mode: "insensitive" } } } },
+            { owner: { is: { phone: { contains: query, mode: "insensitive" } } } },
+            { owner: { is: { firstName: { contains: query, mode: "insensitive" } } } },
+            { owner: { is: { lastName: { contains: query, mode: "insensitive" } } } },
+            { owner: { is: { companyName: { contains: query, mode: "insensitive" } } } },
+          ],
+        }
+      : {}),
+  }
+  const accounts = await db.businessAccount.findMany({
+    where,
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    take: limit,
+    select: {
+      id: true,
+      publicId: true,
+      name: true,
+      type: true,
+      owner: {
+        select: {
+          email: true,
+          phone: true,
+          firstName: true,
+          lastName: true,
+          companyName: true,
+        },
+      },
+      plan: { select: { name: true } },
+    },
+  })
+  return accounts.map((account) => ({
+    id: account.id,
+    publicId: account.publicId,
+    name: account.name,
+    type: account.type,
+    planName: account.plan.name,
+    owner: {
+      name: fullName(account.owner),
+      email: account.owner.email,
+      phone: account.owner.phone,
+    },
+  }))
 }
 
 export async function getBusinessAccount(id: string) {
   await ensureDefaultBusinessPlans()
   const account = await db.businessAccount.findUnique({
     where: { id },
-    include: accountInclude,
+    include: accountInclude(),
   })
   return account ? mapAccount(account) : null
 }
@@ -1999,9 +3209,9 @@ export async function ensureBusinessAccountForOwner(input: {
   name: string | null
   planCode?: BusinessPlanCode
 }) {
-  if (!businessRoles.has(input.role)) return null
+  if (!isBusinessUserRole(input.role)) return null
 
-  const type = input.role as BusinessAccountType
+  const type = userRoleToAccountType(input.role)
   const planCode = input.planCode ?? BusinessPlanCode.Free
   const name = cleanText(input.name) ?? `${type} account`
 
@@ -2074,6 +3284,7 @@ export async function getMyBusinessAccess(userId: string) {
           plan: true,
           roles: true,
           permissions: true,
+          addOnRequests: { where: activeAddOnRequestWhere() },
         },
       },
     },
@@ -2090,7 +3301,12 @@ export async function getMyBusinessAccess(userId: string) {
     const account = membership.businessAccount
     const isOwner = account.ownerUserId === userId
     const usage = await usageForAccount(account)
-    const entitlements = buildEntitlementPayload(account, usage)
+    const entitlements = buildEntitlementPayload(
+      account,
+      usage,
+      account.addOnRequests.map((request) => request.featureKey),
+      account.addOnRequests,
+    )
     const permissionCodes = new Set(permissions.map((permission) => permission.code))
     const permissionFeatures = new Set(permissions.map((permission) => permission.featureKey).filter(Boolean))
     const roleMenuKeys = permissions.map((permission) => permission.menuKey).filter(Boolean)
@@ -2127,7 +3343,10 @@ export async function getMyBusinessAccess(userId: string) {
         name: account.name,
         ownerUserId: account.ownerUserId,
         isOwner,
+        createdAt: account.createdAt.toISOString(),
+        updatedAt: account.updatedAt.toISOString(),
         plan: entitlements.plan,
+        subscription: entitlements.subscription,
         usage: entitlements.usage,
         limits: entitlements.limits,
       },
@@ -2157,7 +3376,9 @@ export async function getMyBusinessAccess(userId: string) {
       enabledFeatures: entitlements.enabledFeatures,
       lockedFeatures: entitlements.lockedFeatures,
       requestableFeatures: entitlements.requestableFeatures,
+      limitAddOns: entitlements.limitAddOns,
       addOns: entitlements.addOns,
+      activeAddOns: entitlements.activeAddOns,
       actions,
       entitlements,
     }
@@ -2209,10 +3430,12 @@ export async function createBusinessRole(input: {
   permissionIds: unknown
 }) {
   const account = await assertBusinessAccountOwnership(input)
-  if (!account.plan.customRolesEnabled) {
+  const addOnFeatures = addOnFeatureSet(account.addOnRequests.map((request) => request.featureKey), account.type)
+  const limits = effectiveLimitsForAccount(account)
+  if (!account.plan.customRolesEnabled && !addOnFeatures.has("roles.manage")) {
     throw new Error("Custom roles are not enabled for this plan")
   }
-  if (account.plan.roleLimit !== null && account.roles.length >= account.plan.roleLimit) {
+  if (limits.roles !== null && account.roles.length >= limits.roles) {
     throw new Error("Role limit reached for this plan")
   }
 
@@ -2227,8 +3450,8 @@ export async function createBusinessRole(input: {
   const validPermissionIds = new Set(account.permissions.map((permission) => permission.id))
   const permissionIds = cleanTextArray(input.permissionIds).filter((id) => validPermissionIds.has(id))
   if (
-    account.plan.permissionLimit !== null &&
-    permissionIds.length > account.plan.permissionLimit
+    limits.permissions !== null &&
+    permissionIds.length > limits.permissions
   ) {
     throw new Error("Permission limit reached for this plan")
   }
@@ -2273,7 +3496,8 @@ export async function inviteBusinessStaff(input: {
   const staffCount = account.members.filter(
     (member) => member.userId !== account.ownerUserId,
   ).length
-  if (account.plan.staffLimit !== null && staffCount >= account.plan.staffLimit) {
+  const limits = effectiveLimitsForAccount(account)
+  if (limits.staff !== null && staffCount >= limits.staff) {
     throw new Error("Staff limit reached for this plan")
   }
 
@@ -2511,6 +3735,7 @@ export async function acceptBusinessInvitation(input: {
             roles: {
               orderBy: { createdAt: "asc" },
             },
+            addOnRequests: { where: activeAddOnRequestWhere() },
           },
         },
       },
@@ -2573,7 +3798,8 @@ export async function acceptBusinessInvitation(input: {
     )
     const assignedRoleIds = [...roleIds].filter((id) => validRoleIds.has(id))
 
-    if (!hasExistingSeat && invitation.businessAccount.plan.staffLimit !== null && activeMembers >= invitation.businessAccount.plan.staffLimit) {
+    const limits = effectiveLimitsForAccount(invitation.businessAccount)
+    if (!hasExistingSeat && limits.staff !== null && activeMembers >= limits.staff) {
       throw new Error("Staff limit reached for this plan")
     }
 
@@ -2824,7 +4050,7 @@ export async function deleteBusinessMember(input: {
   const memberId = cleanText(input.memberId, 80)
   if (!memberId) throw new Error("Member id is required")
 
-  const member = account.members.find((row) => row.id === memberId)
+  const member = account.members.find((row) => row.id === memberId || row.userId === memberId)
   if (!member) throw new Error("Business member was not found")
   if (member.userId === account.ownerUserId) {
     throw new Error("Owner member cannot be deleted")
@@ -2880,7 +4106,9 @@ export async function updateBusinessRole(input: {
     ownerUserId: input.ownerUserId,
     businessAccountId: input.businessAccountId,
   })
-  if (!account.plan.customRolesEnabled) {
+  const addOnFeatures = addOnFeatureSet(account.addOnRequests.map((request) => request.featureKey), account.type)
+  const limits = effectiveLimitsForAccount(account)
+  if (!account.plan.customRolesEnabled && !addOnFeatures.has("roles.manage")) {
     throw new Error("Custom roles are not enabled for this plan")
   }
 
@@ -2906,8 +4134,8 @@ export async function updateBusinessRole(input: {
     ? role.permissionIds
     : cleanTextArray(input.permissionIds).filter((id) => validPermissionIds.has(id))
   if (
-    account.plan.permissionLimit !== null &&
-    permissionIds.length > account.plan.permissionLimit
+    limits.permissions !== null &&
+    permissionIds.length > limits.permissions
   ) {
     throw new Error("Permission limit reached for this plan")
   }
@@ -2959,14 +4187,9 @@ export async function deleteBusinessRole(input: {
   if (role.isOwnerRole) throw new Error("Owner role cannot be deleted")
 
   const impactedMembers = account.members.filter((member) => member.roleIds.includes(roleId))
-  await Promise.all(
-    impactedMembers.map((member) =>
-      db.businessAccountMember.update({
-        where: { id: member.id },
-        data: { roleIds: member.roleIds.filter((id) => id !== roleId) },
-      }),
-    ),
-  )
+  if (impactedMembers.length) {
+    throw new Error("This role is assigned to staff. First assign another role to those staff members, then delete this role.")
+  }
   await db.businessRole.delete({
     where: { id: role.id },
   })

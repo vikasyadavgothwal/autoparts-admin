@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { revalidatePath } from "next/cache"
 
 import { requireAdminFromRequest, readJsonBody } from "@/lib/auth/api-guards"
 import { updateBusinessPlan } from "@/services/business/business-platform-service"
@@ -17,9 +18,11 @@ export async function PATCH(
 
   try {
     const { id } = await params
+    const plan = await updateBusinessPlan(id, body.body)
+    revalidatePath("/business-platform")
     return NextResponse.json({
       ok: true,
-      plan: await updateBusinessPlan(id, body.body),
+      plan,
     })
   } catch (error) {
     return NextResponse.json(

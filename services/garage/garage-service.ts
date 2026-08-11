@@ -30,11 +30,13 @@ type GarageServiceRow = {
     updatedAt: string
   }> | null
   status: GarageServiceStatus
+  planSuspendedAt: Date | null
+  planSuspensionReason: string | null
   createdAt: Date
   updatedAt: Date
 }
 
-const VALID_STATUSES = new Set<GarageServiceStatus>(["active", "inactive"])
+const VALID_STATUSES = new Set<GarageServiceStatus>(["active", "inactive", "plan_suspended"])
 
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
@@ -77,6 +79,8 @@ const mapService = (row: GarageServiceRow): GarageServiceRecord => ({
       ? Number(row.reviewCount)
       : row.reviewCount ?? 0,
   reviews: row.reviews ?? [],
+  planSuspendedAt: row.planSuspendedAt?.toISOString() ?? null,
+  planSuspensionReason: row.planSuspensionReason,
   createdAt: row.createdAt.toISOString(),
   updatedAt: row.updatedAt.toISOString(),
 })
@@ -130,6 +134,8 @@ const serviceSelect = Prisma.sql`
       '[]'::jsonb
     ) AS "reviews",
     "status",
+    "planSuspendedAt",
+    "planSuspensionReason",
     "createdAt",
     "updatedAt"
   FROM "garage_services"
@@ -194,6 +200,8 @@ export async function createGarageService(
       0 AS "reviewCount",
       '[]'::jsonb AS "reviews",
       "status",
+      NULL AS "planSuspendedAt",
+      NULL AS "planSuspensionReason",
       "createdAt",
       "updatedAt"
   `
@@ -205,6 +213,14 @@ export async function updateGarageService(
   serviceId: string,
   input: GarageServiceInput,
 ) {
+  const existing = await db.garageService.findFirst({
+    where: { id: serviceId, garageId },
+    select: { status: true, planSuspensionReason: true },
+  })
+  if (!existing) throw new Error("Service not found")
+  if (existing.status === "plan_suspended") {
+    throw new Error(existing.planSuspensionReason || "This service is temporarily inactive because it is over your current plan limit. Upgrade your plan to restore it.")
+  }
   const name = requiredText(input.name, "Service name")
   const category = requiredText(input.category, "Category", 80)
   const durationMinutes = wholeNumber(input.durationMinutes, "Duration", 1, 1440)
@@ -236,6 +252,8 @@ export async function updateGarageService(
       0 AS "reviewCount",
       '[]'::jsonb AS "reviews",
       "status",
+      "planSuspendedAt",
+      "planSuspensionReason",
       "createdAt",
       "updatedAt"
   `

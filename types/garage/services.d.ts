@@ -1,4 +1,4 @@
-export type GarageServiceStatus = "active" | "inactive"
+export type GarageServiceStatus = "active" | "inactive" | "plan_suspended"
 
 export type GarageServiceInput = {
   name?: unknown
@@ -32,6 +32,8 @@ export type GarageServiceRecord = {
     updatedAt: string
   }>
   status: GarageServiceStatus
+  planSuspendedAt?: string | null
+  planSuspensionReason?: string | null
   createdAt: string
   updatedAt: string
 }

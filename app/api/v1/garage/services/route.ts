@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
       const accessAccount = await getGarageBusinessAccount(user.id)
       const garageId = accessAccount?.ownerUserId ?? user.id
       const currentCount = await db.garageService.count({
-        where: { garageId },
+        where: { garageId, status: "active" },
       })
       const account = await assertBusinessPlanLimit({
         userId: user.id,

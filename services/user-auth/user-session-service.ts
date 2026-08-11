@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { compare, hash } from "bcryptjs"
 
 import { db } from "@/lib/database/prisma"
@@ -22,6 +22,21 @@ const addSeconds = (date: Date, seconds: number): Date =>
 
 const addDays = (date: Date, days: number): Date =>
   new Date(date.getTime() + days * 24 * 60 * 60 * 1_000)
+
+const createServerDeviceIdentifier = (
+  context: UserSessionRequestContext,
+): string | null => {
+  const explicitIdentifier = context.deviceIdentifier?.trim()
+  if (explicitIdentifier) return explicitIdentifier.slice(0, 200)
+
+  const ipHash = hashUserIp(context.ipAddress)
+  const userAgent = context.userAgent?.trim()
+  if (!ipHash && !userAgent) return null
+
+  return `server:${createHash("sha256")
+    .update(`${userAgent ?? ""}|${ipHash ?? ""}`)
+    .digest("hex")}`
+}
 
 const ensureConfigured = (): void => {
   if (!USER_AUTH.accessTokenSecret || !USER_AUTH.refreshTokenSecret) {
@@ -124,6 +139,8 @@ export async function createUserSession(
   const issuedAt = now()
   const sessionId = randomUUID()
   const accessJti = randomUUID()
+  const ipHash = hashUserIp(context.ipAddress)
+  const deviceIdentifier = createServerDeviceIdentifier(context)
   const access = createAccessToken(
     user.id,
     sessionId,
@@ -137,21 +154,41 @@ export async function createUserSession(
     USER_AUTH.refreshTokenHashRounds,
   )
 
-  await db.userSession.create({
-    data: {
-      id: sessionId,
-      userId: user.id,
-      refreshTokenHash,
-      accessJti,
-      deviceName: context.deviceName,
-      deviceMacAddress: context.deviceMacAddress,
-      deviceIdentifier: context.deviceIdentifier,
-      userAgent: context.userAgent,
-      ipHash: hashUserIp(context.ipAddress),
-      lastUsedAt: issuedAt,
-      expiresAt: refresh.expiresAt,
-    },
-  })
+  await db.$transaction([
+    ...(deviceIdentifier || (context.userAgent && ipHash)
+      ? [
+          db.userSession.updateMany({
+            where: {
+              userId: user.id,
+              revokedAt: null,
+              expiresAt: { gt: issuedAt },
+              OR: [
+                ...(deviceIdentifier ? [{ deviceIdentifier }] : []),
+                ...(context.userAgent && ipHash
+                  ? [{ userAgent: context.userAgent, ipHash }]
+                  : []),
+              ],
+            },
+            data: { revokedAt: issuedAt },
+          }),
+        ]
+      : []),
+    db.userSession.create({
+      data: {
+        id: sessionId,
+        userId: user.id,
+        refreshTokenHash,
+        accessJti,
+        deviceName: context.deviceName,
+        deviceMacAddress: context.deviceMacAddress,
+        deviceIdentifier,
+        userAgent: context.userAgent,
+        ipHash,
+        lastUsedAt: issuedAt,
+        expiresAt: refresh.expiresAt,
+      },
+    }),
+  ])
 
   return {
     accessToken: access.token,

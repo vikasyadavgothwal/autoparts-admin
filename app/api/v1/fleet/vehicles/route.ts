@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     if (!parsed.ok) return apiError(parsed.message)
 
     try {
-      const currentCount = await db.fleetVehicle.count({ where: { fleetId: user.id } })
+      const currentCount = await db.fleetVehicle.count({ where: { fleetId: user.id, status: { not: "plan_suspended" } } })
       const account = await assertBusinessPlanLimit({
         userId: user.id,
         accountType: BusinessAccountType.Fleet,

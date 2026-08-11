@@ -109,6 +109,10 @@ const mapError = (error: unknown): UserAuthActionResult => {
     return { ok: false, success: false, message, statusCode: 403 }
   }
 
+  if (message === "Your account is disabled by your owner.") {
+    return { ok: false, success: false, message, statusCode: 403 }
+  }
+
   return { ok: false, success: false, message, statusCode: 500 }
 }
 
@@ -356,6 +360,7 @@ export async function loginUserViaApi(
       )
 
       if (result.challenge) return { ok: true, success: true, user: result.user, mfa: result.challenge, statusCode: 200 }
+      if (!result.issued) return mapError(new Error("Unable to create login session"))
 
       return {
         ok: true,
@@ -389,6 +394,7 @@ export async function loginUserViaApi(
       context,
     )
     if (result.challenge) return { ok: true, success: true, user: result.user, mfa: result.challenge, statusCode: 200 }
+    if (!result.issued) return mapError(new Error("Unable to create login session"))
 
     return {
       ok: true,

@@ -3,5 +3,5 @@ import { BusinessPlatformPage } from "@/components/admin-dashboard/business/busi
 export const dynamic = "force-dynamic"
 
 export default function AdminBusinessPlatformPage() {
-  return <BusinessPlatformPage />
+  return <BusinessPlatformPage section="plans" />
 }

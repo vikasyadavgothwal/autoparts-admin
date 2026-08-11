@@ -16,12 +16,14 @@ export async function sendSmtpMail(input: MailInput) {
   const host = process.env.SMTP_HOST?.trim()
   const user = process.env.SMTP_USER?.trim()
   const pass = process.env.SMTP_PASS?.trim()
-  const from = process.env.SMTP_FROM?.trim() || user
+  const fromAddress = process.env.SMTP_FROM?.trim() || user
   const port = numberFromEnv(process.env.SMTP_PORT, 587)
 
-  if (!host || !user || !pass || !from) {
+  if (!host || !user || !pass || !fromAddress) {
     throw new Error("SMTP is not configured")
   }
+
+  const from = fromAddress.includes("<") ? fromAddress : `AutoParts Pro <${fromAddress}>`
 
   const transporter = nodemailer.createTransport({
     host,

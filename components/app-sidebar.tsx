@@ -9,6 +9,7 @@ import {
   FileText as FileTextIcon,
   House,
   LayoutTemplate,
+  LifeBuoy,
   MessageSquareText,
   ShieldCheck,
   ShoppingCart,
@@ -19,6 +20,7 @@ import {
   ChartColumn,
   BadgeCheck,
   PackageSearch,
+  Plug,
   ScanLine,
   Settings,
 } from "lucide-react"
@@ -47,11 +49,17 @@ const items: readonly AppSidebarNavItem[] = [
   { title: "RFQs", url: "/rfqs", icon: FileText },
   { title: "Queries", url: appRoutes.queries, icon: MessageSquareText },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
-  { title: "Business Platform", url: "/business-platform", icon: BadgeCheck },
   { title: "Parts Mapping", url: appRoutes.partsMapping, icon: PackageSearch },
   { title: "VIN Decoder", url: appRoutes.vinDecoder, icon: ScanLine },
   { title: "Reports", url: "/reports", icon: ChartColumn },
 ]
+
+const businessPlatformLinks = [
+  { title: "Plans", url: "/business-platform", icon: BadgeCheck },
+  { title: "Users & Plans", url: "/business-platform/users-with-plans", icon: Users },
+  { title: "Add-ons & Support", url: "/business-platform/add-ons-support", icon: Plug },
+  { title: "FAQ & Videos", url: "/business-platform/faq-videos", icon: LifeBuoy },
+] as const
 
 const pageIconByKey: Record<AppPageLinkKey, (typeof House)> = {
   home: House,
@@ -78,8 +86,17 @@ export function AppSidebar() {
     return currentPath === url || currentPath.startsWith(`${url}/`)
   }
 
+  const [isBusinessPlatformOpen, setIsBusinessPlatformOpen] = useState(false)
   const [isPagesOpen, setIsPagesOpen] = useState(false)
+  const isBusinessPlatformActive = businessPlatformLinks.some((item) => isLinkActive(item.url))
   const isPagesActive = appPageLinks.some((item) => isLinkActive(item.url))
+
+  useEffect(() => {
+    if (isBusinessPlatformActive) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setIsBusinessPlatformOpen(true)
+    }
+  }, [isBusinessPlatformActive])
 
   useEffect(() => {
     if (isPagesActive) {
@@ -122,6 +139,60 @@ export function AppSidebar() {
               </SidebarMenuItem>
             )
           })}
+
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={isBusinessPlatformActive}
+              className={`h-auto px-4 py-3 rounded-lg transition-all ${
+                isBusinessPlatformActive
+                  ? "bg-[#DC2626] text-white hover:bg-[#DC2626]"
+                  : "text-[#9CA3AF] hover:bg-[#2A2A2A] hover:text-white"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setIsBusinessPlatformOpen((value) => !value)}
+                className="flex w-full items-center gap-3"
+              >
+                <BadgeCheck className="h-5 w-5" />
+                <span className="font-medium">Business Platform</span>
+                <ChevronDown
+                  className={`ml-auto h-4 w-4 transition-transform ${
+                    isBusinessPlatformOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+
+          {isBusinessPlatformOpen && (
+            <SidebarMenuSub>
+              {businessPlatformLinks.map((businessItem) => {
+                const Icon = businessItem.icon
+                const isActive = isLinkActive(businessItem.url)
+
+                return (
+                  <SidebarMenuSubItem key={businessItem.title}>
+                    <SidebarMenuSubButton
+                      asChild
+                      isActive={isActive}
+                      className={`${
+                        isActive
+                          ? "bg-[#DC2626] text-white hover:bg-[#DC2626]"
+                          : "text-[#9CA3AF] hover:bg-[#2A2A2A] hover:text-white"
+                      }`}
+                    >
+                      <Link href={businessItem.url} className="flex items-center gap-3">
+                        <Icon className="h-4 w-4" />
+                        <span>{businessItem.title}</span>
+                      </Link>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                )
+              })}
+            </SidebarMenuSub>
+          )}
 
           <SidebarMenuItem>
             <SidebarMenuButton

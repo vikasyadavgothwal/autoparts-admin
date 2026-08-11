@@ -4,7 +4,7 @@ import * as XLSX from "xlsx"
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, BusinessMemberStatus } from "@/lib/generated/prisma/client"
-import { logBusinessActivity } from "@/services/business/business-platform-service"
+import { getEffectiveBusinessLimits, logBusinessActivity } from "@/services/business/business-platform-service"
 import { syncCatalogLookups } from "@/services/catalog/catalog-lookup-service"
 import {
   importSupplierPartsBulk,
@@ -88,11 +88,12 @@ const getSupplierBusinessPlanState = async (supplierId: string) => {
     include: { plan: true },
   })
   if (!account) throw new Error("Business account plan is required")
+  const { limits } = await getEffectiveBusinessLimits({ userId: supplierId, accountType: BusinessAccountType.Supplier })
   return {
     accountId: account.id,
-    planBrandLimit: account.plan.brandLimit,
-    planCategoryLimit: account.plan.categoryLimit,
-    planProductLimit: account.plan.productLimit,
+    planBrandLimit: limits.brands,
+    planCategoryLimit: limits.categories,
+    planProductLimit: limits.products,
   }
 }
 
