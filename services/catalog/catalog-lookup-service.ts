@@ -1,4 +1,5 @@
 import { db } from "@/lib/database/prisma";
+import { mapWithConcurrency } from "@/services/parts-mapping/internal-helpers";
 import type {
   BrandLookupRow,
   CatalogLookupWorkbookData,
@@ -25,6 +26,37 @@ async function findCategoryByName(name: string) {
   });
 }
 
+type TierLookup = Awaited<ReturnType<typeof ensureTier>>;
+type CategoryLookup = Awaited<ReturnType<typeof findCategoryByName>>;
+type LookupSyncContext = {
+  tierCache: Map<string, Promise<TierLookup>>;
+  categoryCache: Map<string, Promise<CategoryLookup>>;
+};
+
+const getCachedTier = (label: string | null, context: LookupSyncContext) => {
+  const normalized = clean(label);
+  if (!normalized) return Promise.resolve(null);
+
+  const cached = context.tierCache.get(normalized);
+  if (cached) return cached;
+
+  const promise = ensureTier(normalized);
+  context.tierCache.set(normalized, promise);
+  return promise;
+};
+
+const getCachedCategory = (name: string, context: LookupSyncContext) => {
+  const normalized = clean(name);
+  if (!normalized) return Promise.resolve(null);
+
+  const cached = context.categoryCache.get(normalized);
+  if (cached) return cached;
+
+  const promise = findCategoryByName(normalized);
+  context.categoryCache.set(normalized, promise);
+  return promise;
+};
+
 async function upsertCategory(row: CategoryLookupRow) {
   const id = clean(row.id);
   const name = clean(row.name);
@@ -36,12 +68,12 @@ async function upsertCategory(row: CategoryLookupRow) {
   });
 }
 
-async function upsertVehicle(row: VehicleLookupRow) {
+async function upsertVehicle(row: VehicleLookupRow, context: LookupSyncContext) {
   const id = clean(row.id);
   const make = clean(row.make);
   const model = clean(row.model);
   if (!id || !make || !model) return;
-  const tier = await ensureTier(row.tierLabel);
+  const tier = await getCachedTier(row.tierLabel, context);
   await db.vehicleLookup.upsert({
     where: { id },
     update: { make, model, tierId: tier?.id ?? null },
@@ -49,11 +81,11 @@ async function upsertVehicle(row: VehicleLookupRow) {
   });
 }
 
-async function upsertBrand(row: BrandLookupRow) {
+async function upsertBrand(row: BrandLookupRow, context: LookupSyncContext) {
   const id = clean(row.id);
   const brandName = clean(row.brandName);
   if (!id || !brandName) return;
-  const tier = await ensureTier(row.tierLabel);
+  const tier = await getCachedTier(row.tierLabel, context);
   const existing =
     (await db.brandLookup.findUnique({ where: { id } })) ??
     (await db.brandLookup.findFirst({
@@ -68,40 +100,60 @@ async function upsertBrand(row: BrandLookupRow) {
         data: { id, brandName, tierId: tier?.id ?? null },
       });
 
-  for (const rawName of row.categoryNames) {
-    const name = clean(rawName);
-    if (!name) continue;
-    const category =
-      (await findCategoryByName(name)) ??
-      (await db.productCategory.create({ data: { name } }));
-    await db.brandLookupCategory.upsert({
-      where: {
-        brandId_categoryId: { brandId: brand.id, categoryId: category.id },
-      },
-      update: {},
-      create: { brandId: brand.id, categoryId: category.id },
-    });
-  }
+  const categories = await Promise.all(
+    row.categoryNames.map(async (rawName) => {
+      const name = clean(rawName);
+      if (!name) return null;
+      return (
+        (await getCachedCategory(name, context)) ??
+        (await db.productCategory.create({ data: { name } }))
+      );
+    }),
+  );
+
+  await Promise.all(
+    categories
+      .filter((category): category is NonNullable<typeof category> => Boolean(category))
+      .map((category) =>
+        db.brandLookupCategory.upsert({
+          where: {
+            brandId_categoryId: { brandId: brand.id, categoryId: category.id },
+          },
+          update: {},
+          create: { brandId: brand.id, categoryId: category.id },
+        }),
+      ),
+  );
 }
 
 export async function syncCatalogLookups(data: CatalogLookupWorkbookData) {
-  for (const row of data.categories) await upsertCategory(row);
+  const context: LookupSyncContext = {
+    tierCache: new Map(),
+    categoryCache: new Map(),
+  };
+  const concurrency = 12;
 
-  for (const row of data.categories) {
+  await mapWithConcurrency(data.categories, concurrency, upsertCategory);
+
+  await mapWithConcurrency(data.categories, concurrency, async (row) => {
     const id = clean(row.id);
     const parentId = clean(row.parentId);
-    if (!id || !parentId || id === parentId) continue;
+    if (!id || !parentId || id === parentId) return;
     const parent = await db.productCategory.findUnique({ where: { id: parentId } });
     if (parent) {
       await db.productCategory.update({ where: { id }, data: { parentId } });
     }
-  }
+  });
 
-  for (const row of data.vehicles) await upsertVehicle(row);
-  for (const row of data.brands) await upsertBrand(row);
-  for (const row of data.grades) {
+  await mapWithConcurrency(data.vehicles, concurrency, (row) =>
+    upsertVehicle(row, context),
+  );
+  await mapWithConcurrency(data.brands, concurrency, (row) =>
+    upsertBrand(row, context),
+  );
+  await mapWithConcurrency(data.grades, concurrency, async (row) => {
     const customerFacingLabel = clean(row.customerFacingLabel);
-    if (!customerFacingLabel) continue;
+    if (!customerFacingLabel) return;
     await db.gradeLookup.upsert({
       where: { customerFacingLabel },
       update: { description: clean(row.description) || null },
@@ -110,7 +162,7 @@ export async function syncCatalogLookups(data: CatalogLookupWorkbookData) {
         description: clean(row.description) || null,
       },
     });
-  }
+  });
 
   return {
     categories: data.categories.length,

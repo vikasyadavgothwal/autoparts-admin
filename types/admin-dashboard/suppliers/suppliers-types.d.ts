@@ -59,6 +59,7 @@ export type SupplierRecord = {
   lastLogin: string
   emailVerified: boolean
   accountActive: boolean
+  featuredSupplier: boolean
   reviewedAt: string
   reviewedBy: string
   rejectionReason: string | null

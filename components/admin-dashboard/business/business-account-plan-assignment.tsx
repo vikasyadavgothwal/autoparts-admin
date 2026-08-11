@@ -34,8 +34,6 @@ type BusinessPlan = {
   isActive: boolean
   price?: { amount: number; currency: string }
   limits: {
-    savedSearches: number | null
-    wishlist: number | null
     integrations: number | null
     services: number | null
     appointments: number | null
@@ -131,8 +129,6 @@ const featureLabels: Record<string, string> = {
   "api.standard": "API access",
   "api.enterprise": "Enterprise API access",
   "approval-workflows.manage": "Approval workflows",
-  "business.saved-searches.create": "Saved searches",
-  "business.wishlist.create": "Wishlist",
   "dashboard.access": "Dashboard access",
   "fleet.orders.create": "Fleet orders",
   "fleet.rfqs.create": "Fleet RFQs",
@@ -164,11 +160,9 @@ const limitMetricLabels: Record<string, string> = {
   products: "Products",
   rfqs: "RFQs",
   roles: "Roles",
-  savedSearches: "Saved searches",
   services: "Services",
   staff: "Staff users",
   vehicles: "Vehicles",
-  wishlist: "Wishlist",
 }
 
 const limitMetricFeatures: Record<string, string[]> = {
@@ -178,11 +172,9 @@ const limitMetricFeatures: Record<string, string[]> = {
   products: ["supplier.inventory.manage"],
   rfqs: ["fleet.rfqs.create", "supplier.rfqs.quote"],
   roles: ["roles.manage"],
-  savedSearches: ["business.saved-searches.create"],
   services: ["garage.services.manage"],
   staff: ["staff.manage"],
   vehicles: ["fleet.vehicles.manage"],
-  wishlist: ["business.wishlist.create"],
 }
 
 const parseLimitAddOn = (key: string) => {
@@ -271,8 +263,6 @@ const effectiveFeaturesForAccount = (account: BusinessAccount) =>
     if (account.plan.reports.usage) features.add("reports.usage")
     if (account.plan.reports.activity) features.add("reports.activity")
     if (account.plan.support.priority) features.add("support.priority")
-    if (account.plan.limits.savedSearches === null || account.plan.limits.savedSearches > 0) features.add("business.saved-searches.create")
-    if (account.plan.limits.wishlist === null || account.plan.limits.wishlist > 0) features.add("business.wishlist.create")
     if (account.plan.limits.integrations === null || account.plan.limits.integrations > 0) features.add("integrations.manage")
     if (account.plan.limits.services === null || account.plan.limits.services > 0) features.add("garage.services.manage")
     if (account.plan.limits.appointments === null || account.plan.limits.appointments > 0) {

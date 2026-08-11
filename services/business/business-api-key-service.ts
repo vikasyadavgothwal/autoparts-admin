@@ -1,4 +1,10 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto"
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+} from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
 
 import { db } from "@/lib/database/prisma"
@@ -77,6 +83,48 @@ const hashApiKey = (apiKey: string) =>
   createHash("sha256").update(apiKey).digest("hex")
 
 const keyPrefixFor = (apiKey: string) => apiKey.slice(0, 28)
+
+const apiKeyEncryptionKey = () => {
+  const secret =
+    process.env.API_KEY_ENCRYPTION_SECRET?.trim() ||
+    process.env.ADMIN_TOKEN_PEPPER?.trim()
+  if (!secret) {
+    throw new Error(
+      "API key encryption is not configured. Set API_KEY_ENCRYPTION_SECRET.",
+    )
+  }
+  return createHash("sha256").update(`autoparts-api-key:${secret}`).digest()
+}
+
+const encryptApiKey = (apiKey: string) => {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv("aes-256-gcm", apiKeyEncryptionKey(), iv)
+  const ciphertext = Buffer.concat([cipher.update(apiKey, "utf8"), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return [
+    "v1",
+    iv.toString("base64url"),
+    tag.toString("base64url"),
+    ciphertext.toString("base64url"),
+  ].join(".")
+}
+
+const decryptApiKey = (encrypted: string) => {
+  const [version, ivValue, tagValue, ciphertextValue] = encrypted.split(".")
+  if (version !== "v1" || !ivValue || !tagValue || !ciphertextValue) {
+    throw new Error("Invalid encrypted API key")
+  }
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    apiKeyEncryptionKey(),
+    Buffer.from(ivValue, "base64url"),
+  )
+  decipher.setAuthTag(Buffer.from(tagValue, "base64url"))
+  return Buffer.concat([
+    decipher.update(Buffer.from(ciphertextValue, "base64url")),
+    decipher.final(),
+  ]).toString("utf8")
+}
 
 const mapApiKey = (row: BusinessApiKeyRow) => ({
   id: row.id,
@@ -248,10 +296,11 @@ export async function createBusinessApiKey(input: {
   const name = cleanText(input.name, 80) || "API key"
   const scopes = normalizeScopes(access.businessAccount.type, input.scopes)
   const apiKey = `app_live_${access.businessAccount.type.toLowerCase()}_${randomBytes(32).toString("base64url")}`
+  const encryptedKey = encryptApiKey(apiKey)
   const id = randomUUID()
   const [row] = await db.$queryRaw<BusinessApiKeyRow[]>`
     INSERT INTO "business_api_keys" (
-      "id", "businessAccountId", "name", "keyPrefix", "keyHash", "scopes",
+      "id", "businessAccountId", "name", "keyPrefix", "keyHash", "encryptedKey", "scopes",
       "status", "createdByUserId", "updatedAt"
     )
     VALUES (
@@ -260,6 +309,7 @@ export async function createBusinessApiKey(input: {
       ${name},
       ${keyPrefixFor(apiKey)},
       ${hashApiKey(apiKey)},
+      ${encryptedKey},
       ${scopes},
       'Active',
       ${input.userId},
@@ -340,6 +390,7 @@ export async function requireDeveloperApiKey(
     businessAccountId: string
     ownerUserId: string
     accountType: BusinessAccountType
+    encryptedKey: string | null
     scopes: string[]
     status: string
   }>>`
@@ -348,6 +399,7 @@ export async function requireDeveloperApiKey(
       k."businessAccountId",
       ba."ownerUserId",
       ba."type" AS "accountType",
+      k."encryptedKey",
       k."scopes",
       k."status"
     FROM "business_api_keys" k
@@ -358,6 +410,15 @@ export async function requireDeveloperApiKey(
   const row = rows[0]
   if (!row || row.status !== "Active") {
     return { ok: false, response: errorResponse(401, "API_KEY_REVOKED", "API key is invalid or revoked.") }
+  }
+  if (row.encryptedKey) {
+    try {
+      if (decryptApiKey(row.encryptedKey) !== apiKey) {
+        return { ok: false, response: errorResponse(401, "API_KEY_REVOKED", "API key is invalid or revoked.") }
+      }
+    } catch {
+      return { ok: false, response: errorResponse(401, "API_KEY_REVOKED", "API key is invalid or revoked.") }
+    }
   }
   if (row.accountType !== accountType) {
     return { ok: false, response: errorResponse(403, "API_ACCOUNT_TYPE_FORBIDDEN", `This API key cannot access ${accountType} APIs.`) }

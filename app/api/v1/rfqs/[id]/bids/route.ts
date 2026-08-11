@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, RfqBidStatus } from "@/lib/generated/prisma/client"
 import { readJsonBody, requireSupplierFromRequest } from "@/lib/auth/api-guards"
-import { assertBusinessPlanLimit } from "@/services/business/business-platform-service"
+import { assertBusinessAction, assertBusinessPlanLimit } from "@/services/business/business-platform-service"
 import { submitRfqBid } from "@/services/fleet/fleet-service"
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -18,6 +18,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (!body.ok) return NextResponse.json({ ok: false, message: body.message }, { status: 400 })
   try {
     const { id } = await context.params
+    await assertBusinessAction({
+      userId: auth.user.id,
+      accountType: BusinessAccountType.Supplier,
+      action: "rfqs.quote",
+    })
     const existingBid = await db.rfqBid.findUnique({
       where: { rfqId_supplierId: { rfqId: id, supplierId: auth.user.id } },
       select: { id: true },

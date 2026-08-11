@@ -38,8 +38,6 @@ type BusinessPlan = {
     rfqs: number | null
     orders: number | null
     services: number | null
-    savedSearches: number | null
-    wishlist: number | null
     integrations: number | null
   }
   enabledFeatures: string[]
@@ -67,7 +65,7 @@ const fieldLabels = {
 const planLimitFields: Record<AccountType, Array<keyof typeof fieldLabels>> = {
   Fleet: ["staffLimit", "roleLimit", "vehicleLimit", "rfqLimit", "orderLimit"],
   Garage: ["staffLimit", "roleLimit", "serviceLimit", "appointmentLimit"],
-  Supplier: ["staffLimit", "roleLimit", "productLimit", "brandLimit", "categoryLimit"],
+  Supplier: ["staffLimit", "roleLimit", "productLimit", "brandLimit", "categoryLimit", "rfqLimit", "orderLimit"],
 }
 
 const limitValueKeys = {
@@ -239,7 +237,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#DC2626]">Plan workspace</p>
             <h3 className="mt-1 text-lg font-semibold text-white">{selectedAccount} plans</h3>
-            <p className="mt-1 text-xs text-[#9CA3AF]">Admin manages activation, ending date, usage limits, security, and support.</p>
+            <p className="mt-1 text-xs text-[#9CA3AF]">Admin manages activation, ending date, usage limits, login security, and support.</p>
           </div>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className="inline-flex rounded-lg border border-[#2A2A2A] bg-[#050505] p-1">
@@ -343,7 +341,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
               </section>
 
               <section className="rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Security</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Login security</p>
                 <div className="grid gap-2">
                   <select name="securityTier" defaultValue={securityTier} className="h-9 w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-2.5 text-sm text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626]">
                     <option value="Basic">Basic</option>

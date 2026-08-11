@@ -106,14 +106,14 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     vehicleLimit: 5,
     rfqLimit: 3,
     orderLimit: 3,
-    savedSearchLimit: 2,
-    wishlistLimit: 10,
+    savedSearchLimit: 0,
+    wishlistLimit: 0,
     integrationLimit: 0,
     appointmentLimit: null,
     productLimit: null,
     dashboardReports: true,
     enabledFeatures: ["dashboard.access"],
-    enabledMenus: ["overview", "vehicles", "rfqs", "saved-searches", "integrations", "security", "support"],
+    enabledMenus: ["overview", "vehicles", "rfqs", "integrations", "support"],
   },
   {
     code: BusinessPlanCode.Pro,
@@ -130,8 +130,8 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     vehicleLimit: 50,
     rfqLimit: 100,
     orderLimit: 100,
-    savedSearchLimit: 25,
-    wishlistLimit: 200,
+    savedSearchLimit: 0,
+    wishlistLimit: 0,
     integrationLimit: 2,
     appointmentLimit: null,
     productLimit: null,
@@ -145,7 +145,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     customRolesEnabled: true,
     apiAccessLevel: "standard",
     enabledFeatures: ["dashboard.access", "staff.manage", "roles.manage", "permissions.manage", "reports.dashboard", "reports.usage", "reports.activity"],
-    enabledMenus: ["overview", "vehicles", "rfqs", "orders", "suppliers", "saved-searches", "integrations", "security", "support", "reports", "settings", "staff", "roles"],
+    enabledMenus: ["overview", "vehicles", "rfqs", "orders", "suppliers", "integrations", "support", "reports", "settings", "staff", "roles"],
   },
   {
     code: BusinessPlanCode.Enterprise,
@@ -162,8 +162,8 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     vehicleLimit: null,
     rfqLimit: null,
     orderLimit: null,
-    savedSearchLimit: null,
-    wishlistLimit: null,
+    savedSearchLimit: 0,
+    wishlistLimit: 0,
     integrationLimit: null,
     appointmentLimit: null,
     productLimit: null,
@@ -179,7 +179,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     customRolesEnabled: true,
     apiAccessLevel: "enterprise",
     enabledFeatures: ["dashboard.access", "staff.manage", "roles.manage", "permissions.manage", "reports.dashboard", "reports.usage", "reports.activity", "support.priority"],
-    enabledMenus: ["overview", "vehicles", "rfqs", "orders", "suppliers", "saved-searches", "integrations", "security", "support", "reports", "settings", "staff", "roles"],
+    enabledMenus: ["overview", "vehicles", "rfqs", "orders", "suppliers", "integrations", "support", "reports", "settings", "staff", "roles"],
   },
   {
     code: BusinessPlanCode.Free,
@@ -196,12 +196,12 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     appointmentLimit: 5,
     serviceLimit: 3,
     orderLimit: 5,
-    savedSearchLimit: 2,
+    savedSearchLimit: 0,
     integrationLimit: 0,
     productLimit: null,
     dashboardReports: true,
     enabledFeatures: ["dashboard.access"],
-    enabledMenus: ["overview", "bookings", "services", "saved-searches", "integrations", "security", "support"],
+    enabledMenus: ["overview", "bookings", "services", "integrations", "support"],
   },
   {
     code: BusinessPlanCode.Pro,
@@ -219,7 +219,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     appointmentLimit: 50,
     serviceLimit: 25,
     orderLimit: 100,
-    savedSearchLimit: 25,
+    savedSearchLimit: 0,
     integrationLimit: 2,
     productLimit: null,
     dashboardReports: true,
@@ -232,7 +232,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     customRolesEnabled: true,
     apiAccessLevel: "standard",
     enabledFeatures: ["dashboard.access", "staff.manage", "roles.manage", "permissions.manage", "reports.dashboard", "reports.usage", "reports.activity"],
-    enabledMenus: ["overview", "bookings", "services", "schedule", "reviews", "saved-searches", "integrations", "security", "support", "reports", "settings", "staff", "roles"],
+    enabledMenus: ["overview", "bookings", "services", "schedule", "reviews", "integrations", "support", "reports", "settings", "staff", "roles"],
   },
   {
     code: BusinessPlanCode.Enterprise,
@@ -250,7 +250,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     appointmentLimit: null,
     serviceLimit: null,
     orderLimit: null,
-    savedSearchLimit: null,
+    savedSearchLimit: 0,
     integrationLimit: null,
     productLimit: null,
     dashboardReports: true,
@@ -265,7 +265,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     customRolesEnabled: true,
     apiAccessLevel: "enterprise",
     enabledFeatures: ["dashboard.access", "staff.manage", "roles.manage", "permissions.manage", "reports.dashboard", "reports.usage", "reports.activity", "support.priority"],
-    enabledMenus: ["overview", "bookings", "services", "schedule", "reviews", "saved-searches", "integrations", "security", "support", "reports", "settings", "staff", "roles"],
+    enabledMenus: ["overview", "bookings", "services", "schedule", "reviews", "integrations", "support", "reports", "settings", "staff", "roles"],
   },
   {
     code: BusinessPlanCode.Free,
@@ -285,12 +285,12 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     productLimit: 10,
     rfqLimit: 10,
     orderLimit: 10,
-    savedSearchLimit: 2,
-    wishlistLimit: 10,
+    savedSearchLimit: 0,
+    wishlistLimit: 0,
     integrationLimit: 0,
     dashboardReports: true,
     enabledFeatures: ["dashboard.access"],
-    enabledMenus: ["overview", "inventory", "rfq-inbox", "saved-searches", "integrations", "security", "support"],
+    enabledMenus: ["overview", "inventory", "rfq-inbox", "integrations", "support"],
   },
   {
     code: BusinessPlanCode.Pro,
@@ -311,8 +311,8 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     productLimit: 500,
     rfqLimit: 200,
     orderLimit: 200,
-    savedSearchLimit: 25,
-    wishlistLimit: 200,
+    savedSearchLimit: 0,
+    wishlistLimit: 0,
     integrationLimit: 2,
     dashboardReports: true,
     usageReports: true,
@@ -326,7 +326,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     customRolesEnabled: true,
     apiAccessLevel: "standard",
     enabledFeatures: ["dashboard.access", "staff.manage", "roles.manage", "permissions.manage", "reports.dashboard", "reports.usage", "reports.activity"],
-    enabledMenus: ["overview", "inventory", "rfq-inbox", "offers", "orders", "performance", "reviews", "saved-searches", "integrations", "security", "support", "settings", "staff", "roles"],
+    enabledMenus: ["overview", "inventory", "rfq-inbox", "offers", "orders", "performance", "reviews", "integrations", "support", "settings", "staff", "roles"],
   },
   {
     code: BusinessPlanCode.Enterprise,
@@ -347,8 +347,8 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     productLimit: null,
     rfqLimit: null,
     orderLimit: null,
-    savedSearchLimit: null,
-    wishlistLimit: null,
+    savedSearchLimit: 0,
+    wishlistLimit: 0,
     integrationLimit: null,
     dashboardReports: true,
     usageReports: true,
@@ -364,7 +364,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     customRolesEnabled: true,
     apiAccessLevel: "enterprise",
     enabledFeatures: ["dashboard.access", "staff.manage", "roles.manage", "permissions.manage", "reports.dashboard", "reports.usage", "reports.activity", "support.priority"],
-    enabledMenus: ["overview", "inventory", "rfq-inbox", "offers", "orders", "performance", "reviews", "saved-searches", "integrations", "security", "support", "settings", "staff", "roles"],
+    enabledMenus: ["overview", "inventory", "rfq-inbox", "offers", "orders", "performance", "reviews", "integrations", "support", "settings", "staff", "roles"],
   },
 ]
 
@@ -376,6 +376,14 @@ const activeAddOnStatuses: BusinessAddOnRequestStatus[] = [
   BusinessAddOnRequestStatus.Approved,
   BusinessAddOnRequestStatus.Enabled,
 ]
+
+const isRetiredBusinessFeatureKey = (key: string) =>
+  key === "business.saved-searches.create" ||
+  key === "business.wishlist.create" ||
+  key.startsWith("limit.savedSearches.") ||
+  key.startsWith("limit.wishlist.")
+
+const isApiFeatureKey = (key: string) => key === "api.standard" || key === "api.enterprise"
 
 const activeAddOnRequestWhere = (): Prisma.BusinessAddOnRequestWhereInput => {
   const now = new Date()
@@ -483,8 +491,6 @@ export const businessEntitlementFeatures = {
     "fleet.vehicles.manage",
     "fleet.rfqs.create",
     "fleet.orders.create",
-    "business.saved-searches.create",
-    "business.wishlist.create",
     "integrations.manage",
     "api.standard",
     "api.enterprise",
@@ -502,7 +508,6 @@ export const businessEntitlementFeatures = {
     "garage.bookings.manage",
     "garage.schedule.manage",
     "garage.services.manage",
-    "business.saved-searches.create",
     "integrations.manage",
     "api.standard",
     "api.enterprise",
@@ -520,8 +525,6 @@ export const businessEntitlementFeatures = {
     "supplier.inventory.manage",
     "supplier.rfqs.quote",
     "supplier.orders.manage",
-    "business.saved-searches.create",
-    "business.wishlist.create",
     "integrations.manage",
     "api.standard",
     "api.enterprise",
@@ -716,8 +719,6 @@ const mapPlan = (plan: BusinessPlanWithCount) => ({
     rfqs: plan.rfqLimit,
     orders: plan.orderLimit,
     services: plan.serviceLimit,
-    savedSearches: plan.savedSearchLimit,
-    wishlist: plan.wishlistLimit,
     integrations: plan.integrationLimit,
   },
   support: {
@@ -740,11 +741,17 @@ const mapPlan = (plan: BusinessPlanWithCount) => ({
     featuredVendor: plan.featuredVendor,
     searchBoostLevel: plan.searchBoostLevel,
   },
-  apiAccessLevel: plan.apiAccessLevel,
+  apiAccessLevel: plan.code === BusinessPlanCode.Free ? "none" : plan.apiAccessLevel,
   approvalWorkflowEnabled: plan.approvalWorkflowEnabled,
   customRolesEnabled: plan.customRolesEnabled,
-  enabledFeatures: plan.enabledFeatures,
-  enabledMenus: plan.enabledMenus,
+  enabledFeatures: plan.enabledFeatures.filter(
+    (feature) =>
+      !isRetiredBusinessFeatureKey(feature) &&
+      (plan.code !== BusinessPlanCode.Free || !isApiFeatureKey(feature)),
+  ),
+  enabledMenus: plan.enabledMenus.filter(
+    (menu) => menu !== "saved-searches" && menu !== "wishlist" && menu !== "security" && menu !== "api-keys",
+  ),
   isActive: plan.isActive,
   businessAccountCount: plan._count.businessAccounts,
   createdAt: plan.createdAt.toISOString(),
@@ -841,7 +848,7 @@ const mapAccount = (account: BusinessAccountFull) => ({
     actionKey: permission.actionKey,
     isSystem: permission.isSystem,
   })),
-  activeAddOns: account.addOnRequests.map(mapActiveAddOn),
+  activeAddOns: account.addOnRequests.filter((item) => !isRetiredBusinessFeatureKey(item.featureKey)).map(mapActiveAddOn),
   invitations: account.invitations.map((invitation) => ({
     id: invitation.id,
     email: invitation.email,
@@ -1028,8 +1035,6 @@ export async function updateBusinessPlan(
     ["rfqLimit", "rfqLimit"],
     ["orderLimit", "orderLimit"],
     ["serviceLimit", "serviceLimit"],
-    ["savedSearchLimit", "savedSearchLimit"],
-    ["wishlistLimit", "wishlistLimit"],
     ["integrationLimit", "integrationLimit"],
   ] as const) {
     if (input[inputKey] === null) data[modelKey] = null
@@ -1100,8 +1105,6 @@ const usageForAccount = async (account: {
     rfqs,
     orders,
     services,
-    savedSearches,
-    wishlistItems,
   ] = await Promise.all([
     db.businessAccountMember.count({
       where: { businessAccountId: account.id, status: BusinessMemberStatus.Active },
@@ -1144,8 +1147,6 @@ const usageForAccount = async (account: {
     account.type === BusinessAccountType.Garage
       ? db.garageService.count({ where: { garageId: account.ownerUserId, status: { not: "plan_suspended" } } })
       : Promise.resolve(0),
-    db.businessSavedSearch.count({ where: { businessAccountId: account.id } }),
-    db.businessWishlistItem.count({ where: { businessAccountId: account.id } }),
   ])
   return {
     staff,
@@ -1159,8 +1160,6 @@ const usageForAccount = async (account: {
     rfqs,
     orders,
     services,
-    savedSearches,
-    wishlistItems,
   }
 }
 
@@ -1178,8 +1177,6 @@ const limitsForPlan = (plan: {
   rfqLimit: number | null
   orderLimit: number | null
   serviceLimit: number | null
-  savedSearchLimit: number | null
-  wishlistLimit: number | null
   integrationLimit: number | null
 }) => ({
   staff: plan.staffLimit,
@@ -1193,8 +1190,6 @@ const limitsForPlan = (plan: {
   rfqs: plan.rfqLimit,
   orders: plan.orderLimit,
   services: plan.serviceLimit,
-  savedSearches: plan.savedSearchLimit,
-  wishlist: plan.wishlistLimit,
   integrations: plan.integrationLimit,
 })
 
@@ -1209,9 +1204,9 @@ type BusinessActionRule = {
 }
 
 const limitAddOnMetrics = {
-  Garage: ["services", "appointments", "staff", "roles", "integrations", "savedSearches"],
-  Fleet: ["vehicles", "rfqs", "orders", "staff", "roles", "integrations", "savedSearches", "wishlist"],
-  Supplier: ["products", "brands", "categories", "rfqs", "staff", "roles", "integrations", "savedSearches", "wishlist"],
+  Garage: ["services", "appointments", "staff", "roles", "integrations"],
+  Fleet: ["vehicles", "rfqs", "orders", "staff", "roles", "integrations"],
+  Supplier: ["products", "brands", "categories", "rfqs", "orders", "staff", "roles", "integrations"],
 } satisfies Record<BusinessAccountType, BusinessLimitMetric[]>
 
 const limitAddOnLabels = {
@@ -1226,8 +1221,6 @@ const limitAddOnLabels = {
   rfqs: "RFQs",
   orders: "orders",
   services: "services",
-  savedSearches: "saved searches",
-  wishlist: "wishlist items",
   integrations: "integrations",
 } satisfies Record<BusinessLimitMetric, string>
 
@@ -1237,12 +1230,10 @@ const limitMetricFeatures = {
   permissions: ["permissions.manage"],
   vehicles: ["fleet.vehicles.manage"],
   rfqs: ["fleet.rfqs.create", "supplier.rfqs.quote"],
-  orders: ["fleet.orders.create"],
+  orders: ["fleet.orders.create", "supplier.orders.manage"],
   services: ["garage.services.manage"],
   appointments: ["garage.bookings.manage", "garage.schedule.manage"],
   products: ["supplier.inventory.manage"],
-  savedSearches: ["business.saved-searches.create"],
-  wishlist: ["business.wishlist.create"],
   integrations: ["integrations.manage"],
   brands: [],
   categories: [],
@@ -1262,7 +1253,7 @@ const parseLimitAddOnKey = (featureKey: string) => {
 type ParsedLimitAddOn = NonNullable<ReturnType<typeof parseLimitAddOnKey>>
 
 const addOnFeatureSet = (addOnKeys: string[], accountType: BusinessAccountType) => {
-  const features = new Set(addOnKeys)
+  const features = new Set(addOnKeys.filter((key) => !isRetiredBusinessFeatureKey(key)))
   if (features.has("api.enterprise")) features.add("api.standard")
   for (const key of addOnKeys) {
     const parsed = parseLimitAddOnKey(key)
@@ -1300,8 +1291,6 @@ const limitNameToMetric = (limit: string): BusinessLimitMetric => ({
   rfqLimit: "rfqs",
   orderLimit: "orders",
   serviceLimit: "services",
-  savedSearchLimit: "savedSearches",
-  wishlistLimit: "wishlist",
   integrationLimit: "integrations",
 } as Record<string, BusinessLimitMetric>)[limit]
 
@@ -1357,8 +1346,6 @@ const usageWithZeroes = (usage: BusinessUsage) => ({
   rfqs: usage.rfqs,
   orders: usage.orders,
   services: usage.services,
-  savedSearches: usage.savedSearches,
-  wishlist: usage.wishlistItems,
   integrations: 0,
 })
 
@@ -1369,11 +1356,14 @@ export const businessEntitlementActionRules = {
   Fleet: {
     "staff.invite": { feature: "staff.manage", metric: "staff", limit: "staff" },
     "roles.create": { feature: "roles.manage", metric: "roles", limit: "roles", flag: "customRolesEnabled" },
-    "vehicles.create": { feature: "fleet.vehicles.manage", metric: "vehicles", limit: "vehicles" },
-    "rfqs.create": { feature: "fleet.rfqs.create", metric: "rfqs", limit: "rfqs" },
-    "orders.create": { feature: "fleet.orders.create", metric: "orders", limit: "orders" },
-    "saved-searches.create": { feature: "business.saved-searches.create", metric: "savedSearches", limit: "savedSearches" },
-    "wishlist.create": { feature: "business.wishlist.create", metric: "wishlist", limit: "wishlist" },
+    "vehicles.create": { feature: "fleet.vehicles.manage" },
+    "vehicles.update": { feature: "fleet.vehicles.manage" },
+    "vehicles.delete": { feature: "fleet.vehicles.manage" },
+    "rfqs.create": { feature: "fleet.rfqs.create" },
+    "orders.create": { feature: "fleet.orders.create" },
+    "reports.view": { feature: "reports.dashboard" },
+    "reports.usage": { feature: "reports.usage" },
+    "reports.activity": { feature: "reports.activity" },
     "integrations.connect": { feature: "integrations.manage", metric: "integrations", limit: "integrations" },
     "api.access": { feature: "api.standard" },
     "approval-workflows.create": { feature: "approval-workflows.manage", flag: "approvalWorkflowEnabled" },
@@ -1390,7 +1380,6 @@ export const businessEntitlementActionRules = {
     "reports.view": { feature: "reports.dashboard" },
     "reports.usage": { feature: "reports.usage" },
     "reports.activity": { feature: "reports.activity" },
-    "saved-searches.create": { feature: "business.saved-searches.create", metric: "savedSearches", limit: "savedSearches" },
     "integrations.connect": { feature: "integrations.manage", metric: "integrations", limit: "integrations" },
     "api.access": { feature: "api.standard" },
     "approval-workflows.create": { feature: "approval-workflows.manage", flag: "approvalWorkflowEnabled" },
@@ -1398,10 +1387,14 @@ export const businessEntitlementActionRules = {
   Supplier: {
     "staff.invite": { feature: "staff.manage", metric: "staff", limit: "staff" },
     "roles.create": { feature: "roles.manage", metric: "roles", limit: "roles", flag: "customRolesEnabled" },
-    "products.create": { feature: "supplier.inventory.manage", metric: "products", limit: "products" },
-    "rfqs.quote": { feature: "supplier.rfqs.quote", metric: "rfqs", limit: "rfqs" },
-    "saved-searches.create": { feature: "business.saved-searches.create", metric: "savedSearches", limit: "savedSearches" },
-    "wishlist.create": { feature: "business.wishlist.create", metric: "wishlist", limit: "wishlist" },
+    "products.create": { feature: "supplier.inventory.manage" },
+    "products.update": { feature: "supplier.inventory.manage" },
+    "products.delete": { feature: "supplier.inventory.manage" },
+    "rfqs.quote": { feature: "supplier.rfqs.quote" },
+    "orders.manage": { feature: "supplier.orders.manage" },
+    "reports.view": { feature: "reports.dashboard" },
+    "reports.usage": { feature: "reports.usage" },
+    "reports.activity": { feature: "reports.activity" },
     "integrations.connect": { feature: "integrations.manage", metric: "integrations", limit: "integrations" },
     "api.access": { feature: "api.standard" },
     "approval-workflows.create": { feature: "approval-workflows.manage", flag: "approvalWorkflowEnabled" },
@@ -1426,31 +1419,43 @@ const featureSetForPlan = (plan: {
   activityReports: boolean
   prioritySupport: boolean
   customRolesEnabled: boolean
-  savedSearchLimit: number | null
-  wishlistLimit: number | null
   integrationLimit: number | null
+  vehicleLimit: number | null
+  productLimit: number | null
+  rfqLimit: number | null
+  orderLimit: number | null
   serviceLimit: number | null
   appointmentLimit: number | null
   apiAccessLevel: string
   approvalWorkflowEnabled: boolean
   featuredVendor: boolean
   searchBoostLevel: number
-}) => {
-  const features = new Set(plan.enabledFeatures)
+  code?: BusinessPlanCode
+}, accountType?: BusinessAccountType) => {
+  const isFreePlan = plan.code === BusinessPlanCode.Free
+  const features = new Set(plan.enabledFeatures.filter((feature) => !isFreePlan || !isApiFeatureKey(feature)))
   if (plan.dashboardReports) features.add("reports.dashboard")
   if (plan.usageReports) features.add("reports.usage")
   if (plan.activityReports) features.add("reports.activity")
   if (plan.prioritySupport) features.add("support.priority")
-  if (plan.savedSearchLimit === null || plan.savedSearchLimit > 0) features.add("business.saved-searches.create")
-  if (plan.wishlistLimit === null || plan.wishlistLimit > 0) features.add("business.wishlist.create")
   if (plan.integrationLimit === null || plan.integrationLimit > 0) features.add("integrations.manage")
-  if (plan.apiAccessLevel === "standard" || plan.apiAccessLevel === "enterprise") features.add("api.standard")
-  if (plan.apiAccessLevel === "enterprise") features.add("api.enterprise")
+  if (!isFreePlan && (plan.apiAccessLevel === "standard" || plan.apiAccessLevel === "enterprise")) features.add("api.standard")
+  if (!isFreePlan && plan.apiAccessLevel === "enterprise") features.add("api.enterprise")
   if (plan.approvalWorkflowEnabled) features.add("approval-workflows.manage")
   if (plan.serviceLimit === null || plan.serviceLimit > 0) features.add("garage.services.manage")
   if (plan.appointmentLimit === null || plan.appointmentLimit > 0) {
     features.add("garage.bookings.manage")
     features.add("garage.schedule.manage")
+  }
+  if (accountType === BusinessAccountType.Fleet) {
+    if (plan.vehicleLimit === null || plan.vehicleLimit > 0) features.add("fleet.vehicles.manage")
+    if (plan.rfqLimit === null || plan.rfqLimit > 0) features.add("fleet.rfqs.create")
+    if (plan.orderLimit === null || plan.orderLimit > 0) features.add("fleet.orders.create")
+  }
+  if (accountType === BusinessAccountType.Supplier) {
+    if (plan.productLimit === null || plan.productLimit > 0) features.add("supplier.inventory.manage")
+    if (plan.rfqLimit === null || plan.rfqLimit > 0) features.add("supplier.rfqs.quote")
+    if (plan.orderLimit === null || plan.orderLimit > 0) features.add("supplier.orders.manage")
   }
   if (plan.customRolesEnabled) {
     features.add("roles.manage")
@@ -1472,15 +1477,18 @@ const allowedActionFor = (
       activityReports: boolean
       prioritySupport: boolean
       customRolesEnabled: boolean
-      savedSearchLimit: number | null
-      wishlistLimit: number | null
       approvalWorkflowEnabled: boolean
       integrationLimit: number | null
+      vehicleLimit: number | null
+      productLimit: number | null
+      rfqLimit: number | null
+      orderLimit: number | null
       serviceLimit: number | null
       appointmentLimit: number | null
       apiAccessLevel: string
       featuredVendor: boolean
       searchBoostLevel: number
+      code: BusinessPlanCode
     }
   },
   usage: ReturnType<typeof usageWithZeroes>,
@@ -1490,7 +1498,7 @@ const allowedActionFor = (
   const rules = businessEntitlementActionRules[account.type] as Record<string, BusinessActionRule>
   const rule = rules[action]
   if (!rule) return { allowed: false, reason: "Unknown action" }
-  const features = featureSetForPlan(account.plan)
+  const features = featureSetForPlan(account.plan, account.type)
   addOnFeatures.forEach((feature) => features.add(feature))
   if (rule.feature && !features.has(rule.feature)) {
     return { allowed: false, reason: featureBlockedReason(rule.feature) }
@@ -1515,7 +1523,7 @@ const buildEntitlementPayload = (
   const baseLimits = limitsForPlan(account.plan)
   const limits = applyLimitAddOns(baseLimits, enabledAddOnFeatures)
   const usageCounts = usageWithZeroes(usage)
-  const featureSet = featureSetForPlan(account.plan)
+  const featureSet = featureSetForPlan(account.plan, account.type)
   const addOnFeatures = addOnFeatureSet(enabledAddOnFeatures, account.type)
   addOnFeatures.forEach((feature) => featureSet.add(feature))
   const enabledFeatures = Array.from(featureSet).sort()
@@ -1538,6 +1546,11 @@ const buildEntitlementPayload = (
   )
   const limitAddOns = limitAddOnOptions(account.type, baseLimits, limits, usageCounts, enabledAddOnFeatures)
 
+  const enabledMenus = account.plan.enabledMenus.filter(
+    (menu) => menu !== "saved-searches" && menu !== "wishlist" && menu !== "security" && menu !== "api-keys",
+  )
+  if (featureSet.has("api.standard") || featureSet.has("api.enterprise")) enabledMenus.push("api-keys")
+
   return {
     plan: mapPlan({ ...account.plan, _count: { businessAccounts: 0 } }),
     subscription: {
@@ -1546,13 +1559,13 @@ const buildEntitlementPayload = (
     },
     usage: usageCounts,
     limits,
-    enabledMenus: account.plan.enabledMenus,
+    enabledMenus: Array.from(new Set(enabledMenus)),
     enabledFeatures,
     lockedFeatures,
     requestableFeatures,
     limitAddOns,
     addOns: requestableFeatures,
-    activeAddOns: activeAddOns.map(mapActiveAddOn),
+    activeAddOns: activeAddOns.filter((item) => !isRetiredBusinessFeatureKey(item.featureKey)).map(mapActiveAddOn),
     actions,
   }
 }
@@ -1571,8 +1584,6 @@ const assertUsageFitsPlan = (
     rfqLimit: number | null
     orderLimit: number | null
     serviceLimit: number | null
-    savedSearchLimit: number | null
-    wishlistLimit: number | null
   },
 ) => {
   for (const [label, used, limit] of [
@@ -1587,8 +1598,6 @@ const assertUsageFitsPlan = (
     ["RFQs", usage.rfqs, plan.rfqLimit],
     ["orders", usage.orders, plan.orderLimit],
     ["services", usage.services, plan.serviceLimit],
-    ["saved searches", usage.savedSearches, plan.savedSearchLimit],
-    ["wishlist items", usage.wishlistItems, plan.wishlistLimit],
   ] as const) {
     if (limit !== null && used > limit) {
       throw new Error(`Cannot change plan. Current ${label} usage is ${used}, but selected plan allows ${limit}.`)
@@ -1808,8 +1817,6 @@ export async function assertBusinessPlanLimit(input: {
     | "rfqLimit"
     | "orderLimit"
     | "serviceLimit"
-    | "savedSearchLimit"
-    | "wishlistLimit"
   currentCount: number
 }) {
   const account = await findUserBusinessAccount(input.userId, input.accountType)
@@ -1929,36 +1936,8 @@ export async function createBusinessSavedSearch(input: {
   scope: unknown
   query: unknown
 }) {
-  const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
-  const currentCount = await db.businessSavedSearch.count({
-    where: { businessAccountId: account.id },
-  })
-  if (account.plan.savedSearchLimit !== null && currentCount >= account.plan.savedSearchLimit) {
-    throw new Error(`${account.plan.name} saved search limit reached. Upgrade your plan.`)
-  }
-
-  const name = cleanText(input.name, 120)
-  if (!name) throw new Error("Saved search name is required")
-  const scope = cleanText(input.scope, 80) ?? "general"
-
-  const row = await db.businessSavedSearch.create({
-    data: {
-      businessAccountId: account.id,
-      name,
-      scope,
-      query: asJsonObject(input.query),
-      createdByUserId: input.userId,
-    },
-  })
-  await logBusinessActivity({
-    businessAccountId: account.id,
-    actorUserId: input.userId,
-    action: "business_saved_search.created",
-    entityType: "business_saved_search",
-    entityId: row.id,
-    metadata: { scope },
-  })
-  return mapSavedSearch(row)
+  void input
+  throw new Error("Saved Searches are not available in business dashboards")
 }
 
 export async function deleteBusinessSavedSearch(input: {
@@ -3004,49 +2983,8 @@ export async function createBusinessWishlistItem(input: {
   title?: unknown
   metadata?: unknown
 }) {
-  const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
-  const itemType = cleanText(input.itemType, 80)
-  const itemId = cleanText(input.itemId, 160)
-  if (!itemType) throw new Error("Wishlist item type is required")
-  if (!itemId) throw new Error("Wishlist item id is required")
-
-  const existing = await db.businessWishlistItem.findUnique({
-    where: {
-      businessAccountId_itemType_itemId: {
-        businessAccountId: account.id,
-        itemType,
-        itemId,
-      },
-    },
-  })
-  if (existing) return mapWishlistItem(existing)
-
-  const currentCount = await db.businessWishlistItem.count({
-    where: { businessAccountId: account.id },
-  })
-  if (account.plan.wishlistLimit !== null && currentCount >= account.plan.wishlistLimit) {
-    throw new Error(`${account.plan.name} wishlist limit reached. Upgrade your plan.`)
-  }
-
-  const row = await db.businessWishlistItem.create({
-    data: {
-      businessAccountId: account.id,
-      itemType,
-      itemId,
-      title: cleanText(input.title, 200),
-      metadata: input.metadata === undefined ? undefined : asJsonObject(input.metadata),
-      createdByUserId: input.userId,
-    },
-  })
-  await logBusinessActivity({
-    businessAccountId: account.id,
-    actorUserId: input.userId,
-    action: "business_wishlist_item.created",
-    entityType: "business_wishlist_item",
-    entityId: row.id,
-    metadata: { itemType, itemId },
-  })
-  return mapWishlistItem(row)
+  void input
+  throw new Error("Wishlist is not available in business dashboards")
 }
 
 export async function deleteBusinessWishlistItem(input: {
@@ -3383,6 +3321,20 @@ export async function getMyBusinessAccess(userId: string) {
       entitlements,
     }
   }))
+}
+
+export async function assertBusinessAction(input: {
+  userId: string
+  accountType: BusinessAccountType
+  action: string
+}) {
+  const access = (await getMyBusinessAccess(input.userId)).find(
+    (item) => item.businessAccount.type === input.accountType,
+  )
+  if (!access) throw new Error("Business account access is required")
+  const result = access.actions[input.action]
+  if (!result?.allowed) throw new Error(result?.reason ?? "This action is not allowed")
+  return access.businessAccount
 }
 
 export async function listBusinessUsage(userId: string) {

@@ -12,6 +12,8 @@ import {
   deleteFleetVehicle,
   updateFleetVehicle,
 } from "@/services/fleet/fleet-service"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { assertBusinessAction } from "@/services/business/business-platform-service"
 import type { FleetVehicleInput } from "@/types/rfq/rfq"
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -22,6 +24,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (!parsed.ok) return apiError(parsed.message)
 
     try {
+      await assertBusinessAction({
+        userId: user.id,
+        accountType: BusinessAccountType.Fleet,
+        action: "vehicles.update",
+      })
       const vehicle = await updateFleetVehicle(
         user.id,
         (await context.params).id,
@@ -40,6 +47,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 export async function DELETE(request: NextRequest, context: RouteContext) {
   return withFleetApiRoute(request, async (user) => {
     try {
+      await assertBusinessAction({
+        userId: user.id,
+        accountType: BusinessAccountType.Fleet,
+        action: "vehicles.delete",
+      })
       return apiOk(await deleteFleetVehicle(user.id, (await context.params).id))
     } catch (error) {
       return apiError(apiErrorMessage(error, "Unable to delete vehicle"))

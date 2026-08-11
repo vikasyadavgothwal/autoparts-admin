@@ -3,7 +3,9 @@ import { Buffer } from "node:buffer"
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import { uploadObjectToS3 } from "@/lib/storage/s3"
+import { assertBusinessAction } from "@/services/business/business-platform-service"
 
 export const dynamic = "force-dynamic"
 
@@ -46,6 +48,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    await assertBusinessAction({
+      userId: auth.user.id,
+      accountType: BusinessAccountType.Supplier,
+      action: "products.update",
+    })
     const images = await Promise.all(
       files.map(async (file) => {
         const extension = IMAGE_EXTENSIONS[file.type]

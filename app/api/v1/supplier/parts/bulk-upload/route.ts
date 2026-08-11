@@ -4,7 +4,7 @@ import * as XLSX from "xlsx"
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, BusinessMemberStatus } from "@/lib/generated/prisma/client"
-import { getEffectiveBusinessLimits, logBusinessActivity } from "@/services/business/business-platform-service"
+import { assertBusinessAction, getEffectiveBusinessLimits, logBusinessActivity } from "@/services/business/business-platform-service"
 import { syncCatalogLookups } from "@/services/catalog/catalog-lookup-service"
 import {
   importSupplierPartsBulk,
@@ -724,6 +724,12 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
     const workbookFile = getUploadedFile(formData, "workbookFile")
+    const mode = String(formData.get("mode") ?? "products")
+    await assertBusinessAction({
+      userId: auth.user.id,
+      accountType: BusinessAccountType.Supplier,
+      action: workbookFile || mode === "products" ? "products.create" : "products.update",
+    })
 
     if (workbookFile) {
       const parsed = await parseUnifiedWorkbook(workbookFile)
@@ -840,7 +846,6 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const mode = String(formData.get("mode") ?? "products")
     const imageFile = getUploadedFile(formData, "imageFile")
     const stockFile = getUploadedFile(formData, "stockFile")
     const pricingFile = getUploadedFile(formData, "pricingFile")

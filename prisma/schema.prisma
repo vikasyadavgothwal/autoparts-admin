@@ -299,6 +299,7 @@ model User {
   activeRole                      UserRole                    @default(User)
   isActive                        Boolean                     @default(true)
   supplierApprovalStatus          SupplierApprovalStatus      @default(Pending)
+  featuredSupplier                Boolean                     @default(false)
   supplierApprovalRejectionReason String?
   supplierReviewedAt              DateTime?
   supplierReviewedByAdminId       String?
@@ -950,6 +951,7 @@ model BusinessApiKey {
   name              String
   keyPrefix         String    @unique
   keyHash           String    @unique
+  encryptedKey      String?
   scopes            String[]  @default([])
   status            String    @default("Active")
   createdByUserId   String?

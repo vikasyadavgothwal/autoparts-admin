@@ -8,6 +8,7 @@ import { readJsonBody, requireSupplierFromRequest } from "@/lib/auth/api-guards"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import {
+  assertBusinessAction,
   assertBusinessPlanLimit,
   assertSupplierCatalogPlanLimits,
   logBusinessActivity,
@@ -55,6 +56,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    await assertBusinessAction({
+      userId: auth.user.id,
+      accountType: BusinessAccountType.Supplier,
+      action: "products.create",
+    })
     await assertSupplierCatalogPlanLimits({
       userId: auth.user.id,
       brands: ["brand" in parsed.body ? parsed.body.brand : null],

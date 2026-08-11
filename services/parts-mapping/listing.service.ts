@@ -182,7 +182,7 @@ export async function listMappedCatalogPartsPage(input: {
 
 
 export async function listSupplierPartsPage(input: {
-  supplierId?: string
+  supplierId: string
   status?: SupplierPartMappingStatus
   query?: string
   page?: number
@@ -195,7 +195,7 @@ export async function listSupplierPartsPage(input: {
     Math.max(1, Number.isFinite(input.pageSize) ? input.pageSize ?? 10 : 10),
   )
   const where: Prisma.SupplierPartWhereInput = {
-    ...(input.supplierId ? { supplierId: input.supplierId } : {}),
+    supplierId: input.supplierId,
     ...(input.status ? { mappingStatus: input.status } : {}),
     ...(query
       ? {

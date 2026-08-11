@@ -52,6 +52,8 @@ const supplierFacingUnmappedReason = (reason: string) => {
   return normalized || "OEM part not found"
 }
 
+const SUPPLIER_IMPORT_CONCURRENCY = 8
+
 export async function importSupplierPartsBulk(
   supplierId: string,
   rows: SupplierBulkProductRow[],
@@ -60,7 +62,7 @@ export async function importSupplierPartsBulk(
   const seenOemNumbers = new Map<string, string>()
   const resolutionByLookup = new Map<string, Promise<BulkPartResolution>>()
 
-  const results = await mapWithConcurrency(rows, 5, async (row) => {
+  const results = await mapWithConcurrency(rows, SUPPLIER_IMPORT_CONCURRENCY, async (row) => {
     const vendorSku = normalizeVendorSku(row.vendorSku)
     const oemNumber = normalizeOptionalText(row.oemNumber)
     const supplierBrand = normalizeOptionalText(row.brand)

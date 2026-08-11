@@ -8,7 +8,7 @@ import {
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, RfqSource, RfqStatus } from "@/lib/generated/prisma/client"
 import { deleteObjectFromS3, uploadObjectToS3 } from "@/lib/storage/s3"
-import { assertBusinessPlanLimit } from "@/services/business/business-platform-service"
+import { assertBusinessAction, assertBusinessPlanLimit } from "@/services/business/business-platform-service"
 import { createRfq, listFleetRfqs, listSupplierRfqs, listUserRfqs } from "@/services/fleet/fleet-service"
 import type { CreateRfqInput, RfqAttachment } from "@/types/rfq/rfq"
 
@@ -57,6 +57,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "User authentication is required" }, { status: 403 })
     }
     if (source === RfqSource.fleet) {
+      await assertBusinessAction({
+        userId: auth.user.id,
+        accountType: BusinessAccountType.Fleet,
+        action: "rfqs.create",
+      })
       const currentCount = await db.rfq.count({
         where: {
           requesterId: auth.user.id,

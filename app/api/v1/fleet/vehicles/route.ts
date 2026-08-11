@@ -12,6 +12,7 @@ import {
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import {
+  assertBusinessAction,
   assertBusinessPlanLimit,
   logBusinessActivity,
 } from "@/services/business/business-platform-service"
@@ -34,6 +35,11 @@ export async function POST(request: NextRequest) {
     if (!parsed.ok) return apiError(parsed.message)
 
     try {
+      await assertBusinessAction({
+        userId: user.id,
+        accountType: BusinessAccountType.Fleet,
+        action: "vehicles.create",
+      })
       const currentCount = await db.fleetVehicle.count({ where: { fleetId: user.id, status: { not: "plan_suspended" } } })
       const account = await assertBusinessPlanLimit({
         userId: user.id,

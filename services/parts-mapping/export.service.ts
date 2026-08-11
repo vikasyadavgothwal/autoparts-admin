@@ -105,6 +105,7 @@ const mapSheetRows = (supplierId: string, requireMapped = false) =>
           maxRetailPrice: true,
           wholesaleDistributorPrice: true,
           fleetPrice: true,
+          rawUploadData: true,
         },
       },
       stockRows: {
@@ -120,72 +121,108 @@ const mapSheetRows = (supplierId: string, requireMapped = false) =>
     },
   })
 
-const buildCatalogRows = (part: Awaited<ReturnType<typeof mapSheetRows>>[number]) => ({
-  "Supplier Part ID": part.id,
-  "Catalog Product UID": part.part?.partUid ?? "",
-  SKU: part.vendorSku ?? "",
-  "Product Name": part.part?.partName ?? part.originalPartName,
-  Brand: part.part?.brandName ?? part.originalBrand ?? "",
-  "Part Number (MPN)": part.originalMpn ?? "",
-  "OEM Number": part.originalOemNumber ?? "",
-  Category: part.category ?? "",
-  Status: part.mappingStatus,
-  "Catalog Source": part.part?.source ?? "",
-  "Base Price (AED)": toMoney(part.pricing?.basePrice),
-  "Discount Price (AED)": toMoney(part.pricing?.discountPrice),
-  Stock: part.stock,
-  Currency: part.pricing?.currency ?? part.currency ?? "",
-  "Tax Class": part.pricing?.taxClass ?? "",
-  VAT: part.pricing?.vat ?? "",
-  "Max Retail Price (AED)": toMoney(part.pricing?.maxRetailPrice),
-  "Wholesale/Distributor Pricing (AED)": toMoney(part.pricing?.wholesaleDistributorPrice),
-  "Fleet Price (AED)": toMoney(part.pricing?.fleetPrice),
-  "Created At": part.createdAt.toISOString(),
-  "Updated At": part.updatedAt.toISOString(),
-})
+const productMasterColumns = [
+  "SKU", "Product Name", "Short Description", "Long Description",
+  "Manufacturer Part Number (MPN)", "Status", "Grade", "Condition",
+  "Category ID", "Category Name", "Parent Category", "Brand ID", "Brand Name",
+  "Product Categories", "Tier 1", "Attribute Name", "Attribute Value",
+  "Detailed Attributes", "Attribute Name (B)", "Attribute Name (C)", "Vehicle ID",
+  "Vehicle Fitment | Make", "Vehicle Fitment | Model", "Vehicle Fitment | Year_Start",
+  "Vehicle Fitment | Year_End", "Vehicle Fitment | Engine", "Vehicle Fitment | Trim",
+  "Vehicle Fitment | Drive_Type", "Vehicle Fitment | Fitment Notes",
+  "Product Pricing | Base Price (AED)", "Product Pricing | Discount Price (AED)",
+  "Product Pricing | Currency", "Product Pricing | Tax Class", "Product Pricing | VAT",
+  "Product Pricing | Max Retail Price", "Product Pricing | Wholesale/Distributor Pricing",
+  "Product Pricing | Fleet Pricing", "Product Inventory | Warehouse ID",
+  "Product Inventory | Quantity", "Product Inventory | Lead Time",
+  "Product Inventory | Low Stock Threshold", "Product Images | Primary Image URL",
+  "Product Images | Gallery Image URLs", "Product Documents | Document Type",
+  "Product Documents | Document URL", "Cross References | Platform Part number (SKU)",
+  "Cross References | OEM Part Number", "Cross References | OEM Supersession Numbers",
+  "Cross References | Competitor Part Number", "Cross References | Competitor Brand Name",
+  "Cross References | HS Code", "Product Bundles | Component SKU",
+  "Product Bundles | Quantity in Bundle", "Product Bundles | Parent Bundle SKU",
+  "Product Bundles | Quantity as Component", "Shipping Logistics | Weight (kg)",
+  "Shipping Logistics | Length (cm)", "Shipping Logistics | Width (cm)",
+  "Shipping Logistics | Height (cm)", "Shipping Logistics | HS Code",
+  "Shipping Logistics | Country of Origin", "Compliance | Warranty Period (Months)",
+  "Compliance | Certification (e.g., ESMA)", "Marketplace Settings | Allow Backorders (Yes/No)",
+  "Marketplace Settings | Max Order Quantity", "Marketplace Settings | Is Active (Yes/No)",
+  "Upload Validation | Validation Status", "Upload Validation | Missing Fields",
+]
 
-const stockRowsFromPart = (
-  part: Awaited<ReturnType<typeof mapSheetRows>>[number],
-) => {
-  if (part.stockRows.length > 0) {
-    return part.stockRows.map((stockRow) => ({
-      "Supplier Part ID": part.id,
-      SKU: stockRow.vendorSku,
-      "Warehouse ID": stockRow.warehouseId,
-      Quantity: stockRow.quantity,
-      "Lead Time": stockRow.leadTime ?? "",
-      "Low Stock Threshold": stockRow.lowStockThreshold ?? "",
-    }))
-  }
+const emptyLookupSheets = [
+  ["Lookup_Categories", ["Category ID", "Category Name", "Parent Category"]],
+  ["Lookup_Vehicles", ["Vehicle ID", "Make", "Model", "Tier"]],
+  ["Lookup_Brands", ["Brand ID", "Brand Name", "Product Categories", "Tier"]],
+  ["Lookup_Grades", ["Customer-Facing Label", "Description"]],
+  ["Lookup_SKU_Numbers", ["Srl. Nos.", "Category", "Category Code", "Subcategory", "Subcategory Code", "SKU Prefix"]],
+  ["Test_Expected_Results", ["17VIN-Verified Toyota Two-Product Update Test"]],
+  ["Sources", ["17VIN-Verified Toyota EPC Sample Data"]],
+] as const
 
-  return [
-    {
-      "Supplier Part ID": part.id,
-      SKU: part.vendorSku ?? "",
-      "Warehouse ID": "",
-      Quantity: part.stock,
-      "Lead Time": "",
-      "Low Stock Threshold": "",
-    },
-  ]
+const toObject = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+
+const exportValue = (value: unknown): string | number => {
+  if (Array.isArray(value)) return value.join(", ")
+  if (value === null || value === undefined) return ""
+  return typeof value === "number" ? value : String(value)
 }
 
-const pricingRowsFromPart = (
+const currentOrRaw = (
+  current: unknown,
+  raw: Record<string, unknown>,
+  key: string,
+) => current === null || current === undefined || current === "" ? raw[key] ?? "" : current
+
+const buildProductMasterRow = (
   part: Awaited<ReturnType<typeof mapSheetRows>>[number],
-) => ({
-  "Supplier Part ID": part.id,
-  SKU: part.vendorSku ?? "",
-  "Base Price (AED)": toMoney(part.pricing?.basePrice),
-  "Discount Price (AED)": toMoney(part.pricing?.discountPrice),
-  Currency: part.pricing?.currency ?? part.currency ?? "AED",
-  "Tax Class": part.pricing?.taxClass ?? "",
-  VAT: part.pricing?.vat ?? "",
-  "Max Retail Price (AED)": toMoney(part.pricing?.maxRetailPrice),
-  "Wholesale/Distributor Price (AED)": toMoney(
-    part.pricing?.wholesaleDistributorPrice,
-  ),
-  "Fleet Price (AED)": toMoney(part.pricing?.fleetPrice),
-})
+) => {
+  const raw = {
+    ...toObject(part.rawUploadData),
+    ...toObject(part.pricing?.rawUploadData),
+  }
+  const stock = part.stockRows[0]
+  const imageUrls = part.supplierImageUrls
+  const basePrice = part.pricing?.basePrice ?? (!part.pricing ? part.price : null)
+
+  const row: Record<string, unknown> = {
+    ...raw,
+    SKU: part.vendorSku,
+    "Product Name": part.originalPartName,
+    "Manufacturer Part Number (MPN)": currentOrRaw(part.originalMpn, raw, "Manufacturer Part Number (MPN)"),
+    Status: part.mappingStatus,
+    "Brand Name": currentOrRaw(part.originalBrand, raw, "Brand Name"),
+    "Category Name": currentOrRaw(part.category, raw, "Category Name"),
+    "Product Pricing | Base Price (AED)": toMoney(basePrice),
+    "Product Pricing | Discount Price (AED)": toMoney(part.pricing?.discountPrice),
+    "Product Pricing | Currency": part.pricing?.currency ?? part.currency ?? "AED",
+    "Product Pricing | Tax Class": part.pricing?.taxClass ?? currentOrRaw(null, raw, "Product Pricing | Tax Class"),
+    "Product Pricing | VAT": part.pricing?.vat ?? currentOrRaw(null, raw, "Product Pricing | VAT"),
+    "Product Pricing | Max Retail Price": toMoney(part.pricing?.maxRetailPrice),
+    "Product Pricing | Wholesale/Distributor Pricing": toMoney(part.pricing?.wholesaleDistributorPrice),
+    "Product Pricing | Fleet Pricing": toMoney(part.pricing?.fleetPrice),
+    "Product Inventory | Warehouse ID": stock?.warehouseId ?? currentOrRaw(null, raw, "Product Inventory | Warehouse ID"),
+    "Product Inventory | Quantity": part.stock,
+    "Product Inventory | Lead Time": stock?.leadTime ?? currentOrRaw(null, raw, "Product Inventory | Lead Time"),
+    "Product Inventory | Low Stock Threshold": stock?.lowStockThreshold ?? currentOrRaw(null, raw, "Product Inventory | Low Stock Threshold"),
+    "Product Images | Primary Image URL": imageUrls[0] ?? currentOrRaw(null, raw, "Product Images | Primary Image URL"),
+    "Product Images | Gallery Image URLs": imageUrls.slice(1).join(", ") || currentOrRaw(null, raw, "Product Images | Gallery Image URLs"),
+    "Cross References | OEM Part Number": currentOrRaw(part.originalOemNumber, raw, "Cross References | OEM Part Number"),
+    "Cross References | OEM Supersession Numbers": part.oemSupersessionNumbers.join(", "),
+    "Cross References | Competitor Part Number": currentOrRaw(part.competitorPartNumber, raw, "Cross References | Competitor Part Number"),
+    "Cross References | Competitor Brand Name": currentOrRaw(part.competitorBrandName, raw, "Cross References | Competitor Brand Name"),
+    "Cross References | HS Code": currentOrRaw(part.hsCode, raw, "Cross References | HS Code"),
+    "Shipping Logistics | HS Code": currentOrRaw(part.hsCode, raw, "Shipping Logistics | HS Code"),
+  }
+
+  return Object.fromEntries(
+    productMasterColumns.map((column) => [column, exportValue(row[column])]),
+  )
+}
 
 const buildExportResult = (
   sheets: ExportSheet[],
@@ -212,77 +249,47 @@ const buildExportResult = (
 }
 
 export async function buildSupplierCatalogueExport(supplierId: string): Promise<ExportResult> {
-  const parts = await mapSheetRows(supplierId, true)
-  const rows = parts.map(buildCatalogRows)
-  return buildExportResult([
-    {
-      name: "Catalogue",
-      rows,
-      columns: [
-        "Supplier Part ID",
-        "Catalog Product UID",
-        "SKU",
-        "Product Name",
-        "Brand",
-        "Part Number (MPN)",
-        "OEM Number",
-        "Category",
-        "Status",
-        "Catalog Source",
-        "Base Price (AED)",
-        "Discount Price (AED)",
-        "Stock",
-        "Currency",
-        "Tax Class",
-        "VAT",
-        "Max Retail Price (AED)",
-        "Wholesale/Distributor Pricing (AED)",
-        "Fleet Price (AED)",
-        "Created At",
-        "Updated At",
-      ],
-    },
-  ], "supplier-catalogue")
+  return buildSupplierProductMasterExport(supplierId, "supplier-catalogue")
 }
 
 export async function buildSupplierInventoryStockPriceExport(
   supplierId: string,
 ): Promise<ExportResult> {
+  return buildSupplierProductMasterExport(supplierId, "supplier-inventory-stock-prices")
+}
+
+export async function buildSupplierProductMasterCsvExport(
+  supplierId: string,
+): Promise<ExportResult> {
   const parts = await mapSheetRows(supplierId, true)
-  const stockRows = parts.flatMap(stockRowsFromPart)
-  const pricingRows = parts.map(pricingRowsFromPart)
+  const rows = parts.map(buildProductMasterRow)
+
+  return {
+    payload: Buffer.from(toCsv(productMasterColumns, rows)),
+    format: "csv",
+    filename: makeFileName("supplier-product-master", "csv"),
+    contentType: "text/csv; charset=utf-8",
+  }
+}
+
+async function buildSupplierProductMasterExport(
+  supplierId: string,
+  filenamePrefix: string,
+): Promise<ExportResult> {
+  const parts = await mapSheetRows(supplierId, true)
   return buildExportResult(
     [
       {
-        name: "Stock",
-        rows: stockRows,
-        columns: [
-          "Supplier Part ID",
-          "SKU",
-          "Warehouse ID",
-          "Quantity",
-          "Lead Time",
-          "Low Stock Threshold",
-        ],
+        name: "Product_Master",
+        rows: parts.map(buildProductMasterRow),
+        columns: productMasterColumns,
       },
-      {
-        name: "Pricing",
-        rows: pricingRows,
-        columns: [
-          "Supplier Part ID",
-          "SKU",
-          "Base Price (AED)",
-          "Discount Price (AED)",
-          "Currency",
-          "Tax Class",
-          "VAT",
-          "Max Retail Price (AED)",
-          "Wholesale/Distributor Price (AED)",
-          "Fleet Price (AED)",
-        ],
-      },
+      ...emptyLookupSheets.map(([name, columns]) => ({
+        name,
+        rows: [],
+        columns: [...columns],
+      })),
     ],
-    "supplier-inventory-stock-prices",
+    filenamePrefix,
   )
 }
-

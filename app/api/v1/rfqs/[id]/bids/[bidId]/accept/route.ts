@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/database/prisma"
 import { getOptionalUserFromRequest } from "@/lib/auth/api-guards"
 import { BusinessAccountType, OrderStatus, RfqSource } from "@/lib/generated/prisma/client"
-import { assertBusinessPlanLimit } from "@/services/business/business-platform-service"
+import { assertBusinessAction, assertBusinessPlanLimit } from "@/services/business/business-platform-service"
 import { acceptRfqBid } from "@/services/fleet/fleet-service"
 
 const readOptionalAddressId = async (request: NextRequest) => {
@@ -43,6 +43,11 @@ export async function POST(
         select: { bidId: true },
       })
       if (!existingOrder) {
+        await assertBusinessAction({
+          userId: auth.user.id,
+          accountType: BusinessAccountType.Fleet,
+          action: "orders.create",
+        })
         const currentCount = await db.order.count({
           where: { buyerId: auth.user.id, status: { not: OrderStatus.cancelled } },
         })

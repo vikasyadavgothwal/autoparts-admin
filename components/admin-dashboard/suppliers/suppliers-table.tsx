@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { Check, CircleX, Eye } from "lucide-react"
+import { Check, CircleX, Eye, Star } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
@@ -76,6 +76,7 @@ const detailSections = (supplier: SupplierRecord): DetailSection[] => [
       ["Last login", supplier.lastLogin],
       ["Email verified", supplier.emailVerified ? "Yes" : "No"],
       ["Account status", supplier.accountActive ? "Active" : "Suspended"],
+      ["Featured supplier", supplier.featuredSupplier ? "Yes" : "No"],
     ],
   },
   {
@@ -300,6 +301,18 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
+  type NotificationResult = {
+    sent: boolean
+    skipped: boolean
+    error: string | null
+  }
+
+  type ReviewPayload = {
+    supplier?: SupplierRecord
+    notification?: NotificationResult
+    message?: string
+  }
+
   function openReviewDialog(
     supplier: SupplierRecord,
     status: Exclude<SupplierStatus, "Pending">,
@@ -330,9 +343,7 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
           }),
         },
       )
-      const payload = (await response.json().catch(() => null)) as
-        | { message?: string }
-        | null
+      const payload = (await response.json().catch(() => null)) as ReviewPayload | null
 
       if (!response.ok) {
         const message = payload?.message ?? "Unable to update supplier"
@@ -346,8 +357,49 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
           ? `${reviewTarget.supplier.id} approved. Its products can now appear in the marketplace.`
           : `${reviewTarget.supplier.id} rejected. Its products are hidden from the marketplace.`,
       )
+
+      if (
+        payload?.notification &&
+        !payload.notification.sent &&
+        !payload.notification.skipped
+      ) {
+        toast.warning(
+          payload.notification.error
+            ? `Decision saved, but supplier notification email failed: ${payload.notification.error}`
+            : "Decision saved, but supplier notification email failed.",
+        )
+      }
+
       setReviewTarget(null)
       setRejectionReason("")
+      router.refresh()
+    })
+  }
+
+  function toggleFeaturedSupplier(supplier: SupplierRecord) {
+    startTransition(async () => {
+      const response = await fetch(
+        `/api/v1/admin/suppliers/${supplier.internalId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ featuredSupplier: !supplier.featuredSupplier }),
+        },
+      )
+      const payload = (await response.json().catch(() => null)) as {
+        message?: string
+      } | null
+
+      if (!response.ok) {
+        toast.error(payload?.message ?? "Unable to update supplier badge")
+        return
+      }
+
+      toast.success(
+        supplier.featuredSupplier
+          ? `${supplier.id} is no longer a featured supplier.`
+          : `${supplier.id} is now a featured supplier.`,
+      )
       router.refresh()
     })
   }
@@ -410,6 +462,17 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
                   onClick={() => setViewingSupplier(supplier)}
                 >
                   <Eye className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  title={supplier.featuredSupplier ? "Remove featured badge" : "Give featured badge"}
+                  aria-label={`${supplier.featuredSupplier ? "Remove featured badge from" : "Give featured badge to"} ${supplier.name}`}
+                  disabled={isPending}
+                  className={supplier.featuredSupplier ? "border-amber-400/50 text-amber-500 hover:bg-amber-400/10" : "border-dashboard-panel-border hover:bg-amber-400/10 hover:text-amber-500"}
+                  onClick={() => toggleFeaturedSupplier(supplier)}
+                >
+                  <Star className="h-4 w-4" fill={supplier.featuredSupplier ? "currentColor" : "none"} />
                 </Button>
                 {supplier.status !== "Approved" ? (
                   <Button

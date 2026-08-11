@@ -5,6 +5,8 @@ import { updateSupplierPartOffer } from "@/services/parts-mapping"
 import type { SupplierOfferUpdateInput } from "@/types/parts-mapping/parts-mapping"
 import type { SupplierProductMasterInput } from "@/types/parts-mapping/parts-mapping"
 import { updateSupplierProductMaster } from "@/actions/supplier/parts/supplier-product-master"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { assertBusinessAction } from "@/services/business/business-platform-service"
 
 export const dynamic = "force-dynamic"
 
@@ -27,6 +29,11 @@ export async function PATCH(
 
   const { id } = await params
   try {
+    await assertBusinessAction({
+      userId: auth.user.id,
+      accountType: BusinessAccountType.Supplier,
+      action: "products.update",
+    })
     const part = parsed.body && "mode" in parsed.body && parsed.body.mode === "product_master_form"
       ? await updateSupplierProductMaster(auth.user.id, id, parsed.body)
       : await updateSupplierPartOffer(auth.user.id, id, parsed.body as SupplierOfferUpdateInput)

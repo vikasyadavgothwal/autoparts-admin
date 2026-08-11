@@ -70,6 +70,7 @@ const supplierPartInclude = {
       email: true,
       avatarUrl: true,
       supplierApprovalStatus: true,
+      featuredSupplier: true,
       ownedBusinessAccounts: {
         where: { type: BusinessAccountType.Supplier, isActive: true },
         select: {
@@ -786,7 +787,11 @@ const buildOffer = async (
     ratingAverage: reviewSummary?.ratingAverage ?? 0,
     reviewCount: reviewSummary?.reviewCount ?? 0,
     recommended,
-    featuredVendor: supplierPlanForOffer(offer)?.featuredVendor ?? false,
+    verifiedSupplier:
+      offer.supplier.supplierApprovalStatus === SupplierApprovalStatus.Approved,
+    featuredVendor:
+      offer.supplier.featuredSupplier ||
+      supplierPlanForOffer(offer)?.featuredVendor === true,
     searchBoostLevel: supplierPlanForOffer(offer)?.searchBoostLevel ?? 0,
     ...(ranking ? { ranking } : {}),
     images,

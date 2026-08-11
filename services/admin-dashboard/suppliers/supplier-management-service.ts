@@ -110,6 +110,7 @@ const mapSupplier = async (supplier: SupplierAccount): Promise<SupplierRecord> =
   lastLogin: formatDate(supplier.lastLoginAt),
   emailVerified: Boolean(supplier.emailVerifiedAt),
   accountActive: supplier.isActive,
+  featuredSupplier: supplier.featuredSupplier,
   reviewedAt: formatDate(supplier.supplierReviewedAt),
   reviewedBy: reviewerName(supplier),
   status: supplier.supplierApprovalStatus,
@@ -119,12 +120,38 @@ const mapSupplier = async (supplier: SupplierAccount): Promise<SupplierRecord> =
 const supplierDisplayName = (supplier: SupplierAccount) =>
   supplier.supplierContactPerson || supplier.firstName || supplier.companyName || "Supplier"
 
+type SupplierReviewNotificationResult = {
+  sent: boolean
+  skipped: boolean
+  error: string | null
+}
+
+const supplierReviewNotificationResult = (
+  status: SupplierApprovalStatus,
+): SupplierReviewNotificationResult => ({
+  sent: false,
+  skipped: status !== SupplierApprovalStatus.Approved && status !== SupplierApprovalStatus.Rejected,
+  error: null,
+})
+
 async function notifySupplierReviewResult(
   supplier: SupplierAccount,
   status: SupplierApprovalStatus,
   rejectionReason: string | null,
-) {
-  if (!supplier.email) return
+): Promise<SupplierReviewNotificationResult> {
+  if (!supplier.email) {
+    return {
+      sent: false,
+      skipped: false,
+      error: "Supplier email is not available.",
+    }
+  }
+  if (
+    status !== SupplierApprovalStatus.Approved &&
+    status !== SupplierApprovalStatus.Rejected
+  ) {
+    return supplierReviewNotificationResult(status)
+  }
 
   try {
     if (status === SupplierApprovalStatus.Approved) {
@@ -133,7 +160,11 @@ async function notifySupplierReviewResult(
         subject: "Your AutoParts Pro supplier profile is verified",
         text: `Hello ${supplierDisplayName(supplier)},\n\nYour supplier profile has been verified by the AutoParts Pro admin team. You can now manage your inventory, RFQs, orders, offers, reviews, and performance dashboard.\n\nAutoParts Pro`,
       })
-      return
+      return {
+        sent: true,
+        skipped: false,
+        error: null,
+      }
     }
 
     if (status === SupplierApprovalStatus.Rejected) {
@@ -143,8 +174,22 @@ async function notifySupplierReviewResult(
         text: `Hello ${supplierDisplayName(supplier)},\n\nYour supplier profile documents need to be updated before approval.\n\nReason: ${rejectionReason || "Please review and resubmit your supplier documents."}\n\nLog in to Supplier Settings, update the required documents, and resubmit for admin review.\n\nAutoParts Pro`,
       })
     }
+
+    return {
+      sent: true,
+      skipped: false,
+      error: null,
+    }
   } catch (error) {
     logError("Unable to send supplier review email", error)
+    return {
+      sent: false,
+      skipped: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unable to send supplier review email",
+    }
   }
 }
 
@@ -163,12 +208,27 @@ export async function updateAdminSupplierApproval(
   status: SupplierStatus,
   adminId: string,
   rejectionReasonInput?: string,
-): Promise<SupplierRecord> {
+): Promise<{ supplier: SupplierRecord; notification: SupplierReviewNotificationResult }> {
   const approvalStatus = status as SupplierApprovalStatus
   const rejectionReason = rejectionReasonInput?.trim() ?? ""
   if (approvalStatus === SupplierApprovalStatus.Rejected && !rejectionReason) {
     throw new Error("Enter a rejection reason for the supplier")
   }
+
+  const existing = await db.user.findFirst({
+    where: { id, ...supplierWhere },
+    select: {
+      supplierApprovalStatus: true,
+      supplierApprovalRejectionReason: true,
+    },
+  })
+  if (!existing) {
+    throw new Error("Supplier was not found")
+  }
+  const shouldNotifySupplier =
+    existing.supplierApprovalStatus !== approvalStatus ||
+    (approvalStatus === SupplierApprovalStatus.Rejected &&
+      (existing.supplierApprovalRejectionReason ?? "") !== rejectionReason)
 
   const result = await db.user.updateMany({
     where: {
@@ -198,11 +258,44 @@ export async function updateAdminSupplierApproval(
     throw new Error("Supplier was not found")
   }
 
-  await notifySupplierReviewResult(
-    supplier,
-    approvalStatus,
-    approvalStatus === SupplierApprovalStatus.Rejected ? rejectionReason : null,
-  )
+  const notification = shouldNotifySupplier
+    ? await notifySupplierReviewResult(
+        supplier,
+        approvalStatus,
+        approvalStatus === SupplierApprovalStatus.Rejected ? rejectionReason : null,
+      )
+    : {
+        sent: false,
+        skipped: true,
+        error: null,
+      }
+
+  return {
+    supplier: await mapSupplier(supplier),
+    notification,
+  }
+}
+
+export async function updateAdminSupplierFeatured(
+  id: string,
+  featuredSupplier: boolean,
+): Promise<SupplierRecord> {
+  const result = await db.user.updateMany({
+    where: { id, ...supplierWhere },
+    data: { featuredSupplier },
+  })
+
+  if (result.count !== 1) {
+    throw new Error("Supplier was not found")
+  }
+
+  const supplier = await db.user.findFirst({
+    where: { id, ...supplierWhere },
+    include: supplierInclude,
+  })
+  if (!supplier) {
+    throw new Error("Supplier was not found")
+  }
 
   return mapSupplier(supplier)
 }

@@ -3,6 +3,7 @@ import { NextRequest } from "next/server"
 import { apiCreated, apiError, apiErrorMessage, apiOk, readJsonBody } from "@/lib/auth/api-guards"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { SupplierPartMappingStatus } from "@/lib/generated/prisma/client"
 import { createSupplierProductMaster } from "@/actions/supplier/parts/supplier-product-master"
 import { assertBusinessPlanLimit, assertSupplierCatalogPlanLimits, logBusinessActivity } from "@/services/business/business-platform-service"
 import { requireDeveloperApiKey } from "@/services/business/business-api-key-service"
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   const auth = await requireDeveloperApiKey(request, BusinessAccountType.Supplier, "supplier.inventory.read")
   if (!auth.ok) return auth.response
-  const status = request.nextUrl.searchParams.get("status") ?? undefined
+  const status = request.nextUrl.searchParams.get("status") ?? SupplierPartMappingStatus.mapped
   const query = request.nextUrl.searchParams.get("q") ?? undefined
   const page = Number.parseInt(request.nextUrl.searchParams.get("page") ?? "1", 10)
   const pageSize = Number.parseInt(request.nextUrl.searchParams.get("pageSize") ?? "10", 10)

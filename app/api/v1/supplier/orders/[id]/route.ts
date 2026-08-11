@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards";
 import { uploadObjectToS3 } from "@/lib/storage/s3";
+import { BusinessAccountType } from "@/lib/generated/prisma/client";
+import { assertBusinessAction } from "@/services/business/business-platform-service";
 import {
   confirmSupplierOrder,
   submitOrderProofOfDelivery,
@@ -22,6 +24,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   if (!auth.ok) return auth.response;
   const { id } = await context.params;
   try {
+    await assertBusinessAction({
+      userId: auth.user.id,
+      accountType: BusinessAccountType.Supplier,
+      action: "orders.manage",
+    });
     return NextResponse.json({
       ok: true,
       order: await confirmSupplierOrder(auth.user.id, id),
@@ -48,6 +55,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
     );
   }
   try {
+    await assertBusinessAction({
+      userId: auth.user.id,
+      accountType: BusinessAccountType.Supplier,
+      action: "orders.manage",
+    });
     const itemIds = typeof rawItemIds === "string"
       ? JSON.parse(rawItemIds)
       : [];
