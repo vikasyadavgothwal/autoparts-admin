@@ -164,6 +164,14 @@ const baseGarageWhere = Prisma.sql`
   )
 `
 
+const hasActiveServiceCondition = Prisma.sql`
+  EXISTS (
+    SELECT 1 FROM "garage_services" gs
+    WHERE gs."garageId" = u."id"
+      AND gs."status" = 'active'::"GarageServiceStatus"
+  )
+`
+
 const textSearchCondition = (value: string) => Prisma.sql`
   (
     u."companyName" ILIKE ${`%${value}%`}
@@ -322,6 +330,7 @@ export async function listPublicGarages(params: {
   const location = params.location?.trim()
   const conditions = [
     baseGarageWhere,
+    hasActiveServiceCondition,
     ...(q ? [textSearchCondition(q)] : []),
     ...(service ? [serviceSearchCondition(service)] : []),
     ...(location ? [locationSearchCondition(location)] : []),

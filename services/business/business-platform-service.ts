@@ -5,6 +5,7 @@ import { getFirebaseAuth } from "@/lib/firebase/admin"
 import { hashPassword } from "@/lib/auth/password"
 import { db } from "@/lib/database/prisma"
 import { logError } from "@/lib/logger"
+import { createSignedS3ObjectUrl, deleteObjectFromS3, getS3ObjectKeyFromUrl } from "@/lib/storage/s3"
 import { createNotificationsSafely } from "@/services/notifications/notification-service"
 import {
   BusinessAccountType,
@@ -37,6 +38,10 @@ const allowedSecurityTiers = ["Basic", "Standard", "Premium"] as const
 const allowedSupportTiers = ["Basic", "Standard", "Premium"] as const
 const allowedLoginSecurityModes = ["password", "otp"] as const
 const allowedReportLevels = ["dashboard", "standard", "premium"] as const
+const faqQuestionMinWords = 3
+const faqQuestionMaxWords = 40
+const faqAnswerMinWords = 6
+const faqAnswerMaxWords = 250
 
 const pickAllowed = <T extends readonly string[]>(values: T, value: string | null): T[number] | undefined =>
   values.includes(value as T[number]) ? value as T[number] : undefined
@@ -562,6 +567,14 @@ const cleanText = (value: unknown, max = 120): string | null => {
   const normalized = value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim()
   return normalized ? normalized.slice(0, max) : null
 }
+
+const normalizeText = (value: unknown): string | null => {
+  if (typeof value !== "string") return null
+  const normalized = value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim()
+  return normalized || null
+}
+
+const wordCount = (value: string) => value.trim().split(/\s+/).filter(Boolean).length
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => ({
   "&": "&amp;",
@@ -2718,14 +2731,40 @@ export async function createBusinessSupportTicket(input: {
   return mapSupportTicket(row)
 }
 
-const supportTierRank: Record<string, number> = { Basic: 1, Standard: 2, Premium: 3 }
+const supportVideoUrl = async (videoUrl: string) => {
+  if (!/^(s3:\/\/)|amazonaws\.com|business-support\/videos\//i.test(videoUrl)) {
+    return videoUrl
+  }
 
-const visibleSupportTiers = (tier: string | null | undefined) => {
-  const rank = supportTierRank[tier ?? "Basic"] ?? 1
-  return Object.entries(supportTierRank).filter(([, value]) => value <= rank).map(([key]) => key)
+  try {
+    const key = getS3ObjectKeyFromUrl(videoUrl)
+    return key ? await createSignedS3ObjectUrl(key, 60 * 60) : videoUrl
+  } catch (error) {
+    logError("[business-support] signed video url failed", error)
+    return videoUrl
+  }
 }
 
-const mapSupportVideo = (row: {
+const youtubeEmbedUrl = (value: string): string | null => {
+  try {
+    const url = new URL(value)
+    const host = url.hostname.replace(/^www\./, "").toLowerCase()
+    let videoId = ""
+
+    if (host === "youtu.be") {
+      videoId = url.pathname.split("/").filter(Boolean)[0] ?? ""
+    } else if (host === "youtube.com" || host === "m.youtube.com" || host === "youtube-nocookie.com") {
+      const [first, second] = url.pathname.split("/").filter(Boolean)
+      videoId = first === "embed" || first === "shorts" || first === "live" ? second ?? "" : url.searchParams.get("v") ?? ""
+    }
+
+    return /^[A-Za-z0-9_-]{11}$/.test(videoId) ? `https://www.youtube.com/embed/${videoId}` : null
+  } catch {
+    return null
+  }
+}
+
+const mapSupportVideo = async (row: {
   id: string
   accountType: BusinessAccountType
   supportTier: string
@@ -2742,7 +2781,8 @@ const mapSupportVideo = (row: {
   supportTier: row.supportTier,
   title: row.title,
   description: row.description,
-  videoUrl: row.videoUrl,
+  videoUrl: await supportVideoUrl(row.videoUrl),
+  storedVideoUrl: row.videoUrl,
   sortOrder: row.sortOrder,
   isActive: row.isActive,
   createdAt: row.createdAt.toISOString(),
@@ -2773,18 +2813,20 @@ const mapSupportFaq = (row: {
 
 export async function listAdminBusinessSupportContent() {
   const [videos, faqs] = await Promise.all([
-    db.businessSupportVideo.findMany({ orderBy: [{ accountType: "asc" }, { supportTier: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
-    db.businessSupportFaq.findMany({ orderBy: [{ accountType: "asc" }, { supportTier: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
+    db.businessSupportVideo.findMany({ orderBy: [{ accountType: "asc" }, { createdAt: "desc" }] }),
+    db.businessSupportFaq.findMany({ orderBy: [{ accountType: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
   ])
-  return { videos: videos.map(mapSupportVideo), faqs: faqs.map(mapSupportFaq) }
+  return {
+    videos: await Promise.all(videos.map(mapSupportVideo)),
+    faqs: faqs.map(mapSupportFaq),
+  }
 }
 
 export async function listBusinessSupportContent(input: { userId: string; businessAccountId: unknown }) {
   const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
-  const tiers = visibleSupportTiers(account.plan.supportTier)
   const [videos, faqs] = await Promise.all([
-    db.businessSupportVideo.findMany({ where: { accountType: account.type, supportTier: { in: tiers }, isActive: true }, orderBy: [{ supportTier: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
-    db.businessSupportFaq.findMany({ where: { accountType: account.type, supportTier: { in: tiers }, isActive: true }, orderBy: [{ supportTier: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
+    db.businessSupportVideo.findMany({ where: { accountType: account.type, isActive: true }, orderBy: [{ createdAt: "desc" }] }),
+    db.businessSupportFaq.findMany({ where: { accountType: account.type, isActive: true }, orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }] }),
   ])
   return {
     supportTier: account.plan.supportTier,
@@ -2803,7 +2845,7 @@ export async function listBusinessSupportContent(input: { userId: string; busine
         : account.plan.supportTier === "Standard"
           ? [{ value: "account_assistance", label: "Account assistance" }]
           : [],
-    videos: videos.map(mapSupportVideo),
+    videos: await Promise.all(videos.map(mapSupportVideo)),
     faqs: faqs.map(mapSupportFaq),
   }
 }
@@ -2825,10 +2867,9 @@ export async function upsertAdminBusinessSupportContent(input: {
   const kind = cleanText(input.kind, 20)
   const id = cleanText(input.id, 80)
   const accountType = cleanText(input.accountType, 20) as BusinessAccountType | null
-  const supportTier = cleanText(input.supportTier, 20) ?? "Basic"
+  const supportTier = "Basic"
   if (kind !== "video" && kind !== "faq") throw new Error("Content type is required")
   if (!accountType || !Object.values(BusinessAccountType).includes(accountType)) throw new Error("Valid dashboard type is required")
-  if (!["Basic", "Standard", "Premium"].includes(supportTier)) throw new Error("Valid support tier is required")
   const sortOrder = Number(input.sortOrder ?? 0)
   if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 9999) throw new Error("Sort order must be a whole number between 0 and 9999")
   const isActive = typeof input.isActive === "boolean" ? input.isActive : true
@@ -2845,20 +2886,57 @@ export async function upsertAdminBusinessSupportContent(input: {
       throw new Error("Video URL must be valid")
     }
     if (!["http:", "https:"].includes(parsedVideoUrl.protocol)) throw new Error("Video URL must start with http or https")
-    const data = { accountType, supportTier, title, description: cleanText(input.description, 500), videoUrl, sortOrder, isActive }
-    const row = id ? await db.businessSupportVideo.update({ where: { id }, data }) : await db.businessSupportVideo.create({ data })
+    const isUploadedS3Video = /amazonaws\.com|business-support\/videos\//i.test(videoUrl)
+    const normalizedVideoUrl = isUploadedS3Video ? videoUrl : youtubeEmbedUrl(videoUrl)
+    if (!normalizedVideoUrl) throw new Error("Video URL must be a valid YouTube link")
+    const data = { accountType, supportTier, title, description: null, videoUrl: normalizedVideoUrl, sortOrder, isActive }
+    const existingVideo = id ? { id } : null
+    const row = existingVideo ? await db.businessSupportVideo.update({ where: { id: existingVideo.id }, data }) : await db.businessSupportVideo.create({ data })
     await logBusinessActivity({ action: "business_support_video.saved", entityType: "business_support_video", entityId: row.id, metadata: { adminId: input.adminId, accountType, supportTier } })
-    return { video: mapSupportVideo(row) }
+    return { video: await mapSupportVideo(row) }
   }
 
-  const question = cleanText(input.question, 300)
-  const answer = cleanText(input.answer, 2000)
-  if (!question || question.length < 5) throw new Error("FAQ question must be at least 5 characters")
-  if (!answer || answer.length < 10) throw new Error("FAQ answer must be at least 10 characters")
+  const question = normalizeText(input.question)
+  const answer = normalizeText(input.answer)
+  if (!question) throw new Error("FAQ question is required")
+  if (question.length < 5) throw new Error("FAQ question must be at least 5 characters")
+  if (question.length > 300) throw new Error("FAQ question must be 300 characters or fewer")
+  if (wordCount(question) < faqQuestionMinWords) throw new Error(`FAQ question must be at least ${faqQuestionMinWords} words`)
+  if (wordCount(question) > faqQuestionMaxWords) throw new Error(`FAQ question must be ${faqQuestionMaxWords} words or fewer`)
+  if (!answer) throw new Error("FAQ answer is required")
+  if (answer.length < 10) throw new Error("FAQ answer must be at least 10 characters")
+  if (answer.length > 2000) throw new Error("FAQ answer must be 2000 characters or fewer")
+  if (wordCount(answer) < faqAnswerMinWords) throw new Error(`FAQ answer must be at least ${faqAnswerMinWords} words`)
+  if (wordCount(answer) > faqAnswerMaxWords) throw new Error(`FAQ answer must be ${faqAnswerMaxWords} words or fewer`)
   const data = { accountType, supportTier, question, answer, sortOrder, isActive }
   const row = id ? await db.businessSupportFaq.update({ where: { id }, data }) : await db.businessSupportFaq.create({ data })
   await logBusinessActivity({ action: "business_support_faq.saved", entityType: "business_support_faq", entityId: row.id, metadata: { adminId: input.adminId, accountType, supportTier } })
   return { faq: mapSupportFaq(row) }
+}
+
+export async function deleteAdminBusinessSupportContent(input: { adminId: string; kind: unknown; id: unknown }) {
+  const kind = cleanText(input.kind, 20)
+  const id = cleanText(input.id, 80)
+  if (kind !== "video" && kind !== "faq") throw new Error("Content type is required")
+  if (!id) throw new Error("Content id is required")
+
+  if (kind === "video") {
+    const row = await db.businessSupportVideo.delete({ where: { id } })
+    if (/^(s3:\/\/)|amazonaws\.com|business-support\/videos\//i.test(row.videoUrl)) {
+      try {
+        const key = getS3ObjectKeyFromUrl(row.videoUrl)
+        if (key) await deleteObjectFromS3(key)
+      } catch (error) {
+        logError("[business-support] delete video object failed", error)
+      }
+    }
+    await logBusinessActivity({ action: "business_support_video.deleted", entityType: "business_support_video", entityId: row.id, metadata: { adminId: input.adminId, accountType: row.accountType } })
+    return { kind, id: row.id }
+  }
+
+  const row = await db.businessSupportFaq.delete({ where: { id } })
+  await logBusinessActivity({ action: "business_support_faq.deleted", entityType: "business_support_faq", entityId: row.id, metadata: { adminId: input.adminId, accountType: row.accountType } })
+  return { kind, id: row.id }
 }
 
 export async function listAdminBusinessSupportTickets(status?: unknown) {
@@ -2901,7 +2979,7 @@ export async function listAdminBusinessSupportTicketsPage(input: {
     db.businessSupportTicket.findMany({
       where,
       include: { businessAccount: { include: { plan: true } }, createdBy: true, assignedAdmin: true },
-      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+      orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
@@ -2911,11 +2989,13 @@ export async function listAdminBusinessSupportTicketsPage(input: {
 }
 
 export async function getAdminBusinessWorkflowCounts() {
-  const [pendingAddOns, activeTickets] = await Promise.all([
+  const [pendingAddOns, requestedAddOns, activeTickets, newTickets] = await Promise.all([
     db.businessAddOnRequest.count({ where: { status: { in: [BusinessAddOnRequestStatus.Requested, BusinessAddOnRequestStatus.Approved] } } }),
+    db.businessAddOnRequest.count({ where: { status: BusinessAddOnRequestStatus.Requested } }),
     db.businessSupportTicket.count({ where: { status: { in: [BusinessSupportTicketStatus.Open, BusinessSupportTicketStatus.InProgress] } } }),
+    db.businessSupportTicket.count({ where: { status: BusinessSupportTicketStatus.Open } }),
   ])
-  return { pendingAddOns, activeTickets }
+  return { pendingAddOns, requestedAddOns, activeTickets, newTickets }
 }
 
 export async function updateAdminBusinessSupportTicket(input: {

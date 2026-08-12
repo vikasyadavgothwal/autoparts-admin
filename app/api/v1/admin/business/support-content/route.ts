@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { apiError, apiErrorMessage, readJsonBody, requireAdminFromRequest } from "@/lib/auth/api-guards"
-import { listAdminBusinessSupportContent, upsertAdminBusinessSupportContent } from "@/services/business/business-platform-service"
+import { deleteAdminBusinessSupportContent, listAdminBusinessSupportContent, upsertAdminBusinessSupportContent } from "@/services/business/business-platform-service"
 
 export const dynamic = "force-dynamic"
 
@@ -35,5 +35,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, supportContent })
   } catch (error) {
     return apiError(apiErrorMessage(error, "Unable to save support content"))
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  const auth = await requireAdminFromRequest()
+  if (!auth.ok) return auth.response
+  const body = await readJsonBody<Record<string, unknown>>(request)
+  if (!body.ok) return apiError(body.message)
+  try {
+    const deleted = await deleteAdminBusinessSupportContent({
+      adminId: auth.admin.id,
+      kind: body.body.kind,
+      id: body.body.id,
+    })
+    return NextResponse.json({ ok: true, deleted })
+  } catch (error) {
+    return apiError(apiErrorMessage(error, "Unable to delete support content"))
   }
 }

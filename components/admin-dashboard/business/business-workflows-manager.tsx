@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { CirclePlus, LifeBuoy, MoreHorizontal, Search } from "lucide-react"
+import { CirclePlus, Clock3, Eye, LifeBuoy, MoreHorizontal, Search, Zap } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -85,6 +85,11 @@ const statusClass = (status: string) => {
   if (status === "Rejected") return "border-red-500/30 bg-red-500/10 text-red-300"
   return "border-amber-500/30 bg-amber-500/10 text-amber-200"
 }
+const priorityClass = (priority: string) => {
+  if (priority === "Urgent") return "border-red-500/30 bg-red-500/10 text-red-300"
+  if (priority === "Priority") return "border-amber-500/30 bg-amber-500/10 text-amber-200"
+  return "border-slate-500/30 bg-slate-500/10 text-slate-300"
+}
 const dateFormatter = new Intl.DateTimeFormat("en-GB", {
   day: "2-digit",
   month: "short",
@@ -99,11 +104,19 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: "UTC",
   year: "numeric",
 })
-const formatDate = (value: string) => dateFormatter.format(new Date(value))
 const formatDateTime = (value: string) => dateTimeFormatter.format(new Date(value))
 const formatOptionalDate = (value?: string | null) => value ? dateFormatter.format(new Date(value)) : "Not set"
 const dateInputValue = (value?: string | null) => value ? value.slice(0, 10) : ""
 const renewalDateFromExpiry = (value: string) => value
+const hoursSince = (value: string) => Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 36e5))
+const ageLabel = (value: string) => {
+  const hours = hoursSince(value)
+  if (hours < 1) return "Just now"
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+const ticketCode = (id: string) => `AUTO-${(id.replace(/[^a-z0-9]/gi, "").slice(-8) || id.slice(-8)).toUpperCase()}`
 
 export function BusinessWorkflowsManager({
   queue,
@@ -115,7 +128,7 @@ export function BusinessWorkflowsManager({
   queue: Queue
   addOns: PageData<AddOnRequest>
   tickets: PageData<SupportTicket>
-  counts: { pendingAddOns: number; activeTickets: number }
+  counts: { pendingAddOns: number; requestedAddOns?: number; activeTickets: number; newTickets?: number }
   filters: { query: string; status: string; accountType: string }
 }) {
   const router = useRouter()
@@ -320,6 +333,7 @@ export function BusinessWorkflowsManager({
   )
 
   const selectedAddOn = selected?.kind === "add-ons" ? selected.item as AddOnRequest : null
+  const selectedTicket = selected?.kind === "tickets" ? selected.item as SupportTicket : null
   const addOnValidityChanged = selectedAddOn
     ? addOnValidity.validFrom !== dateInputValue(selectedAddOn.validFrom) ||
       addOnValidity.validUntil !== dateInputValue(selectedAddOn.validUntil) ||
@@ -335,14 +349,18 @@ export function BusinessWorkflowsManager({
           <h1 className="mt-2 text-2xl font-semibold text-white">Add-ons & Support</h1>
           <p className="mt-1 text-sm text-[#9CA3AF]">Search, filter, review, and update business requests from one queue.</p>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-lg border border-[#2A2A2A] bg-[#050505] px-4 py-3">
-            <p className="text-lg font-semibold text-white">{counts.pendingAddOns}</p>
-            <p className="text-xs text-[#9CA3AF]">Pending add-ons</p>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-lg border border-[#DC2626]/30 bg-[#DC2626]/10 px-4 py-3">
+            <p className="text-lg font-semibold text-white">{counts.newTickets ?? 0}</p>
+            <p className="text-xs text-[#FCA5A5]">New tickets</p>
           </div>
           <div className="rounded-lg border border-[#2A2A2A] bg-[#050505] px-4 py-3">
             <p className="text-lg font-semibold text-white">{counts.activeTickets}</p>
             <p className="text-xs text-[#9CA3AF]">Active tickets</p>
+          </div>
+          <div className="rounded-lg border border-[#2A2A2A] bg-[#050505] px-4 py-3">
+            <p className="text-lg font-semibold text-white">{counts.requestedAddOns ?? counts.pendingAddOns}</p>
+            <p className="text-xs text-[#9CA3AF]">New add-ons</p>
           </div>
         </div>
       </div>
@@ -395,38 +413,78 @@ export function BusinessWorkflowsManager({
         <Table>
           <TableHeader className="bg-[#080808]">
             <TableRow>
-              <TableHead>Request</TableHead>
-              <TableHead>Business</TableHead>
-              <TableHead>Plan / Type</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Action</TableHead>
+              {queue === "tickets" ? (
+                <>
+                  <TableHead>Ticket ID</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Plan</TableHead>
+                  <TableHead>Priority</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </>
+              ) : (
+                <>
+                  <TableHead>Request</TableHead>
+                  <TableHead>Business</TableHead>
+                  <TableHead>Plan / Type</TableHead>
+                  <TableHead>Received</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Fast response</TableHead>
+                </>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
             {queue === "tickets"
               ? tickets.items.map((ticket) => (
-                <TableRow key={ticket.id}>
-                  <TableCell><p className="font-medium text-white">{ticket.subject}</p><p className="max-w-xs truncate text-xs text-[#9CA3AF]">{ticket.message}</p></TableCell>
-                  <TableCell><p>{ticket.businessAccount.name}</p><p className="text-xs text-[#9CA3AF]">{ticket.businessAccount.publicId}</p></TableCell>
-                  <TableCell><p>{ticket.businessAccount.plan.name}</p><p className="text-xs text-[#9CA3AF]">{ticket.businessAccount.type} · {ticket.priority}</p></TableCell>
-                  <TableCell>{formatDate(ticket.createdAt)}</TableCell>
-                  <TableCell><Badge variant="outline" className={statusClass(ticket.status)}>{statusLabel(ticket.status)}</Badge></TableCell>
-                  <TableCell className="text-right">{actions("tickets", ticket)}</TableCell>
+                <TableRow key={ticket.id} className={ticket.status === "Open" ? "bg-[#DC2626]/5" : ""}>
+                  <TableCell>
+                    <p className="font-mono text-sm font-semibold text-white">{ticketCode(ticket.id)}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {ticket.status === "Open" ? <Badge className="bg-[#DC2626] text-white hover:bg-[#DC2626]">New</Badge> : null}
+                      <Badge variant="outline" className={statusClass(ticket.status)}>{statusLabel(ticket.status)}</Badge>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-medium text-white">{ticket.createdBy?.name ?? ticket.businessAccount.name}</p>
+                    <p className="text-xs text-[#9CA3AF]">{ticket.businessAccount.name}</p>
+                  </TableCell>
+                  <TableCell><p className="font-medium text-white">{ticket.businessAccount.plan.name}</p><p className="text-xs text-[#9CA3AF]">{ticket.businessAccount.type}</p></TableCell>
+                  <TableCell><Badge variant="outline" className={priorityClass(ticket.priority)}>{ticket.priority}</Badge></TableCell>
+                  <TableCell><p className="font-medium text-white">{formatDateTime(ticket.createdAt)}</p><p className="flex items-center gap-1 text-xs text-[#9CA3AF]"><Clock3 className="h-3 w-3" />{ageLabel(ticket.createdAt)}</p></TableCell>
+                  <TableCell className="text-right">
+                    <Button type="button" size="sm" variant="outline" className="gap-2" onClick={() => openDetails("tickets", ticket)}>
+                      <Eye className="h-4 w-4" />
+                      View
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))
               : addOns.items.map((item) => (
-                <TableRow key={item.id}>
+                <TableRow key={item.id} className={item.status === "Requested" ? "bg-[#DC2626]/5" : ""}>
                   <TableCell>
+                    {item.status === "Requested" ? <Badge className="mb-2 bg-[#DC2626] text-white hover:bg-[#DC2626]">New</Badge> : null}
                     <p className="font-medium text-white">{item.label}</p>
                     <p className="max-w-xs truncate text-xs text-[#9CA3AF]">{item.featureKey}</p>
                     <p className="text-xs text-[#6B7280]">Expires: {formatOptionalDate(item.validUntil)} · Renewal: {formatOptionalDate(item.renewalAt)}</p>
                   </TableCell>
                   <TableCell><p>{item.businessAccount.name}</p><p className="text-xs text-[#9CA3AF]">{item.businessAccount.publicId}</p></TableCell>
                   <TableCell><p>{item.businessAccount.plan.name}</p><p className="text-xs text-[#9CA3AF]">{item.businessAccount.type}</p></TableCell>
-                  <TableCell>{formatDate(item.createdAt)}</TableCell>
+                  <TableCell><p className="font-medium text-white">{formatDateTime(item.createdAt)}</p><p className="flex items-center gap-1 text-xs text-[#9CA3AF]"><Clock3 className="h-3 w-3" />{ageLabel(item.createdAt)}</p></TableCell>
                   <TableCell><Badge variant="outline" className={statusClass(item.status)}>{statusLabel(item.status)}</Badge></TableCell>
-                  <TableCell className="text-right">{actions("add-ons", item)}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      {item.status === "Requested" ? (
+                        <Button
+                          size="sm"
+                          onClick={() => setPendingAction({ type: "status", kind: "add-ons", item, status: "Approved" })}
+                        >
+                          Approve
+                        </Button>
+                      ) : null}
+                      {actions("add-ons", item)}
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             {!pageData.items.length ? (
@@ -579,73 +637,140 @@ export function BusinessWorkflowsManager({
       </Dialog>
 
       <Dialog open={Boolean(selected)} onOpenChange={(open) => { if (!open) setSelected(null) }}>
-        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <DialogHeader>
-            <DialogTitle className="break-words">{selected?.kind === "tickets" ? (selected.item as SupportTicket).subject : (selected?.item as AddOnRequest | undefined)?.label}</DialogTitle>
+            <DialogTitle>{selected?.kind === "tickets" ? "Support ticket details" : (selected?.item as AddOnRequest | undefined)?.label}</DialogTitle>
             <DialogDescription>Review the complete request and update its workflow status.</DialogDescription>
           </DialogHeader>
-          {selected ? (
+          {selectedTicket ? (
             <div className="grid gap-5">
-              <div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4 sm:grid-cols-2">
-                <div>
+              <div className="rounded-lg border border-border bg-muted/30 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Subject</p>
+                <p className="mt-2 break-words text-base font-semibold text-foreground">{selectedTicket.subject}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-border bg-background p-4">
+                  <p className="text-xs text-muted-foreground">Ticket ID</p>
+                  <p className="mt-1 break-all font-mono text-sm font-semibold">{ticketCode(selectedTicket.id)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-background p-4">
+                  <p className="text-xs text-muted-foreground">Name</p>
+                  <p className="mt-1 break-words font-medium">{selectedTicket.createdBy?.name ?? "Unknown"}</p>
+                  <p className="mt-1 break-all text-xs text-muted-foreground">{selectedTicket.createdBy?.email ?? "Email not provided"}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-background p-4">
                   <p className="text-xs text-muted-foreground">Business</p>
-                  <p className="break-words font-medium">{selected.item.businessAccount.name}</p>
-                  <p className="break-words text-xs text-muted-foreground">{selected.item.businessAccount.publicId} · {selected.item.businessAccount.type}</p>
+                  <p className="mt-1 break-words font-medium">{selectedTicket.businessAccount.name}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{selectedTicket.businessAccount.publicId}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{selectedTicket.businessAccount.type}</p>
                 </div>
-                <div>
+                <div className="rounded-lg border border-border bg-background p-4">
                   <p className="text-xs text-muted-foreground">Plan</p>
-                  <p className="font-medium">{selected.item.businessAccount.plan.name}</p>
+                  <p className="mt-1 break-words font-medium">{selectedTicket.businessAccount.plan.name}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Submitted by</p>
-                  <p className="break-words font-medium">{(selected.kind === "tickets" ? (selected.item as SupportTicket).createdBy : (selected.item as AddOnRequest).requestedBy)?.name ?? "Unknown"}</p>
-                  <p className="break-words text-xs text-muted-foreground">{(selected.kind === "tickets" ? (selected.item as SupportTicket).createdBy : (selected.item as AddOnRequest).requestedBy)?.email}</p>
+                <div className="rounded-lg border border-border bg-background p-4">
+                  <p className="text-xs text-muted-foreground">Priority</p>
+                  <Badge variant="outline" className={`mt-2 ${priorityClass(selectedTicket.priority)}`}>
+                    <Zap className="mr-1 h-3 w-3" />
+                    {selectedTicket.priority}
+                  </Badge>
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Created</p>
-                  <p className="font-medium">{formatDateTime(selected.item.createdAt)}</p>
+                <div className="rounded-lg border border-border bg-background p-4">
+                  <p className="text-xs text-muted-foreground">Status</p>
+                  <Badge className={`mt-2 ${selectedTicket.status === "Open" ? "bg-[#DC2626] text-white hover:bg-[#DC2626]" : statusClass(selectedTicket.status)}`}>
+                    {selectedTicket.status === "Open" ? "New request" : statusLabel(selectedTicket.status)}
+                  </Badge>
+                </div>
+                <div className="rounded-lg border border-border bg-background p-4">
+                  <p className="text-xs text-muted-foreground">Category</p>
+                  <p className="mt-1 break-words font-medium">{selectedTicket.category || "Not selected"}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-background p-4">
+                  <p className="text-xs text-muted-foreground">Received</p>
+                  <p className="mt-1 font-medium">{formatDateTime(selectedTicket.createdAt)}</p>
+                  <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="h-3 w-3" />{ageLabel(selectedTicket.createdAt)}</p>
                 </div>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{selected.kind === "tickets" ? "Message" : "Request note"}</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Message</p>
                 <p className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-background p-4 text-sm leading-6">
-                  {selected.kind === "tickets" ? (selected.item as SupportTicket).message : (selected.item as AddOnRequest).note || "No note provided."}
+                  {selectedTicket.message}
                 </p>
               </div>
-              {selected.kind === "add-ons" ? (
-                <div className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-3">
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">Valid from</p>
-                    <Input
-                      type="date"
-                      value={addOnValidity.validFrom}
-                      onChange={(event) => setAddOnValidity((current) => ({ ...current, validFrom: event.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">Expires on</p>
-                    <Input
-                      type="date"
-                      value={addOnValidity.validUntil}
-                      onChange={(event) => setAddOnValidity((current) => ({ ...current, validUntil: event.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">Renewal date</p>
-                    <Input
-                      type="date"
-                      value={addOnValidity.renewalAt}
-                      onChange={(event) => setAddOnValidity((current) => ({ ...current, renewalAt: event.target.value }))}
-                    />
-                  </div>
-                </div>
-              ) : null}
               <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-end">
                 <div className="flex-1 space-y-2">
                   <p className="text-sm font-medium">Update status</p>
                   <Select value={nextStatus} onValueChange={setNextStatus}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>{(selected.kind === "tickets" ? ticketStatuses : addOnStatuses).map((item) => <SelectItem key={item} value={item}>{statusLabel(item)}</SelectItem>)}</SelectContent>
+                    <SelectContent>{ticketStatuses.map((item) => <SelectItem key={item} value={item}>{statusLabel(item)}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <Button disabled={saving || !selectedHasChanges} onClick={updateStatus}>{saving ? "Saving..." : "Update status"}</Button>
+                <Button variant="destructive" disabled={saving} onClick={() => setPendingAction({ type: "delete", kind: "tickets", item: selectedTicket })}>Delete ticket</Button>
+              </div>
+            </div>
+          ) : selectedAddOn ? (
+            <div className="grid gap-5">
+              <div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">Business</p>
+                  <p className="break-words font-medium">{selectedAddOn.businessAccount.name}</p>
+                  <p className="break-words text-xs text-muted-foreground">{selectedAddOn.businessAccount.publicId}</p>
+                  <p className="text-xs text-muted-foreground">{selectedAddOn.businessAccount.type}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Plan</p>
+                  <p className="font-medium">{selectedAddOn.businessAccount.plan.name}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Submitted by</p>
+                  <p className="break-words font-medium">{selectedAddOn.requestedBy?.name ?? "Unknown"}</p>
+                  <p className="break-all text-xs text-muted-foreground">{selectedAddOn.requestedBy?.email ?? "Email not provided"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Created</p>
+                  <p className="font-medium">{formatDateTime(selectedAddOn.createdAt)}</p>
+                  <p className="text-xs text-muted-foreground">{ageLabel(selectedAddOn.createdAt)}</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Request note</p>
+                <p className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-background p-4 text-sm leading-6">
+                  {selectedAddOn.note || "No note provided."}
+                </p>
+              </div>
+              <div className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Valid from</p>
+                  <Input
+                    type="date"
+                    value={addOnValidity.validFrom}
+                    onChange={(event) => setAddOnValidity((current) => ({ ...current, validFrom: event.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Expires on</p>
+                  <Input
+                    type="date"
+                    value={addOnValidity.validUntil}
+                    onChange={(event) => setAddOnValidity((current) => ({ ...current, validUntil: event.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Renewal date</p>
+                  <Input
+                    type="date"
+                    value={addOnValidity.renewalAt}
+                    onChange={(event) => setAddOnValidity((current) => ({ ...current, renewalAt: event.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-end">
+                <div className="flex-1 space-y-2">
+                  <p className="text-sm font-medium">Update status</p>
+                  <Select value={nextStatus} onValueChange={setNextStatus}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>{addOnStatuses.map((item) => <SelectItem key={item} value={item}>{statusLabel(item)}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <Button disabled={saving || !selectedHasChanges} onClick={updateStatus}>{saving ? "Saving..." : "Update status"}</Button>

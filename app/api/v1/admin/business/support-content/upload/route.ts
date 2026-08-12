@@ -21,10 +21,18 @@ export async function POST(request: NextRequest) {
   const auth = await requireAdminFromRequest()
   if (!auth.ok) return auth.response
 
-  const formData = await request.formData()
+  let formData: FormData
+  try {
+    formData = await request.formData()
+  } catch {
+    return NextResponse.json(
+      { ok: false, message: "Unable to read uploaded video. Try a smaller MP4, WebM, or MOV file." },
+      { status: 400 },
+    )
+  }
+
   const file = formData.get("video")
   const accountType = safeSegment(String(formData.get("accountType") ?? "business"))
-  const supportTier = safeSegment(String(formData.get("supportTier") ?? "basic"))
 
   if (!(file instanceof File)) {
     return NextResponse.json({ ok: false, message: "Upload a video file" }, { status: 400 })
@@ -37,7 +45,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const key = `business-support/videos/${accountType}/${supportTier}/${Date.now()}-${crypto.randomUUID()}.${VIDEO_EXTENSIONS[file.type]}`
+    const key = `business-support/videos/${accountType}/common/${Date.now()}-${crypto.randomUUID()}.${VIDEO_EXTENSIONS[file.type]}`
     const uploaded = await uploadObjectToS3({
       key,
       body: Buffer.from(await file.arrayBuffer()),
