@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server"
 
 import { apiOk, withSupplierApiRoute } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { listSupplierOffers } from "@/services/supplier/supplier-offers-service"
 
 export const dynamic = "force-dynamic"
@@ -14,7 +16,8 @@ export async function GET(request: NextRequest) {
     )
     const search = request.nextUrl.searchParams.get("search") ?? ""
     const status = request.nextUrl.searchParams.get("status") ?? ""
+    const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier)
 
-    return apiOk(await listSupplierOffers(user.id, page, pageSize, search, status))
+    return apiOk(await listSupplierOffers(supplierId, page, pageSize, search, status))
   })
 }

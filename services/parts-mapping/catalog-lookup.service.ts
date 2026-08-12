@@ -1,3 +1,4 @@
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import { normalizePartNumber } from "@/lib/vin-17-api-client"
 import { db } from "@/lib/database/prisma"
 import { SupplierPartMappingStatus } from "@/lib/generated/prisma/client"
@@ -85,6 +86,24 @@ export async function saveSupplierProductMaster(
       })
     : null
   if (supplierPartId && !existing) throw new Error("Supplier product not found")
+  if (existing && input.marketplace?.isActive === true && !existing.isActive) {
+    const { assertBusinessPlanLimit, assertSupplierCatalogPlanLimits } =
+      await import("@/services/business/business-platform-service")
+    await assertSupplierCatalogPlanLimits({
+      userId: supplierId,
+      brands: [brandName],
+      categories: [categoryName],
+    })
+    const activeProductCount = await db.supplierPart.count({
+      where: { supplierId, isActive: true },
+    })
+    await assertBusinessPlanLimit({
+      userId: supplierId,
+      accountType: BusinessAccountType.Supplier,
+      limit: "productLimit",
+      currentCount: activeProductCount,
+    })
+  }
   const skuOwner = await db.supplierPart.findUnique({
     where: { supplierId_vendorSku: { supplierId, vendorSku: sku } },
   })
@@ -332,6 +351,9 @@ export async function saveSupplierProductMaster(
     mappingSource: resolution?.mappingSource ?? null,
     mappingError: resolution ? null : mappingError ?? "Product was not confirmed in the local catalog or 17VIN",
     rawUploadData: parseJson(rawUploadData),
+    ...(input.marketplace?.isActive === undefined
+      ? {}
+      : { isActive: input.marketplace.isActive }),
   }
 
   const savedId = await db.$transaction(async (tx) => {
@@ -387,4 +409,3 @@ export async function saveSupplierProductMaster(
 
   return getSupplierPartById(savedId)
 }
-

@@ -11,7 +11,9 @@ import {
   assertBusinessAction,
   assertBusinessPlanLimit,
   assertSupplierCatalogPlanLimits,
+  getBusinessAccountOwnerId,
   logBusinessActivity,
+  reconcileSupplierProductPlan,
 } from "@/services/business/business-platform-service"
 import type { SupplierPartCreateInput } from "@/types/parts-mapping/parts-mapping"
 import type { SupplierProductMasterInput } from "@/types/parts-mapping/parts-mapping"
@@ -24,14 +26,16 @@ export async function GET(request: NextRequest) {
   if (!auth.ok) {
     return auth.response
   }
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
 
   const status = request.nextUrl.searchParams.get("status") ?? undefined
   const query = request.nextUrl.searchParams.get("q") ?? undefined
 
   const page = Number.parseInt(request.nextUrl.searchParams.get("page") ?? "1", 10)
   const pageSize = Number.parseInt(request.nextUrl.searchParams.get("pageSize") ?? "10", 10)
+  await reconcileSupplierProductPlan(supplierId)
   const result = await listSupplierPartsPage({
-    supplierId: auth.user.id,
+    supplierId,
     status: status as Parameters<typeof listSupplierPartsPage>[0]["status"],
     query,
     page,
@@ -46,6 +50,7 @@ export async function POST(request: NextRequest) {
   if (!auth.ok) {
     return auth.response
   }
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
 
   const parsed = await readJsonBody<SupplierPartCreateInput | SupplierProductMasterInput>(request)
   if (!parsed.ok) {
@@ -67,7 +72,7 @@ export async function POST(request: NextRequest) {
       categories: ["category" in parsed.body ? parsed.body.category : null],
     })
     const currentCount = await db.supplierPart.count({
-      where: { supplierId: auth.user.id, isActive: true },
+      where: { supplierId, isActive: true },
     })
     const account = await assertBusinessPlanLimit({
       userId: auth.user.id,
@@ -76,8 +81,8 @@ export async function POST(request: NextRequest) {
       currentCount,
     })
     const part = parsed.body && "mode" in parsed.body && parsed.body.mode === "product_master_form"
-      ? await createSupplierProductMaster(auth.user.id, parsed.body)
-      : await createSupplierPart(auth.user.id, parsed.body as SupplierPartCreateInput)
+      ? await createSupplierProductMaster(supplierId, parsed.body)
+      : await createSupplierPart(supplierId, parsed.body as SupplierPartCreateInput)
     await logBusinessActivity({
       businessAccountId: account.id,
       actorUserId: auth.user.id,

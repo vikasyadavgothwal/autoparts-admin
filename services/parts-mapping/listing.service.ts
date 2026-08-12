@@ -74,6 +74,7 @@ export async function listSupplierParts(input: {
 }
 
 const mappedSupplierPartWhere: Prisma.SupplierPartWhereInput = {
+  isActive: true,
   mappingStatus: SupplierPartMappingStatus.mapped,
   partUid: { not: null },
 }
@@ -223,7 +224,13 @@ export async function listSupplierPartsPage(input: {
       : {}),
   }
 
-  const [parts, total] = await Promise.all([
+  const inactiveWhere: Prisma.SupplierPartWhereInput = {
+    supplierId: input.supplierId,
+    isActive: false,
+    ...(input.status ? { mappingStatus: input.status } : {}),
+  }
+
+  const [parts, total, inactiveCount] = await Promise.all([
     db.supplierPart.findMany({
       where,
       skip: (page - 1) * pageSize,
@@ -258,10 +265,12 @@ export async function listSupplierPartsPage(input: {
       },
     }),
     db.supplierPart.count({ where }),
+    db.supplierPart.count({ where: inactiveWhere }),
   ])
 
   return {
     parts: parts.map(mapSupplierPart),
+    inactiveCount,
     pagination: {
       page,
       pageSize,

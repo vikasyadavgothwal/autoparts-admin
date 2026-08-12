@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import { createSignedS3ObjectUrl } from "@/lib/storage/s3"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { supplierOwnsCatalogProductImage } from "@/services/parts/product-image-service"
 
 export const dynamic = "force-dynamic"
@@ -20,8 +22,9 @@ export async function GET(request: NextRequest) {
     )
   }
 
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
   const ownsImage = await supplierOwnsCatalogProductImage({
-    supplierId: auth.user.id,
+    supplierId,
     key,
   })
   if (!ownsImage) {

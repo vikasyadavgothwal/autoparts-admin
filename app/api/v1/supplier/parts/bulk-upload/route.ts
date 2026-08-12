@@ -4,7 +4,7 @@ import * as XLSX from "xlsx"
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, BusinessMemberStatus } from "@/lib/generated/prisma/client"
-import { assertBusinessAction, getEffectiveBusinessLimits, logBusinessActivity } from "@/services/business/business-platform-service"
+import { assertBusinessAction, getBusinessAccountOwnerId, getEffectiveBusinessLimits, logBusinessActivity } from "@/services/business/business-platform-service"
 import { syncCatalogLookups } from "@/services/catalog/catalog-lookup-service"
 import {
   importSupplierPartsBulk,
@@ -564,6 +564,115 @@ const parseProductRows = (
   })
 }
 
+const getRawUploadData = (row: SupplierBulkProductRow) =>
+  row.rawUploadData &&
+  typeof row.rawUploadData === "object" &&
+  !Array.isArray(row.rawUploadData)
+    ? (row.rawUploadData as Record<string, unknown>)
+    : {}
+
+const readUploadedValue = (
+  rawUploadData: Record<string, unknown>,
+  aliases: string[],
+  fallback = "",
+) => readCell(rawUploadData, aliases) || fallback
+
+const buildCatalogUpdateRows = (rows: SupplierBulkProductRow[]) => {
+  const stockRows: SupplierBulkStockRow[] = rows
+    .map((row) => {
+      const rawUploadData = getRawUploadData(row)
+      return {
+        rowNumber: row.rowNumber,
+        vendorSku: row.vendorSku,
+        warehouseId: readCell(rawUploadData, [
+          "Product Inventory | Warehouse ID",
+          "Warehouse ID",
+          "Warehouse",
+          "Warehouse Name",
+        ]),
+        quantity: readUploadedValue(
+          rawUploadData,
+          [
+            "Product Inventory | Quantity",
+            "Quantity",
+            "Stock",
+            "Qty",
+          ],
+          String(row.stock ?? ""),
+        ),
+        leadTime: readCell(rawUploadData, [
+          "Product Inventory | Lead Time",
+          "Lead Time",
+          "Lead Time Days",
+        ]),
+        lowStockThreshold: readCell(rawUploadData, [
+          "Product Inventory | Low Stock Threshold",
+          "Low Stock Threshold",
+          "Low Stock",
+          "Reorder Threshold",
+        ]),
+        rawUploadData,
+      }
+    })
+    .filter((row) => row.vendorSku && row.warehouseId && row.quantity !== "")
+
+  const pricingRows: SupplierBulkPricingRow[] = rows
+    .map((row) => {
+      const rawUploadData = getRawUploadData(row)
+      return {
+        rowNumber: row.rowNumber,
+        vendorSku: row.vendorSku,
+        basePrice: readUploadedValue(rawUploadData, [
+          "Product Pricing | Base Price (AED)",
+          "Base Price (AED)",
+          "Base Price",
+          "Price",
+        ]),
+        discountPrice: readCell(rawUploadData, [
+          "Product Pricing | Discount Price (AED)",
+          "Discount Price (AED)",
+          "Discount Price",
+          "Sale Price",
+        ]),
+        currency: readCell(rawUploadData, [
+          "Product Pricing | Currency",
+          "Currency",
+        ]),
+        taxClass: readCell(rawUploadData, [
+          "Product Pricing | Tax Class",
+          "Tax Class",
+        ]),
+        vat: readCell(rawUploadData, ["Product Pricing | VAT", "VAT"]),
+        maxRetailPrice: readCell(rawUploadData, [
+          "Product Pricing | Max Retail Price",
+          "Max Retail Price",
+          "MRP",
+          "Maximum Retail Price",
+        ]),
+        wholesaleDistributorPrice: readCell(rawUploadData, [
+          "Product Pricing | Wholesale/Distributor Pricing",
+          "Wholesale/Distributor Pricing",
+          "Wholesale Distributor Pricing",
+          "Wholesale Pricing",
+          "Distributor Pricing",
+        ]),
+        fleetPrice: readCell(rawUploadData, [
+          "Product Pricing | Fleet Pricing",
+          "Fleet Pricing",
+          "Fleet Price",
+        ]),
+        rawUploadData,
+      }
+    })
+    .filter(
+      (row) =>
+        row.vendorSku &&
+        (row.basePrice !== "" || row.discountPrice !== ""),
+    )
+
+  return { stockRows, pricingRows }
+}
+
 const rowsFromSheet = (
   workbook: XLSX.WorkBook,
   sheetName: string,
@@ -720,6 +829,7 @@ export async function POST(request: NextRequest) {
   if (!auth.ok) {
     return auth.response
   }
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
 
   try {
     const formData = await request.formData()
@@ -747,9 +857,9 @@ export async function POST(request: NextRequest) {
 
       const products = parseProductRows(catalogRows, [])
       const { accountId, acceptedRows, rejectedRows } =
-        await splitRowsBySupplierCatalogLimits(auth.user.id, products)
+        await splitRowsBySupplierCatalogLimits(supplierId, products)
       const summary = acceptedRows.length
-        ? await importSupplierPartsBulk(auth.user.id, acceptedRows)
+        ? await importSupplierPartsBulk(supplierId, acceptedRows)
         : {
             totalRows: 0,
             mappedCount: 0,
@@ -768,60 +878,13 @@ export async function POST(request: NextRequest) {
         metadata: { rows: products.length },
       })
 
-      const allowedSkuSet = new Set(
-        acceptedRows.map((product) => normalizeVendorSku(product.vendorSku)),
-      )
-
-      const stockRows: SupplierBulkStockRow[] = catalogRows
-        .map((row, index) => ({
-          rowNumber: index + 2,
-          vendorSku: readCell(row, ["SKU"]),
-          warehouseId: readCell(row, [
-            "Product Inventory | Warehouse ID",
-          ]),
-          quantity: readCell(row, ["Product Inventory | Quantity"]),
-          leadTime: readCell(row, ["Product Inventory | Lead Time"]),
-          lowStockThreshold: readCell(row, [
-            "Product Inventory | Low Stock Threshold",
-          ]),
-          rawUploadData: { ...row },
-        }))
-        .filter((row) => row.vendorSku && row.warehouseId && row.quantity !== "")
-        .filter((row) => allowedSkuSet.has(normalizeVendorSku(row.vendorSku)))
-      const pricingRows: SupplierBulkPricingRow[] = catalogRows
-        .map((row, index) => ({
-          rowNumber: index + 2,
-          vendorSku: readCell(row, ["SKU"]),
-          basePrice: readCell(row, [
-            "Product Pricing | Base Price (AED)",
-          ]),
-          discountPrice: readCell(row, [
-            "Product Pricing | Discount Price (AED)",
-          ]),
-          currency: readCell(row, ["Product Pricing | Currency"]),
-          taxClass: readCell(row, ["Product Pricing | Tax Class"]),
-          vat: readCell(row, ["Product Pricing | VAT"]),
-          maxRetailPrice: readCell(row, [
-            "Product Pricing | Max Retail Price",
-          ]),
-          wholesaleDistributorPrice: readCell(row, [
-            "Product Pricing | Wholesale/Distributor Pricing",
-          ]),
-          fleetPrice: readCell(row, ["Product Pricing | Fleet Pricing"]),
-          rawUploadData: { ...row },
-        }))
-        .filter(
-          (row) =>
-            row.vendorSku &&
-            (row.basePrice !== "" || row.discountPrice !== "") &&
-            allowedSkuSet.has(normalizeVendorSku(row.vendorSku)),
-        )
+      const { stockRows, pricingRows } = buildCatalogUpdateRows(acceptedRows)
 
       const stockSummary = stockRows.length
-        ? await updateSupplierPartStockBulk(auth.user.id, stockRows)
+        ? await updateSupplierPartStockBulk(supplierId, stockRows)
         : null
       const pricingSummary = pricingRows.length
-        ? await updateSupplierPartPricingBulk(auth.user.id, pricingRows)
+        ? await updateSupplierPartPricingBulk(supplierId, pricingRows)
         : null
 
       return NextResponse.json({
@@ -858,7 +921,7 @@ export async function POST(request: NextRequest) {
         )
       }
       const summary = await updateSupplierPartImagesBulk(
-        auth.user.id,
+        supplierId,
         await parseImageRows(imageFile),
       )
       return NextResponse.json({ ok: true, mode, summary })
@@ -872,7 +935,7 @@ export async function POST(request: NextRequest) {
         )
       }
       const summary = await updateSupplierPartStockBulk(
-        auth.user.id,
+        supplierId,
         await parseStockRows(stockFile),
       )
       return NextResponse.json({ ok: true, mode, summary })
@@ -886,7 +949,7 @@ export async function POST(request: NextRequest) {
         )
       }
       const summary = await updateSupplierPartPricingBulk(
-        auth.user.id,
+        supplierId,
         await parsePricingRows(pricingFile),
       )
       return NextResponse.json({ ok: true, mode, summary })
@@ -906,9 +969,9 @@ export async function POST(request: NextRequest) {
       imageRows,
     )
     const { accountId, acceptedRows, rejectedRows } =
-      await splitRowsBySupplierCatalogLimits(auth.user.id, productRows)
+      await splitRowsBySupplierCatalogLimits(supplierId, productRows)
     const summary = acceptedRows.length
-      ? await importSupplierPartsBulk(auth.user.id, acceptedRows)
+      ? await importSupplierPartsBulk(supplierId, acceptedRows)
       : {
           totalRows: 0,
           mappedCount: 0,
@@ -918,6 +981,13 @@ export async function POST(request: NextRequest) {
           mappedParts: [],
           unmapped: [],
         }
+    const { stockRows, pricingRows } = buildCatalogUpdateRows(acceptedRows)
+    const stockSummary = stockRows.length
+      ? await updateSupplierPartStockBulk(supplierId, stockRows)
+      : null
+    const pricingSummary = pricingRows.length
+      ? await updateSupplierPartPricingBulk(supplierId, pricingRows)
+      : null
     const combinedUnmapped = [...summary.unmapped, ...rejectedRows]
     await logBusinessActivity({
       businessAccountId: accountId,
@@ -949,6 +1019,8 @@ export async function POST(request: NextRequest) {
         unmappedCount: combinedUnmapped.length,
         unmapped: unmapped,
         unmatchedImageRows,
+        stockUpdatedCount: stockSummary?.updatedCount ?? 0,
+        pricingUpdatedCount: pricingSummary?.updatedCount ?? 0,
       },
     })
   } catch (error) {

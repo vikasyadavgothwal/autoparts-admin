@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/database/prisma"
 import { getOptionalUserFromRequest } from "@/lib/auth/api-guards"
 import { BusinessAccountType, OrderStatus, RfqSource } from "@/lib/generated/prisma/client"
-import { assertBusinessAction, assertBusinessPlanLimit } from "@/services/business/business-platform-service"
+import { assertBusinessAction, assertBusinessPlanLimit, getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { acceptRfqBid } from "@/services/fleet/fleet-service"
 
 const readOptionalAddressId = async (request: NextRequest) => {
@@ -37,9 +37,12 @@ export async function POST(
   }
   try {
     const { id, bidId } = await context.params
+    const fleetId = source === RfqSource.fleet
+      ? await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
+      : auth.user.id
     if (source === RfqSource.fleet) {
       const existingOrder = await db.order.findFirst({
-        where: { rfqId: id, buyerId: auth.user.id },
+        where: { rfqId: id, buyerId: fleetId },
         select: { bidId: true },
       })
       if (!existingOrder) {
@@ -49,7 +52,7 @@ export async function POST(
           action: "orders.create",
         })
         const currentCount = await db.order.count({
-          where: { buyerId: auth.user.id, status: { not: OrderStatus.cancelled } },
+          where: { buyerId: fleetId, status: { not: OrderStatus.cancelled } },
         })
         await assertBusinessPlanLimit({
           userId: auth.user.id,
@@ -60,7 +63,7 @@ export async function POST(
       }
     }
     const addressId = await readOptionalAddressId(request)
-    const order = await acceptRfqBid(auth.user.id, id, bidId, source, addressId)
+    const order = await acceptRfqBid(fleetId, id, bidId, source, addressId)
     return NextResponse.json({ ok: true, order })
   } catch (error) {
     return NextResponse.json(

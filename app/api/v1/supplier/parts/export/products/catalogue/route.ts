@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import { buildSupplierCatalogueExport } from "@/services/parts-mapping/export.service"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 
 export const dynamic = "force-dynamic"
 
@@ -10,9 +12,10 @@ export async function GET(request: NextRequest) {
   if (!auth.ok) {
     return auth.response
   }
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
 
   try {
-    const exportData = await buildSupplierCatalogueExport(auth.user.id)
+    const exportData = await buildSupplierCatalogueExport(supplierId)
     const payload = new Blob([new Uint8Array(exportData.payload)])
     return new NextResponse(payload, {
       headers: {

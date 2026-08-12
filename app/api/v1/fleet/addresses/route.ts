@@ -4,6 +4,8 @@ import {
   readJsonBody,
   requireFleetFromRequest,
 } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import {
   createUserAddress,
   listUserAddresses,
@@ -15,16 +17,18 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   const auth = await requireFleetFromRequest(request)
   if (!auth.ok) return auth.response
+  const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
 
   return NextResponse.json({
     ok: true,
-    addresses: await listUserAddresses(auth.user.id),
+    addresses: await listUserAddresses(fleetId),
   })
 }
 
 export async function POST(request: NextRequest) {
   const auth = await requireFleetFromRequest(request)
   if (!auth.ok) return auth.response
+  const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
 
   const parsed = await readJsonBody<UserAddressInput>(request)
   if (!parsed.ok) {
@@ -38,7 +42,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: true,
-        address: await createUserAddress(auth.user.id, parsed.body),
+        address: await createUserAddress(fleetId, parsed.body),
       },
       { status: 201 },
     )

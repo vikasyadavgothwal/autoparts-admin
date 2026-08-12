@@ -38,6 +38,7 @@ export async function searchPartsFromLocalDb(input: {
     include: {
       supplierParts: {
         where: {
+          isActive: true,
           mappingStatus: SupplierPartMappingStatus.mapped,
           stock: { gt: 0 },
         },
@@ -112,4 +113,3 @@ export async function searchPartsFromLocalDb(input: {
     },
   }
 }
-

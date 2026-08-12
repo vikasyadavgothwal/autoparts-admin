@@ -1122,14 +1122,14 @@ const usageForAccount = async (account: {
       : Promise.resolve(0),
     account.type === BusinessAccountType.Supplier
       ? db.supplierPart.findMany({
-          where: { supplierId: account.ownerUserId, originalBrand: { not: null } },
+          where: { supplierId: account.ownerUserId, isActive: true, originalBrand: { not: null } },
           select: { originalBrand: true },
           distinct: ["originalBrand"],
         }).then((rows) => rows.length)
-      : Promise.resolve(0),
+    : Promise.resolve(0),
     account.type === BusinessAccountType.Supplier
       ? db.supplierPart.findMany({
-          where: { supplierId: account.ownerUserId, category: { not: null } },
+          where: { supplierId: account.ownerUserId, isActive: true, category: { not: null } },
           select: { category: true },
           distinct: ["category"],
         }).then((rows) => rows.length)
@@ -1608,12 +1608,32 @@ const assertUsageFitsPlan = (
 const planLimitMessage = (planName: string, itemLabel: string, limit: number) =>
   `Your ${planName} plan allows up to ${limit} active ${itemLabel}. Extra ${itemLabel} were temporarily inactive and were not deleted. Upgrade your plan to restore them.`
 
+const supplierPlanSuspensionMessage = (input: {
+  planName: string
+  productLimit: number | null
+  brandLimit: number | null
+  categoryLimit: number | null
+}) => {
+  const limits = [
+    input.productLimit === null ? null : `${input.productLimit} active products`,
+    input.brandLimit === null ? null : `${input.brandLimit} brands`,
+    input.categoryLimit === null ? null : `${input.categoryLimit} categories`,
+  ].filter((value): value is string => Boolean(value))
+
+  return `Your ${input.planName} plan allows up to ${limits.join(", ")}. Products outside these limits were temporarily inactive and were not deleted. Upgrade your plan to restore them.`
+}
+
+const normalizeSupplierCatalogValue = (value: string | null) =>
+  value?.trim().toLowerCase() || null
+
 async function enforcePlanLimitedRecords(input: {
   account: { id: string; type: BusinessAccountType; ownerUserId: string }
   plan: {
     name: string
     vehicleLimit: number | null
     productLimit: number | null
+    brandLimit: number | null
+    categoryLimit: number | null
     serviceLimit: number | null
   }
 }) {
@@ -1644,28 +1664,89 @@ async function enforcePlanLimitedRecords(input: {
   }
 
   if (input.account.type === BusinessAccountType.Supplier) {
-    const limit = input.plan.productLimit
-    if (limit === null) {
+    const productLimit = input.plan.productLimit
+    const brandLimit = input.plan.brandLimit
+    const categoryLimit = input.plan.categoryLimit
+    const parts = await db.supplierPart.findMany({
+      where: {
+        supplierId: input.account.ownerUserId,
+      },
+      orderBy: [{ isActive: "desc" }, { updatedAt: "desc" }],
+      select: {
+        id: true,
+        isActive: true,
+        mappingStatus: true,
+        originalBrand: true,
+        category: true,
+      },
+    })
+    parts.sort((left, right) => {
+      const mappedPriority =
+        Number(right.mappingStatus === "mapped") -
+        Number(left.mappingStatus === "mapped")
+      if (mappedPriority !== 0) return mappedPriority
+      return Number(right.isActive) - Number(left.isActive)
+    })
+    const selectedIds: string[] = []
+    const selectedBrands = new Set<string>()
+    const selectedCategories = new Set<string>()
+
+    for (const part of parts) {
+      if (productLimit !== null && selectedIds.length >= productLimit) break
+
+      const brand = normalizeSupplierCatalogValue(part.originalBrand)
+      const category = normalizeSupplierCatalogValue(part.category)
+      if (
+        brand &&
+        brandLimit !== null &&
+        !selectedBrands.has(brand) &&
+        selectedBrands.size >= brandLimit
+      ) {
+        continue
+      }
+      if (
+        category &&
+        categoryLimit !== null &&
+        !selectedCategories.has(category) &&
+        selectedCategories.size >= categoryLimit
+      ) {
+        continue
+      }
+
+      selectedIds.push(part.id)
+      if (brand) selectedBrands.add(brand)
+      if (category) selectedCategories.add(category)
+    }
+
+    const selectedIdSet = new Set(selectedIds)
+    const suspendedIds = parts
+      .filter((part) => !selectedIdSet.has(part.id))
+      .map((part) => part.id)
+    if (selectedIds.length > 0) {
       await db.supplierPart.updateMany({
-        where: { supplierId: input.account.ownerUserId, planSuspendedAt: { not: null } },
+        where: {
+          supplierId: input.account.ownerUserId,
+          id: { in: selectedIds },
+          isActive: false,
+        },
         data: { isActive: true, planSuspendedAt: null, planSuspensionReason: null },
       })
-      return
     }
-    const parts = await db.supplierPart.findMany({
-      where: { supplierId: input.account.ownerUserId },
-      orderBy: [{ isActive: "desc" }, { updatedAt: "desc" }],
-      select: { id: true, isActive: true },
-    })
-    const keepIds = parts.slice(0, limit).map((item) => item.id)
-    await db.supplierPart.updateMany({
-      where: { supplierId: input.account.ownerUserId, id: { in: keepIds }, planSuspendedAt: { not: null } },
-      data: { isActive: true, planSuspendedAt: null, planSuspensionReason: null },
-    })
-    await db.supplierPart.updateMany({
-      where: { supplierId: input.account.ownerUserId, id: { notIn: keepIds }, isActive: true },
-      data: { isActive: false, planSuspendedAt: now, planSuspensionReason: planLimitMessage(input.plan.name, "products", limit) },
-    })
+    if (suspendedIds.length > 0) {
+      await db.supplierPart.updateMany({
+        where: { supplierId: input.account.ownerUserId, id: { in: suspendedIds } },
+        data: {
+          isActive: false,
+          planSuspendedAt: now,
+          planSuspensionReason: supplierPlanSuspensionMessage({
+            planName: input.plan.name,
+            productLimit,
+            brandLimit,
+            categoryLimit,
+          }),
+        },
+      })
+    }
   }
 
   if (input.account.type === BusinessAccountType.Fleet) {
@@ -1692,6 +1773,44 @@ async function enforcePlanLimitedRecords(input: {
       data: { status: "plan_suspended", planSuspendedAt: now, planSuspensionReason: planLimitMessage(input.plan.name, "vehicles", limit) },
     })
   }
+}
+
+export async function reconcileSupplierProductPlan(supplierId: string) {
+  const account = await db.businessAccount.findFirst({
+    where: {
+      type: BusinessAccountType.Supplier,
+      isActive: true,
+      OR: [
+        { ownerUserId: supplierId },
+        {
+          members: {
+            some: {
+              userId: supplierId,
+              status: BusinessMemberStatus.Active,
+            },
+          },
+        },
+      ],
+    },
+    include: {
+      plan: true,
+      addOnRequests: { where: activeAddOnRequestWhere() },
+    },
+  })
+  if (!account) return
+
+  const limits = effectiveLimitsForAccount(account)
+  await enforcePlanLimitedRecords({
+    account,
+    plan: {
+      ...account.plan,
+      productLimit: limits.products,
+      brandLimit: limits.brands,
+      categoryLimit: limits.categories,
+      serviceLimit: limits.services,
+      vehicleLimit: limits.vehicles,
+    },
+  })
 }
 
 export async function changeBusinessAccountPlan(input: {
@@ -3023,12 +3142,12 @@ export async function assertSupplierCatalogPlanLimits(input: {
 
   const [existingBrands, existingCategories] = await Promise.all([
     db.supplierPart.findMany({
-      where: { supplierId: input.userId, originalBrand: { not: null } },
+      where: { supplierId: input.userId, isActive: true, originalBrand: { not: null } },
       select: { originalBrand: true },
       distinct: ["originalBrand"],
     }),
     db.supplierPart.findMany({
-      where: { supplierId: input.userId, category: { not: null } },
+      where: { supplierId: input.userId, isActive: true, category: { not: null } },
       select: { category: true },
       distinct: ["category"],
     }),
@@ -3211,6 +3330,27 @@ export async function ensureBusinessAccountForOwner(input: {
 
     return account
   })
+}
+
+export async function getBusinessAccountOwnerId(
+  userId: string,
+  accountType: BusinessAccountType,
+) {
+  const account = await db.businessAccount.findFirst({
+    where: {
+      type: accountType,
+      isActive: true,
+      members: {
+        some: {
+          userId,
+          status: BusinessMemberStatus.Active,
+        },
+      },
+    },
+    select: { ownerUserId: true },
+  })
+
+  return account?.ownerUserId ?? userId
 }
 
 export async function getMyBusinessAccess(userId: string) {

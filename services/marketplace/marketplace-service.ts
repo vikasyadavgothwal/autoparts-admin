@@ -51,6 +51,7 @@ export type MarketplaceOfferRankingScores = {
 }
 
 const mappedSupplierPartWhere = {
+  isActive: true,
   mappingStatus: SupplierPartMappingStatus.mapped,
   supplier: {
     is: {

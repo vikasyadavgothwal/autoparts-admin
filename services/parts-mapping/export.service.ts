@@ -81,6 +81,7 @@ const mapSheetRows = (supplierId: string, requireMapped = false) =>
   db.supplierPart.findMany({
     where: {
       supplierId,
+      isActive: true,
       ...(requireMapped ? { mappingStatus: SupplierPartMappingStatus.mapped } : {}),
     },
     orderBy: [{ updatedAt: "desc" }],
@@ -159,6 +160,7 @@ const emptyLookupSheets = [
   ["Lookup_SKU_Numbers", ["Srl. Nos.", "Category", "Category Code", "Subcategory", "Subcategory Code", "SKU Prefix"]],
   ["Test_Expected_Results", ["17VIN-Verified Toyota Two-Product Update Test"]],
   ["Sources", ["17VIN-Verified Toyota EPC Sample Data"]],
+  ["17VIN_Verification", ["SKU", "OEM / MPN", "Brand", "Model", "17VIN Direct Page", "Application List", "Upload Status", "17VIN URL"]],
 ] as const
 
 const toObject = (value: unknown): Record<string, unknown> =>
@@ -224,6 +226,17 @@ const buildProductMasterRow = (
   )
 }
 
+const buildVin17VerificationRow = (row: Record<string, string | number>) => ({
+  SKU: row.SKU ?? "",
+  "OEM / MPN": row["Cross References | OEM Part Number"] || row["Manufacturer Part Number (MPN)"] || "",
+  Brand: row["Brand Name"] ?? "",
+  Model: row["Vehicle Fitment | Model"] ?? "",
+  "17VIN Direct Page": row["Product Documents | Document Type"] ?? "",
+  "Application List": row["Detailed Attributes"] ?? "",
+  "Upload Status": row["Upload Validation | Validation Status"] || row.Status || "",
+  "17VIN URL": row["Product Documents | Document URL"] ?? "",
+})
+
 const buildExportResult = (
   sheets: ExportSheet[],
   filenamePrefix: string,
@@ -277,16 +290,18 @@ async function buildSupplierProductMasterExport(
   filenamePrefix: string,
 ): Promise<ExportResult> {
   const parts = await mapSheetRows(supplierId, true)
+  const productRows = parts.map(buildProductMasterRow)
+  const verificationRows = productRows.map(buildVin17VerificationRow)
   return buildExportResult(
     [
       {
         name: "Product_Master",
-        rows: parts.map(buildProductMasterRow),
+        rows: productRows,
         columns: productMasterColumns,
       },
       ...emptyLookupSheets.map(([name, columns]) => ({
         name,
-        rows: [],
+        rows: name === "17VIN_Verification" ? verificationRows : [],
         columns: [...columns],
       })),
     ],

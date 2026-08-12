@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import { uploadObjectToS3 } from "@/lib/storage/s3"
-import { assertBusinessAction } from "@/services/business/business-platform-service"
+import { assertBusinessAction, getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 
 export const dynamic = "force-dynamic"
 
@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
   if (!auth.ok) {
     return auth.response
   }
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
 
   const formData = await request.formData()
   const files = formData
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
     const images = await Promise.all(
       files.map(async (file) => {
         const extension = IMAGE_EXTENSIONS[file.type]
-        const key = `supplier-products/${auth.user.id}/${Date.now()}-${crypto.randomUUID()}.${extension}`
+        const key = `supplier-products/${supplierId}/${Date.now()}-${crypto.randomUUID()}.${extension}`
         const uploaded = await uploadObjectToS3({
           key,
           body: Buffer.from(await file.arrayBuffer()),

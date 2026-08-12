@@ -3,12 +3,13 @@ import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, RfqBidStatus } from "@/lib/generated/prisma/client"
 import { readJsonBody, requireSupplierFromRequest } from "@/lib/auth/api-guards"
-import { assertBusinessAction, assertBusinessPlanLimit } from "@/services/business/business-platform-service"
+import { assertBusinessAction, assertBusinessPlanLimit, getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { submitRfqBid } from "@/services/fleet/fleet-service"
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireSupplierFromRequest(request)
   if (!auth.ok) return auth.response
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
   const body = await readJsonBody<{
     deliveryDays?: unknown
     validUntil?: unknown
@@ -24,12 +25,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       action: "rfqs.quote",
     })
     const existingBid = await db.rfqBid.findUnique({
-      where: { rfqId_supplierId: { rfqId: id, supplierId: auth.user.id } },
+      where: { rfqId_supplierId: { rfqId: id, supplierId } },
       select: { id: true },
     })
     if (!existingBid) {
       const currentCount = await db.rfqBid.count({
-        where: { supplierId: auth.user.id, status: { not: RfqBidStatus.withdrawn } },
+        where: { supplierId, status: { not: RfqBidStatus.withdrawn } },
       })
       await assertBusinessPlanLimit({
         userId: auth.user.id,
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         currentCount,
       })
     }
-    const bid = await submitRfqBid(auth.user.id, id, body.body)
+    const bid = await submitRfqBid(supplierId, id, body.body)
     return NextResponse.json({ ok: true, bid }, { status: 201 })
   } catch (error) {
     return NextResponse.json(

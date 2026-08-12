@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { UserRole } from "@/lib/generated/prisma/client"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import { getOptionalUserFromRequest } from "@/lib/auth/api-guards"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { listSupplierProductReviews } from "@/services/supplier-product-reviews/supplier-product-review-service"
 
 export const dynamic = "force-dynamic"
@@ -32,7 +34,8 @@ export async function GET(request: NextRequest) {
     request.nextUrl.searchParams.get("pageSize") ?? "10",
     10,
   )
-  const result = await listSupplierProductReviews(auth.user.id, page, pageSize)
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
+  const result = await listSupplierProductReviews(supplierId, page, pageSize)
 
   return NextResponse.json({
     ok: true,

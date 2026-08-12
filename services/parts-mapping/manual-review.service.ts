@@ -75,10 +75,10 @@ export async function manuallyMapSupplierPart(
 }
 
 
-export async function deleteSupplierPart(id: string) {
+export async function deleteSupplierPart(id: string, supplierId?: string) {
   return db.$transaction(async (transaction) => {
     const part = await transaction.supplierPart.findUnique({
-      where: { id },
+      where: { id, ...(supplierId ? { supplierId } : {}) },
       select: { id: true, partUid: true },
     })
 
@@ -103,4 +103,3 @@ export async function deleteSupplierPart(id: string) {
     return { id, deletedMasterPart }
   })
 }
-

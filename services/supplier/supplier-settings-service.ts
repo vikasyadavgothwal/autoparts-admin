@@ -3,7 +3,12 @@ import { createHash, randomBytes, randomUUID } from "node:crypto"
 
 import { db } from "@/lib/database/prisma";
 import { verifyFirebaseIdToken } from "@/lib/firebase/admin";
-import { Prisma, SupplierApprovalStatus } from "@/lib/generated/prisma/client"
+import {
+  BusinessAccountType,
+  BusinessMemberStatus,
+  Prisma,
+  SupplierApprovalStatus,
+} from "@/lib/generated/prisma/client"
 import { sendSmtpMail } from "@/lib/email/smtp"
 import { logError } from "@/lib/logger"
 import {
@@ -252,7 +257,42 @@ async function mapSupplierProfile(
 }
 
 export async function getSupplierProfile(supplierId: string) {
-  return mapSupplierProfile(supplierId);
+  const supplierAccountMembership = await db.businessAccountMember.findFirst({
+    where: {
+      userId: supplierId,
+      status: BusinessMemberStatus.Active,
+      businessAccount: {
+        type: BusinessAccountType.Supplier,
+        isActive: true,
+      },
+    },
+    select: {
+      businessAccount: {
+        select: { ownerUserId: true },
+      },
+    },
+  })
+
+  const profile = await mapSupplierProfile(supplierId)
+  const ownerUserId = supplierAccountMembership?.businessAccount.ownerUserId
+  if (!ownerUserId || ownerUserId === supplierId) return profile
+
+  const owner = await db.user.findUnique({
+    where: { id: ownerUserId },
+    select: {
+      supplierApprovalStatus: true,
+      supplierApprovalRejectionReason: true,
+    },
+  })
+
+  return {
+    ...profile,
+    supplierApprovalStatus:
+      owner?.supplierApprovalStatus ?? profile.supplierApprovalStatus,
+    supplierApprovalRejectionReason:
+      owner?.supplierApprovalRejectionReason ??
+      profile.supplierApprovalRejectionReason,
+  }
 }
 
 export async function updateSupplierProfile(

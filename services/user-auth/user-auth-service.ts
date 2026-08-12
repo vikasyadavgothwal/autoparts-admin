@@ -143,14 +143,18 @@ async function verifyFirebasePassword(input: {
 
 async function updateFirebasePassword(input: {
   firebaseUid: string | null
+  email: string | null
   newPassword: string
 }) {
-  if (!input.firebaseUid) return
-
   try {
-    await getFirebaseAuth().updateUser(input.firebaseUid, {
+    const firebaseUid = input.firebaseUid ??
+      (input.email ? (await getFirebaseAuth().getUserByEmail(input.email)).uid : null)
+    if (!firebaseUid) throw new Error("Firebase account is not linked")
+
+    await getFirebaseAuth().updateUser(firebaseUid, {
       password: input.newPassword,
     })
+    return firebaseUid
   } catch (error) {
     logError("Firebase password update failed", error)
     throw new Error("Unable to update Firebase password")
@@ -260,14 +264,18 @@ export async function changeUserPassword(input: {
     })
   }
 
-  await updateFirebasePassword({
+  const firebaseUid = await updateFirebasePassword({
     firebaseUid: user.firebaseUid,
+    email: user.email,
     newPassword: input.newPassword,
   })
 
   await db.user.update({
     where: { id: user.id },
-    data: { passwordHash: hashPassword(input.newPassword) },
+    data: {
+      passwordHash: hashPassword(input.newPassword),
+      ...(user.firebaseUid ? {} : { firebaseUid }),
+    },
   })
 
   return { ok: true as const, message: "Password changed successfully" }
@@ -305,10 +313,13 @@ export async function updateCurrentUserAccount(input: {
 }) {
   const firstName = normalizeText(typeof input.firstName === "string" ? input.firstName : null)
   const lastName = normalizeText(typeof input.lastName === "string" ? input.lastName : null)
-  const email = normalizeEmail(typeof input.email === "string" ? input.email : null)
+  const hasEmailUpdate = input.email !== undefined
+  const requestedEmail = hasEmailUpdate
+    ? normalizeEmail(typeof input.email === "string" ? input.email : null)
+    : null
   if (!firstName) throw new Error("First name is required")
   if (!lastName) throw new Error("Last name is required")
-  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (hasEmailUpdate && (!requestedEmail || requestedEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(requestedEmail))) {
     throw new Error("Enter a valid email address")
   }
 
@@ -323,15 +334,19 @@ export async function updateCurrentUserAccount(input: {
   })
   if (!currentUser || !currentUser.isActive) throw new Error("User account is inactive")
 
-  const existingEmail = await db.user.findFirst({
-    where: { email, NOT: { id: input.userId } },
-    select: { id: true },
-  })
-  if (existingEmail) throw new Error("This email is already used by another account")
+  const email = hasEmailUpdate ? requestedEmail : currentUser.email
 
-  if (currentUser.firebaseUid && currentUser.email !== email) {
+  if (hasEmailUpdate) {
+    const existingEmail = await db.user.findFirst({
+      where: { email: email!, NOT: { id: input.userId } },
+      select: { id: true },
+    })
+    if (existingEmail) throw new Error("This email is already used by another account")
+  }
+
+  if (hasEmailUpdate && currentUser.firebaseUid && currentUser.email !== email) {
     try {
-      await getFirebaseAuth().updateUser(currentUser.firebaseUid, { email, emailVerified: true })
+      await getFirebaseAuth().updateUser(currentUser.firebaseUid, { email: email!, emailVerified: true })
     } catch (error) {
       logError("Firebase email update failed", error)
       throw new Error("Unable to update Firebase email")
@@ -343,8 +358,12 @@ export async function updateCurrentUserAccount(input: {
     data: {
       firstName,
       lastName,
-      email,
-      emailVerifiedAt: currentUser.email === email ? undefined : new Date(),
+      ...(hasEmailUpdate
+        ? {
+            email: email!,
+            emailVerifiedAt: currentUser.email === email ? undefined : new Date(),
+          }
+        : {}),
     },
     select: {
       id: true,

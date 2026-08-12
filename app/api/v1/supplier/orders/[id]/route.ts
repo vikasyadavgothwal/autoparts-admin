@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards";
 import { uploadObjectToS3 } from "@/lib/storage/s3";
 import { BusinessAccountType } from "@/lib/generated/prisma/client";
-import { assertBusinessAction } from "@/services/business/business-platform-service";
+import { assertBusinessAction, getBusinessAccountOwnerId } from "@/services/business/business-platform-service";
 import {
   confirmSupplierOrder,
   submitOrderProofOfDelivery,
@@ -22,6 +22,7 @@ const PROOF_EXTENSIONS: Record<string, string> = {
 export async function PATCH(request: NextRequest, context: RouteContext) {
   const auth = await requireSupplierFromRequest(request);
   if (!auth.ok) return auth.response;
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier);
   const { id } = await context.params;
   try {
     await assertBusinessAction({
@@ -31,7 +32,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json({
       ok: true,
-      order: await confirmSupplierOrder(auth.user.id, id),
+      order: await confirmSupplierOrder(supplierId, id),
     });
   } catch (error) {
     return NextResponse.json(
@@ -44,6 +45,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await requireSupplierFromRequest(request);
   if (!auth.ok) return auth.response;
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier);
   const { id } = await context.params;
   const formData = await request.formData();
   const proof = formData.get("proof");
@@ -71,14 +73,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     const extension = PROOF_EXTENSIONS[proof.type];
     const uploaded = await uploadObjectToS3({
-      key: `order-delivery-proofs/${auth.user.id}/${id}/${Date.now()}-${crypto.randomUUID()}.${extension}`,
+      key: `order-delivery-proofs/${supplierId}/${id}/${Date.now()}-${crypto.randomUUID()}.${extension}`,
       body: Buffer.from(await proof.arrayBuffer()),
       contentType: proof.type,
       cacheControl: "private, no-store",
     });
     return NextResponse.json({
       ok: true,
-      order: await submitOrderProofOfDelivery(auth.user.id, id, {
+      order: await submitOrderProofOfDelivery(supplierId, id, {
         itemIds,
         proofUrl: uploaded.objectUrl,
         proofKey: uploaded.key,

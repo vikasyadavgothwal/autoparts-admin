@@ -4,6 +4,8 @@ import {
   readJsonBody,
   requireFleetFromRequest,
 } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import {
   deleteUserAddress,
   updateUserAddress,
@@ -19,6 +21,7 @@ type AddressContext = {
 export async function PATCH(request: NextRequest, context: AddressContext) {
   const auth = await requireFleetFromRequest(request)
   if (!auth.ok) return auth.response
+  const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
 
   const parsed = await readJsonBody<UserAddressInput>(request)
   if (!parsed.ok) {
@@ -32,7 +35,7 @@ export async function PATCH(request: NextRequest, context: AddressContext) {
     const { id } = await context.params
     return NextResponse.json({
       ok: true,
-      address: await updateUserAddress(auth.user.id, id, parsed.body),
+      address: await updateUserAddress(fleetId, id, parsed.body),
     })
   } catch (error) {
     return NextResponse.json(
@@ -49,10 +52,11 @@ export async function PATCH(request: NextRequest, context: AddressContext) {
 export async function DELETE(request: NextRequest, context: AddressContext) {
   const auth = await requireFleetFromRequest(request)
   if (!auth.ok) return auth.response
+  const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
 
   try {
     const { id } = await context.params
-    return NextResponse.json(await deleteUserAddress(auth.user.id, id))
+    return NextResponse.json(await deleteUserAddress(fleetId, id))
   } catch (error) {
     return NextResponse.json(
       {

@@ -4,11 +4,12 @@ import {
   getOptionalUserFromRequest,
   readJsonBody,
 } from "@/lib/auth/api-guards";
-import { OrderStatus, UserRole } from "@/lib/generated/prisma/client";
+import { BusinessAccountType, OrderStatus, UserRole } from "@/lib/generated/prisma/client";
 import {
   createDirectOrders,
   listUserOrders,
 } from "@/services/orders/order-service";
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service";
 
 export const dynamic = "force-dynamic";
 
@@ -32,10 +33,15 @@ export async function GET(request: NextRequest) {
   const status = Object.values(OrderStatus).includes(statusParam as OrderStatus)
     ? (statusParam as OrderStatus)
     : null;
+  const dataOwnerId = auth.user.activeRole === UserRole.Supplier
+    ? await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
+    : auth.user.activeRole === UserRole.Fleet
+      ? await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
+      : auth.user.id;
   return NextResponse.json({
     ok: true,
     ...(await listUserOrders(
-      auth.user.id,
+      dataOwnerId,
       auth.user.activeRole,
       page,
       pageSize,

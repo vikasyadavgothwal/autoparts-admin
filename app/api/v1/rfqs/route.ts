@@ -8,7 +8,7 @@ import {
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, RfqSource, RfqStatus } from "@/lib/generated/prisma/client"
 import { deleteObjectFromS3, uploadObjectToS3 } from "@/lib/storage/s3"
-import { assertBusinessAction, assertBusinessPlanLimit } from "@/services/business/business-platform-service"
+import { assertBusinessAction, assertBusinessPlanLimit, getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { createRfq, listFleetRfqs, listSupplierRfqs, listUserRfqs } from "@/services/fleet/fleet-service"
 import type { CreateRfqInput, RfqAttachment } from "@/types/rfq/rfq"
 
@@ -28,13 +28,15 @@ export async function GET(request: NextRequest) {
   const pageSize = Number.parseInt(request.nextUrl.searchParams.get("pageSize") ?? "20", 10)
   const search = request.nextUrl.searchParams.get("search") ?? ""
   if (auth.user.activeRole === "Fleet" && auth.user.roles.includes("Fleet")) {
-    return NextResponse.json({ ok: true, ...(await listFleetRfqs(auth.user.id, page, pageSize, search)) })
+    const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
+    return NextResponse.json({ ok: true, ...(await listFleetRfqs(fleetId, page, pageSize, search)) })
   }
   if (auth.user.activeRole === "User" && auth.user.roles.includes("User")) {
     return NextResponse.json({ ok: true, ...(await listUserRfqs(auth.user.id, page, pageSize, search)) })
   }
   if (auth.user.activeRole === "Supplier" && auth.user.roles.includes("Supplier")) {
-    return NextResponse.json({ ok: true, ...(await listSupplierRfqs(auth.user.id, page, pageSize, search)) })
+    const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
+    return NextResponse.json({ ok: true, ...(await listSupplierRfqs(supplierId, page, pageSize, search)) })
   }
   return NextResponse.json({ ok: false, message: "User, Supplier, or Fleet role is required" }, { status: 403 })
 }
@@ -56,6 +58,9 @@ export async function POST(request: NextRequest) {
     if (source === RfqSource.user && (auth.user.activeRole !== "User" || !auth.user.roles.includes("User"))) {
       return NextResponse.json({ ok: false, message: "User authentication is required" }, { status: 403 })
     }
+    const fleetId = source === RfqSource.fleet
+      ? await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
+      : auth.user.id
     if (source === RfqSource.fleet) {
       await assertBusinessAction({
         userId: auth.user.id,
@@ -64,7 +69,7 @@ export async function POST(request: NextRequest) {
       })
       const currentCount = await db.rfq.count({
         where: {
-          requesterId: auth.user.id,
+          requesterId: fleetId,
           source: RfqSource.fleet,
           status: { not: RfqStatus.cancelled },
         },
@@ -83,7 +88,7 @@ export async function POST(request: NextRequest) {
       if (fileValue.size > 10 * 1024 * 1024) throw new Error("Attachment must be 10 MB or smaller")
       if (!allowedAttachmentTypes.has(fileValue.type)) throw new Error("Attachment must be PDF, PNG, or JPG")
       const safeName = fileValue.name.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-120)
-      const owner = auth.user.id
+      const owner = fleetId
       const key = `rfq-attachments/${owner}/${crypto.randomUUID()}-${safeName}`
       const uploaded = await uploadObjectToS3({
         key,
@@ -101,7 +106,7 @@ export async function POST(request: NextRequest) {
       uploadedKey = uploaded.key
     }
 
-    const rfq = await createRfq(input, auth.user.id, attachment)
+    const rfq = await createRfq(input, fleetId, attachment)
     return NextResponse.json({ ok: true, rfq }, { status: 201 })
   } catch (error) {
     if (uploadedKey) {

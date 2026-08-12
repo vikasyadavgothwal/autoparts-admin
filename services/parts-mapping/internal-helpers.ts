@@ -250,6 +250,9 @@ export const mapSupplierPart = (part: {
   mappingStatus: SupplierPartMappingStatus
   mappingSource: SupplierPartMappingSource | null
   mappingError: string | null
+  isActive: boolean
+  planSuspendedAt: Date | null
+  planSuspensionReason: string | null
   rawUploadData?: Prisma.JsonValue | null
   pricing?: {
     basePrice: number | null
@@ -341,6 +344,9 @@ export const mapSupplierPart = (part: {
   mappingStatus: part.mappingStatus,
   mappingSource: part.mappingSource,
   mappingError: part.mappingError,
+  isActive: part.isActive,
+  planSuspendedAt: part.planSuspendedAt?.toISOString() ?? null,
+  planSuspensionReason: part.planSuspensionReason,
   rawUploadData: Object.keys(rawUploadData).length > 0 ? rawUploadData : undefined,
   createdAt: part.createdAt.toISOString(),
   updatedAt: part.updatedAt.toISOString(),

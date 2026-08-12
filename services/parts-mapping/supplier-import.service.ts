@@ -69,6 +69,18 @@ export async function importSupplierPartsBulk(
     const competitorOem = normalizeOptionalText(row.competitorPartNumber)
     const competitorBrand = normalizeOptionalText(row.competitorBrandName)
     const hasProductInfo = hasSupplierProductInfo(row)
+    const existingSkuOffer = await db.supplierPart.findUnique({
+      where: { supplierId_vendorSku: { supplierId, vendorSku } },
+      select: {
+        id: true,
+        vendorSku: true,
+        partUid: true,
+        originalOemNumber: true,
+        originalBrand: true,
+        mappingSource: true,
+        mappingStatus: true,
+      },
+    })
     let rowForPersistence = row
 
     if (!vendorSku) {
@@ -83,7 +95,12 @@ export async function importSupplierPartsBulk(
         reason: "Vendor SKU Number is required",
       }
     }
-    if (!oemNumber && (!supplierBrand || !competitorOem) && !hasProductInfo) {
+    if (
+      !oemNumber &&
+      (!supplierBrand || !competitorOem) &&
+      !hasProductInfo &&
+      !(existingSkuOffer?.partUid && existingSkuOffer.mappingStatus === SupplierPartMappingStatus.mapped)
+    ) {
       return {
         ok: false as const,
         rowNumber: row.rowNumber,
@@ -130,13 +147,38 @@ export async function importSupplierPartsBulk(
     seenSkus.add(vendorSku)
 
     try {
+      if (existingSkuOffer?.partUid && existingSkuOffer.mappingStatus === SupplierPartMappingStatus.mapped) {
+        const updatedExistingOffer = await db.supplierPart.update({
+          where: { id: existingSkuOffer.id },
+          data: {
+            ...(hasUploadedValue(row.price) ? { price: parseMoney(row.price ?? 0) } : {}),
+            ...(hasUploadedValue(row.stock) ? { stock: parseStock(row.stock ?? 0) } : {}),
+            rawUploadData: parseJson(row.rawUploadData),
+          },
+        })
+
+        return {
+          ok: true as const,
+          rowNumber: row.rowNumber,
+          vendorSku,
+          brand: existingSkuOffer.originalBrand ?? supplierBrand,
+          oemNumber: existingSkuOffer.originalOemNumber ?? oemNumber ?? "",
+          mappingSource: existingSkuOffer.mappingSource ?? SupplierPartMappingSource.local_db,
+          part: await getSupplierPartById(updatedExistingOffer.id),
+        }
+      }
+
       rowForPersistence = await withUploadedSupplierImageUrls(
         supplierId,
         vendorSku,
         row,
       )
 
-      if (!oemNumber && (!supplierBrand || !competitorOem)) {
+      if (
+        !oemNumber &&
+        (!supplierBrand || !competitorOem) &&
+        !(existingSkuOffer?.partUid && existingSkuOffer.mappingStatus === SupplierPartMappingStatus.mapped)
+      ) {
         await upsertPendingSupplierProductInfo(
           supplierId,
           rowForPersistence,
@@ -160,9 +202,23 @@ export async function importSupplierPartsBulk(
         : `competitor:${normalizePartNumber(competitorOem ?? "")}:${normalizeBrandToken(supplierBrand ?? "")}:${normalizeBrandToken(competitorBrand ?? "")}`
       let resolutionPromise = resolutionByLookup.get(lookupKey)
       if (!resolutionPromise) {
-        resolutionPromise = oemNumber
-          ? resolveConfirmedBulkPart({ ...row, oemNumber })
-          : resolvePartFromCompetitor(row)
+        const existingMappedResolution =
+          existingSkuOffer?.partUid &&
+          existingSkuOffer.mappingStatus === SupplierPartMappingStatus.mapped
+            ? {
+                partUid: existingSkuOffer.partUid,
+                mappingSource:
+                  existingSkuOffer.mappingSource ?? SupplierPartMappingSource.local_db,
+                resolvedOemNumber:
+                  existingSkuOffer.originalOemNumber ?? oemNumber ?? "",
+                resolvedBrand: existingSkuOffer.originalBrand ?? supplierBrand,
+              }
+            : null
+        resolutionPromise = existingMappedResolution
+          ? Promise.resolve(existingMappedResolution)
+          : oemNumber
+            ? resolveConfirmedBulkPart({ ...row, oemNumber })
+            : resolvePartFromCompetitor(row)
         resolutionByLookup.set(lookupKey, resolutionPromise)
       }
       const resolution = await resolutionPromise
@@ -192,10 +248,6 @@ export async function importSupplierPartsBulk(
       const uploadedCategory = normalizeOptionalText(row.category)
       const originalPartName =
         uploadedProductName ?? master.partName ?? `OEM ${resolvedOemNumber}`
-      const existingSkuOffer = await db.supplierPart.findUnique({
-        where: { supplierId_vendorSku: { supplierId, vendorSku } },
-        select: { id: true, vendorSku: true, partUid: true },
-      })
       const existingOemOffer = await findSupplierPartBySupplierOem(
         supplierId,
         normalizedOemNumber,

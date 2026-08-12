@@ -14,6 +14,7 @@ import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import {
   assertBusinessAction,
   assertBusinessPlanLimit,
+  getBusinessAccountOwnerId,
   logBusinessActivity,
 } from "@/services/business/business-platform-service"
 import { createFleetVehicle, listFleetVehicles } from "@/services/fleet/fleet-service"
@@ -23,9 +24,10 @@ export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
   return withFleetApiRoute(request, async (user) => {
+    const fleetId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Fleet)
     const page = Number.parseInt(request.nextUrl.searchParams.get("page") ?? "1", 10)
     const pageSize = Number.parseInt(request.nextUrl.searchParams.get("pageSize") ?? "10", 10)
-    return apiOk(await listFleetVehicles(user.id, page, pageSize))
+    return apiOk(await listFleetVehicles(fleetId, page, pageSize))
   })
 }
 
@@ -35,19 +37,20 @@ export async function POST(request: NextRequest) {
     if (!parsed.ok) return apiError(parsed.message)
 
     try {
+      const fleetId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Fleet)
       await assertBusinessAction({
         userId: user.id,
         accountType: BusinessAccountType.Fleet,
         action: "vehicles.create",
       })
-      const currentCount = await db.fleetVehicle.count({ where: { fleetId: user.id, status: { not: "plan_suspended" } } })
+      const currentCount = await db.fleetVehicle.count({ where: { fleetId, status: { not: "plan_suspended" } } })
       const account = await assertBusinessPlanLimit({
         userId: user.id,
         accountType: BusinessAccountType.Fleet,
         limit: "vehicleLimit",
         currentCount,
       })
-      const vehicle = await createFleetVehicle(user.id, parsed.body)
+      const vehicle = await createFleetVehicle(fleetId, parsed.body)
       await logBusinessActivity({
         businessAccountId: account.id,
         actorUserId: user.id,
