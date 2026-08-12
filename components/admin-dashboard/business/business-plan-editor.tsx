@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState, useTransition } from "react"
+import { useMemo, useState, useTransition } from "react"
 import { Copy, Eye, Save } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -134,7 +134,6 @@ const money = (plan: BusinessPlan) =>
 
 export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
   const router = useRouter()
-  const [planItems, setPlanItems] = useState(plans)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<AccountType>("Fleet")
   const [selectedPlanCode, setSelectedPlanCode] = useState<PlanCode>("Free")
@@ -143,11 +142,11 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
     () =>
       accountOrder.map((accountType) => ({
         accountType,
-        plans: planItems
+        plans: plans
           .filter((plan) => plan.accountType === accountType)
           .sort((a, b) => planOrder.indexOf(a.code) - planOrder.indexOf(b.code)),
       })),
-    [planItems],
+    [plans],
   )
   const selectedPlans = groupedPlans.find((group) => group.accountType === selectedAccount)?.plans ?? []
   const visiblePlans = selectedPlans.filter((plan) => plan.code === selectedPlanCode)
@@ -219,7 +218,6 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
       const result = (await response.json().catch(() => null)) as { ok?: boolean; message?: string; plan?: BusinessPlan } | null
       setSavingId(null)
       if (response.ok && result?.ok) {
-        if (result.plan) setPlanItems((current) => current.map((item) => (item.id === result.plan?.id ? result.plan as BusinessPlan : item)))
         toast.success("Plan updated successfully.")
         router.refresh()
       } else {
@@ -227,8 +225,6 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
       }
     })
   }
-
-  useEffect(() => setPlanItems(plans), [plans])
 
   return (
     <div className="space-y-5">
