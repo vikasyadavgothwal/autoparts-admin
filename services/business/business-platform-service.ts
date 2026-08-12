@@ -594,6 +594,8 @@ const supportTicketStatusColor = (status: BusinessSupportTicketStatus) => {
   return "#2563eb"
 }
 
+const supportTicketCode = (id: string) => `AUTO-${(id.replace(/[^a-z0-9]/gi, "").slice(-8) || id.slice(-8)).toUpperCase()}`
+
 const addOnStatusColor = (status: BusinessAddOnRequestStatus) => {
   if (status === BusinessAddOnRequestStatus.Rejected) return "#dc2626"
   if (activeAddOnStatuses.includes(status)) return "#047857"
@@ -2726,8 +2728,61 @@ export async function createBusinessSupportTicket(input: {
     action: "business_support_ticket.created",
     entityType: "business_support_ticket",
     entityId: row.id,
-    metadata: { subject, priority: row.priority, category },
+    metadata: { ticketCode: supportTicketCode(row.id), subject, priority: row.priority, category },
   })
+  if (row.createdBy?.email) {
+    const ticketCode = supportTicketCode(row.id)
+    const safeTicketCode = escapeHtml(ticketCode)
+    const safeSubject = escapeHtml(row.subject)
+    const safeMessage = escapeHtml(row.message)
+    const safeBusiness = escapeHtml(row.businessAccount.name)
+    const safeStatus = escapeHtml(supportTicketStatusLabel(row.status))
+    await sendSmtpMail({
+      to: row.createdBy.email,
+      subject: `AutoParts Pro support ticket created - ${ticketCode}`,
+      text: [
+        "Hello,",
+        "",
+        "Your AutoParts Pro support ticket has been created successfully.",
+        "",
+        `Ticket ID: ${ticketCode}`,
+        `Issue: ${row.subject}`,
+        `Business: ${row.businessAccount.name}`,
+        `Status: ${supportTicketStatusLabel(row.status)}`,
+        "",
+        "Issue details:",
+        row.message,
+        "",
+        "Our support team will contact you shortly or help resolve your problem.",
+        "",
+        "AutoParts Pro Support",
+      ].join("\n"),
+      html: [
+        `<div style="margin:0;background:#f8fafc;padding:24px 0;font-family:Arial,Helvetica,sans-serif;color:#111827">`,
+        `<div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">`,
+        `<div style="background:#0f172a;color:#ffffff;padding:24px 28px">`,
+        `<p style="margin:0 0 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#cbd5e1">AutoParts Pro Support</p>`,
+        `<h1 style="margin:0;font-size:22px;line-height:1.3">Support ticket created</h1>`,
+        `</div>`,
+        `<div style="padding:28px">`,
+        `<p style="margin:0 0 14px;font-size:15px;line-height:1.6">Hello,</p>`,
+        `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#334155">Your support ticket has been created successfully. Our team will contact you shortly or help resolve your problem.</p>`,
+        `<div style="margin:0 0 22px;padding:16px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc">`,
+        `<p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b">Ticket ID</p>`,
+        `<p style="margin:0;font-size:20px;font-weight:700;color:#dc2626">${safeTicketCode}</p>`,
+        `</div>`,
+        `<table role="presentation" style="width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 22px">`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Issue</td><td style="padding:10px 0;font-weight:600;word-break:break-word">${safeSubject}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Business</td><td style="padding:10px 0;word-break:break-word">${safeBusiness}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Status</td><td style="padding:10px 0;font-weight:600">${safeStatus}</td></tr>`,
+        `</table>`,
+        `<p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b">Issue details</p>`,
+        `<p style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.6;color:#334155">${safeMessage}</p>`,
+        `<p style="margin:22px 0 0;font-size:14px;color:#334155">AutoParts Pro Support</p>`,
+        `</div></div></div>`,
+      ].join(""),
+    }).catch((error) => logError("Unable to email support ticket creation", error))
+  }
   return mapSupportTicket(row)
 }
 
@@ -3032,35 +3087,42 @@ export async function updateAdminBusinessSupportTicket(input: {
   })
   const displayStatus = supportTicketStatusLabel(status)
   const previousDisplayStatus = supportTicketStatusLabel(current.status)
+  const ticketCode = supportTicketCode(row.id)
   if (row.createdBy) {
     await createNotificationsSafely([{
       recipientUserId: row.createdBy.id,
       actorAdminId: input.adminId,
       type: "business.support.status.updated",
       title: "Support ticket updated",
-      body: `${row.subject} changed from ${previousDisplayStatus} to ${displayStatus}.`,
+      body: `${ticketCode} changed from ${previousDisplayStatus} to ${displayStatus}.`,
       linkUrl: "/support",
       entityType: "business_support_ticket",
       entityId: row.id,
     }])
     if (row.createdBy.email) {
+      const safeTicketCode = escapeHtml(ticketCode)
       const safeSubject = escapeHtml(row.subject)
+      const safeMessage = escapeHtml(row.message)
       const safeBusiness = escapeHtml(row.businessAccount.name)
       const safePreviousStatus = escapeHtml(previousDisplayStatus)
       const safeStatus = escapeHtml(displayStatus)
       const statusColor = supportTicketStatusColor(status)
       await sendSmtpMail({
         to: row.createdBy.email,
-        subject: `AutoParts Pro support ticket update - ${row.subject}`,
+        subject: `AutoParts Pro support ticket update - ${ticketCode}`,
         text: [
           "Hello,",
           "",
-          `The status of your AutoParts Pro support ticket "${row.subject}" has been updated.`,
+          `The status of your AutoParts Pro support ticket ${ticketCode} has been updated.`,
           "",
-          `Ticket: ${row.subject}`,
+          `Ticket ID: ${ticketCode}`,
+          `Issue: ${row.subject}`,
           `Business: ${row.businessAccount.name}`,
           `Previous status: ${previousDisplayStatus}`,
           `New status: ${displayStatus}`,
+          "",
+          "Issue details:",
+          row.message,
           "",
           "No action is required unless you need to add more information. Sign in to your dashboard and open Support to view the full ticket history.",
           "",
@@ -3081,11 +3143,14 @@ export async function updateAdminBusinessSupportTicket(input: {
           `<p style="margin:0;font-size:20px;font-weight:700;color:${statusColor}">${safeStatus}</p>`,
           `</div>`,
           `<table role="presentation" style="width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 22px">`,
-          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Ticket</td><td style="padding:10px 0;font-weight:600;word-break:break-word">${safeSubject}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Ticket ID</td><td style="padding:10px 0;font-weight:600;word-break:break-word">${safeTicketCode}</td></tr>`,
+          `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Issue</td><td style="padding:10px 0;font-weight:600;word-break:break-word">${safeSubject}</td></tr>`,
           `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Business</td><td style="padding:10px 0;word-break:break-word">${safeBusiness}</td></tr>`,
           `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Previous status</td><td style="padding:10px 0">${safePreviousStatus}</td></tr>`,
           `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">New status</td><td style="padding:10px 0;font-weight:600;color:${statusColor}">${safeStatus}</td></tr>`,
           `</table>`,
+          `<p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b">Issue details</p>`,
+          `<p style="margin:0 0 22px;white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.6;color:#334155">${safeMessage}</p>`,
           `<p style="margin:0;font-size:14px;line-height:1.6;color:#64748b">No action is required unless you need to add more information. Sign in to your dashboard and open Support to view the full ticket history.</p>`,
           `<p style="margin:22px 0 0;font-size:14px;color:#334155">AutoParts Pro Support</p>`,
           `</div></div></div>`,

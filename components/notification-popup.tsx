@@ -226,7 +226,7 @@ export function NotificationPopup({ onUnreadChange }: NotificationPopupProps) {
           </Button>
         </div>
       ) : null}
-      <div className="max-h-[22rem] overflow-y-auto overflow-x-hidden">
+      <div className="max-h-[22rem] overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {isLoading ? (
           <div className="py-10 text-center text-sm text-muted-foreground">
             Loading notifications...
