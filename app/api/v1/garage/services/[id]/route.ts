@@ -9,8 +9,8 @@ import {
 } from "@/lib/auth/api-guards"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
-import { getMyBusinessAccess } from "@/services/business/business-platform-service"
-import { deleteGarageService, updateGarageService } from "@/services/garage/garage-service"
+import { getMyBusinessAccess, reconcileGarageServicePlan } from "@/services/business/business-platform-service"
+import { deleteGarageService, listGarageServices, updateGarageService } from "@/services/garage/garage-service"
 import type { GarageServiceInput } from "@/types/garage/services"
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -56,7 +56,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         (await context.params).id,
         parsed.body,
       )
-      return apiOk({ service })
+      await reconcileGarageServicePlan(garageId)
+      return apiOk({ service, services: await listGarageServices(garageId) })
     } catch (error) {
       return apiError(apiErrorMessage(error, "Unable to update service"))
     }
@@ -77,7 +78,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         )
       }
       const garageId = await getGarageIdForUser(user.id)
-      return apiOk(await deleteGarageService(garageId, (await context.params).id))
+      const deleted = await deleteGarageService(garageId, (await context.params).id)
+      await reconcileGarageServicePlan(garageId)
+      return apiOk({ ...deleted, services: await listGarageServices(garageId) })
     } catch (error) {
       return apiError(apiErrorMessage(error, "Unable to delete service"))
     }

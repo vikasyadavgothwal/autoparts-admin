@@ -14,6 +14,7 @@ import {
   assertBusinessPlanLimit,
   getMyBusinessAccess,
   logBusinessActivity,
+  reconcileGarageServicePlan,
 } from "@/services/business/business-platform-service"
 import { createGarageService, listGarageServices } from "@/services/garage/garage-service"
 import type { GarageServiceInput } from "@/types/garage/services"
@@ -39,6 +40,7 @@ async function getGarageBusinessAccount(userId: string) {
 export async function GET(request: NextRequest) {
   return withGarageApiRoute(request, async (user) => {
     const account = await getGarageBusinessAccount(user.id)
+    await reconcileGarageServicePlan(account?.ownerUserId ?? user.id)
     return apiOk({ services: await listGarageServices(account?.ownerUserId ?? user.id) })
   })
 }
@@ -61,6 +63,7 @@ export async function POST(request: NextRequest) {
       }
       const accessAccount = await getGarageBusinessAccount(user.id)
       const garageId = accessAccount?.ownerUserId ?? user.id
+      await reconcileGarageServicePlan(garageId)
       const currentCount = await db.garageService.count({
         where: { garageId, status: "active" },
       })
@@ -82,7 +85,7 @@ export async function POST(request: NextRequest) {
           createdByUserId: user.id,
         },
       })
-      return apiCreated({ service })
+      return apiCreated({ service, services: await listGarageServices(account.ownerUserId) })
     } catch (error) {
       return apiError(apiErrorMessage(error, "Unable to add service"))
     }

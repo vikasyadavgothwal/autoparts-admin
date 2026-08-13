@@ -1,0 +1,2 @@
+ALTER TABLE "business_add_on_prices"
+ADD COLUMN IF NOT EXISTS "validityDays" INTEGER NOT NULL DEFAULT 30;

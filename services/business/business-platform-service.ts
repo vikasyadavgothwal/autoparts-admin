@@ -382,8 +382,6 @@ const activeAddOnStatuses: BusinessAddOnRequestStatus[] = [
   BusinessAddOnRequestStatus.Enabled,
 ]
 
-const enabledAddOnStatuses: BusinessAddOnRequestStatus[] = [BusinessAddOnRequestStatus.Enabled]
-
 const isRetiredBusinessFeatureKey = (key: string) =>
   key === "business.saved-searches.create" ||
   key === "business.wishlist.create" ||
@@ -400,13 +398,33 @@ const apiAccessLevelForPlanCode = (code: BusinessPlanCode) =>
 const activeAddOnRequestWhere = (): Prisma.BusinessAddOnRequestWhereInput => {
   const now = new Date()
   return {
-    status: { in: enabledAddOnStatuses },
+    status: { in: activeAddOnStatuses },
     AND: [
       { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
       { OR: [{ validUntil: null }, { validUntil: { gt: now } }] },
     ],
   }
 }
+
+const isActiveAddOnRequest = (request: { status: BusinessAddOnRequestStatus; validFrom?: Date | null; validUntil?: Date | null }) => {
+  if (!activeAddOnStatuses.includes(request.status)) return false
+  const now = Date.now()
+  if (request.validFrom && request.validFrom.getTime() > now) return false
+  return !request.validUntil || request.validUntil.getTime() > now
+}
+
+const activeAddOnRequestSelect = {
+  id: true,
+  label: true,
+  featureKey: true,
+  status: true,
+  note: true,
+  validFrom: true,
+  validUntil: true,
+  renewalAt: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.BusinessAddOnRequestSelect
 
 const accountInclude = () => ({
   plan: true,
@@ -479,7 +497,7 @@ const accountInclude = () => ({
   },
   roles: { orderBy: { createdAt: "asc" } },
   permissions: { orderBy: { code: "asc" } },
-  addOnRequests: { where: activeAddOnRequestWhere() },
+  addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect },
   invitations: {
     orderBy: { createdAt: "desc" },
     take: 20,
@@ -646,6 +664,12 @@ const cleanAddOnValidity = (input: { validFrom?: unknown; validUntil?: unknown; 
     throw new Error("Valid until must be after valid from")
   }
   return { validFrom, validUntil, renewalAt }
+}
+
+const addDaysUtc = (date: Date, days: number) => {
+  const next = new Date(date)
+  next.setUTCDate(next.getUTCDate() + Math.max(1, days))
+  return next
 }
 
 const sameDateValue = (left: Date | null | undefined, right: Date | null | undefined) =>
@@ -819,6 +843,55 @@ const mapActiveAddOn = (request: BusinessActiveAddOnRow) => ({
   createdAt: request.createdAt.toISOString(),
   updatedAt: request.updatedAt.toISOString(),
 })
+
+const mapBusinessPaymentTransaction = (row: {
+  id: string
+  type: string
+  sourceId: string | null
+  sourceKey: string | null
+  description: string
+  amount: number
+  currency: string
+  status: string
+  createdAt: Date
+}) => ({
+  id: row.id,
+  type: row.type,
+  sourceId: row.sourceId,
+  sourceKey: row.sourceKey,
+  description: row.description,
+  amount: row.amount,
+  currency: row.currency,
+  status: row.status,
+  createdAt: row.createdAt.toISOString(),
+})
+
+async function recordBusinessPaymentTransaction(input: {
+  businessAccountId: string
+  payerUserId?: string | null
+  type: "plan" | "add_on"
+  sourceId?: string | null
+  sourceKey?: string | null
+  description: string
+  amount: number
+  currency?: string | null
+  metadata?: Prisma.InputJsonValue
+}) {
+  return db.businessPaymentTransaction.create({
+    data: {
+      businessAccountId: input.businessAccountId,
+      payerUserId: input.payerUserId ?? null,
+      type: input.type,
+      sourceId: input.sourceId ?? null,
+      sourceKey: input.sourceKey ?? null,
+      description: input.description,
+      amount: Math.max(0, Math.round(input.amount)),
+      currency: input.currency ?? defaultAddOnPriceCurrency,
+      status: "Paid",
+      metadata: input.metadata,
+    },
+  })
+}
 
 const mapAccount = (account: BusinessAccountFull) => ({
   id: account.id,
@@ -1262,15 +1335,174 @@ const limitMetricFeatures = {
 const isLimitMetric = (value: string): value is BusinessLimitMetric =>
   Object.prototype.hasOwnProperty.call(limitAddOnLabels, value)
 
-const limitAddOnKey = (metric: BusinessLimitMetric, target: number) => `limit.${metric}.${target}`
+const limitAddOnKey = (metric: BusinessLimitMetric, extraUnits: number) => `limit.${metric}.${extraUnits}`
 
 const parseLimitAddOnKey = (featureKey: string) => {
-  const [prefix, metric, target] = featureKey.split(".")
-  const targetLimit = Number(target)
-  if (prefix !== "limit" || !isLimitMetric(metric) || !Number.isInteger(targetLimit) || targetLimit < 1 || targetLimit > 100000) return null
-  return { metric, targetLimit }
+  const [prefix, metric, extra] = featureKey.split(".")
+  const extraUnits = Number(extra)
+  if (prefix !== "limit" || !isLimitMetric(metric) || !Number.isInteger(extraUnits) || extraUnits < 1 || extraUnits > 100000) return null
+  return { metric, extraUnits }
 }
 type ParsedLimitAddOn = NonNullable<ReturnType<typeof parseLimitAddOnKey>>
+type AddOnPricingModel = "fixed" | "per_unit"
+type AddOnCatalogItem = {
+  accountType: BusinessAccountType
+  featureKey: string
+  label: string
+  pricingModel: AddOnPricingModel
+}
+type AddOnPriceMap = Map<string, { priceAmount: number; priceCurrency: string; validityDays: number }>
+type StoredAddOnPriceRow = AddOnCatalogItem & {
+  priceAmount: number
+  priceCurrency: string
+  validityDays: number
+}
+
+const limitPriceKey = (metric: BusinessLimitMetric) => `limit.${metric}`
+const addOnPriceMapKey = (accountType: BusinessAccountType, featureKey: string) => `${accountType}:${featureKey}`
+const defaultAddOnPriceCurrency = "AED"
+const defaultAddOnValidityDays = 30
+const addOnPriceStorageNotReadyMessage =
+  "Add-on price storage is not ready. Run `npx prisma migrate deploy` in auto_parts_admin, then restart the Admin backend."
+
+const cleanPriceCurrency = (value: unknown) => {
+  const currency = cleanText(value, 3)?.toUpperCase()
+  return currency && /^[A-Z]{3}$/.test(currency) ? currency : defaultAddOnPriceCurrency
+}
+const cleanPriceAmount = (value: unknown) => {
+  const amount = typeof value === "number" ? value : Number(value)
+  if (!Number.isInteger(amount) || amount < 0 || amount > 100000000) throw new Error("Price amount must be a valid non-negative amount")
+  return amount
+}
+const cleanValidityDays = (value: unknown) => {
+  const days = typeof value === "number" ? value : Number(value)
+  if (!Number.isInteger(days) || days < 1 || days > 3650) throw new Error("Validity must be between 1 and 3650 days")
+  return days
+}
+const formatMoneyText = (amount = 0, currency = defaultAddOnPriceCurrency) =>
+  `${currency} ${(amount / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+const addOnCatalogForAccountType = (accountType: BusinessAccountType): AddOnCatalogItem[] => {
+  const requestableLabels = businessRequestableFeatureLabels as Record<string, string>
+  const featureItems = businessEntitlementFeatures[accountType]
+    .filter((featureKey) => !isRetiredBusinessFeatureKey(featureKey) && Boolean(requestableLabels[featureKey]))
+    .map((featureKey) => ({
+      accountType,
+      featureKey,
+      label: requestableLabels[featureKey],
+      pricingModel: "fixed" as const,
+    }))
+  const limitItems = limitAddOnMetrics[accountType].map((metric) => ({
+    accountType,
+    featureKey: limitPriceKey(metric),
+    label: `Add extra ${limitAddOnLabels[metric]} capacity`,
+    pricingModel: "per_unit" as const,
+  }))
+  return [...featureItems, ...limitItems]
+}
+
+const addOnCatalogItemFor = (accountType: BusinessAccountType, featureKey: string) =>
+  addOnCatalogForAccountType(accountType).find((item) => item.featureKey === featureKey) ?? null
+
+const addOnPriceStorageError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  if (message.includes("business_add_on_prices") || message.includes("BusinessAccountType") || message.includes("validityDays")) {
+    return new Error(addOnPriceStorageNotReadyMessage)
+  }
+  return error
+}
+
+const readBusinessAddOnPriceRows = async (accountType?: BusinessAccountType): Promise<StoredAddOnPriceRow[]> => {
+  if (accountType) {
+    return db.$queryRaw<StoredAddOnPriceRow[]>`
+      SELECT "accountType", "featureKey", "label", "pricingModel", "priceAmount", "priceCurrency", "validityDays"
+      FROM "business_add_on_prices"
+      WHERE "accountType"::text = ${accountType}
+    `
+  }
+
+  return db.$queryRaw<StoredAddOnPriceRow[]>`
+    SELECT "accountType", "featureKey", "label", "pricingModel", "priceAmount", "priceCurrency", "validityDays"
+    FROM "business_add_on_prices"
+  `
+}
+
+const upsertBusinessAddOnPriceRows = async (rows: StoredAddOnPriceRow[]) => {
+  if (!rows.length) return
+
+  try {
+    await db.$transaction(rows.map((row) =>
+      db.$executeRaw`
+        INSERT INTO "business_add_on_prices" (
+          "id", "accountType", "featureKey", "label", "pricingModel", "priceAmount", "priceCurrency", "validityDays", "createdAt", "updatedAt"
+        )
+        VALUES (
+          ${`baop_${randomBytes(12).toString("hex")}`},
+          ${row.accountType}::"BusinessAccountType",
+          ${row.featureKey},
+          ${row.label},
+          ${row.pricingModel},
+          ${row.priceAmount},
+          ${row.priceCurrency},
+          ${row.validityDays},
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        )
+        ON CONFLICT ("accountType", "featureKey") DO UPDATE SET
+          "label" = EXCLUDED."label",
+          "pricingModel" = EXCLUDED."pricingModel",
+          "priceAmount" = EXCLUDED."priceAmount",
+          "priceCurrency" = EXCLUDED."priceCurrency",
+          "validityDays" = EXCLUDED."validityDays",
+          "updatedAt" = CURRENT_TIMESTAMP
+      `,
+    ))
+  } catch (error) {
+    throw addOnPriceStorageError(error)
+  }
+}
+
+const getAddOnPriceMap = async (accountType: BusinessAccountType): Promise<AddOnPriceMap> => {
+  let rows: StoredAddOnPriceRow[] = []
+  try {
+    rows = await readBusinessAddOnPriceRows(accountType)
+  } catch (error) {
+    logError("Unable to load business add-on price map; continuing without add-on prices", error)
+  }
+  return new Map(rows.map((row) => [addOnPriceMapKey(row.accountType, row.featureKey), {
+    priceAmount: row.priceAmount,
+    priceCurrency: row.priceCurrency,
+    validityDays: row.validityDays,
+  }]))
+}
+
+const priceForCatalogItem = (item: AddOnCatalogItem, prices: AddOnPriceMap) => {
+  const price = prices.get(addOnPriceMapKey(item.accountType, item.featureKey))
+  return {
+    pricingModel: item.pricingModel,
+    priceAmount: price?.priceAmount ?? 0,
+    priceCurrency: price?.priceCurrency ?? defaultAddOnPriceCurrency,
+    validityDays: price?.validityDays ?? defaultAddOnValidityDays,
+  }
+}
+
+const calculateAddOnPrice = (input: {
+  pricingModel: AddOnPricingModel
+  quantity: number
+  priceAmount?: number | null
+  priceCurrency?: string | null
+  validityDays?: number | null
+}) => {
+  const unitPriceAmount = input.priceAmount ?? 0
+  const priceQuantity = input.pricingModel === "per_unit" ? Math.max(1, input.quantity) : 1
+  return {
+    priceAmount: input.pricingModel === "per_unit" ? unitPriceAmount * priceQuantity : unitPriceAmount,
+    priceCurrency: input.priceCurrency ?? defaultAddOnPriceCurrency,
+    validityDays: input.validityDays ?? defaultAddOnValidityDays,
+    priceQuantity,
+    unitPriceAmount: input.pricingModel === "per_unit" ? unitPriceAmount : null,
+  }
+}
 
 const addOnFeatureSet = (addOnKeys: string[], accountType: BusinessAccountType) => {
   const features = new Set(addOnKeys.filter((key) => !isRetiredBusinessFeatureKey(key)))
@@ -1291,7 +1523,7 @@ const applyLimitAddOns = (limits: BusinessLimits, addOnKeys: string[]) => {
     const parsed = parseLimitAddOnKey(key)
     if (!parsed) continue
     const current = next[parsed.metric]
-    if (current !== null && parsed.targetLimit > current) next[parsed.metric] = parsed.targetLimit
+    if (current !== null) next[parsed.metric] = current + parsed.extraUnits
   }
   return next
 }
@@ -1314,24 +1546,39 @@ const limitNameToMetric = (limit: string): BusinessLimitMetric => ({
   integrationLimit: "integrations",
 } as Record<string, BusinessLimitMetric>)[limit]
 
-const limitAddOnOptions = (accountType: BusinessAccountType, baseLimits: BusinessLimits, limits: BusinessLimits, usage: BusinessUsageCounts, enabledAddOnKeys: string[]) =>
+const limitAddOnOptions = (
+  accountType: BusinessAccountType,
+  baseLimits: BusinessLimits,
+  limits: BusinessLimits,
+  usage: BusinessUsageCounts,
+  enabledAddOnKeys: string[],
+  addOnPrices: AddOnPriceMap,
+) =>
   limitAddOnMetrics[accountType]
     .filter((metric) => baseLimits[metric] !== null)
     .map((metric) => {
+      const priceItem = addOnCatalogItemFor(accountType, limitPriceKey(metric))
+      const price = priceItem ? priceForCatalogItem(priceItem, addOnPrices) : null
       const currentLimit = limits[metric]
       const currentUsage = usage[metric]
-      const enabledTarget = enabledAddOnKeys
+      const enabledExtraUnits = enabledAddOnKeys
         .map((key) => parseLimitAddOnKey(key))
         .filter((item): item is ParsedLimitAddOn => item !== null && item.metric === metric)
-        .reduce((max, item) => Math.max(max, item.targetLimit), currentLimit ?? 0)
-      const suggestedLimit = Math.max((enabledTarget || currentLimit || 0) + 5, currentUsage + 1)
+        .reduce((total, item) => total + item.extraUnits, 0)
+      const suggestedExtraUnits = Math.max(5, currentUsage + 1 - (currentLimit ?? 0))
       return {
-        key: limitAddOnKey(metric, suggestedLimit),
+        key: limitAddOnKey(metric, suggestedExtraUnits),
         metric,
-        label: `Increase ${limitAddOnLabels[metric]} limit`,
+        label: `Add extra ${limitAddOnLabels[metric]} capacity`,
         currentLimit,
         currentUsage,
-        suggestedLimit,
+        suggestedExtraUnits,
+        suggestedLimit: (currentLimit ?? 0) + suggestedExtraUnits,
+        enabledExtraUnits,
+        pricingModel: price?.pricingModel ?? "per_unit",
+        unitPriceAmount: price?.priceAmount ?? 0,
+        priceCurrency: price?.priceCurrency ?? defaultAddOnPriceCurrency,
+        validityDays: price?.validityDays ?? defaultAddOnValidityDays,
       }
     })
 
@@ -1487,6 +1734,41 @@ const featureSetForPlan = (plan: {
   return features
 }
 
+const menuKeysForFeatureSet = (accountType: BusinessAccountType, featureSet: Set<string>) => {
+  const menus: string[] = []
+  const add = (featureKey: string, menuKey: string) => {
+    if (featureSet.has(featureKey)) menus.push(menuKey)
+  }
+
+  add("staff.manage", "staff")
+  add("roles.manage", "roles")
+  add("integrations.manage", "integrations")
+  add("api.standard", "api-keys")
+  add("api.enterprise", "api-keys")
+
+  if (featureSet.has("reports.dashboard") || featureSet.has("reports.usage") || featureSet.has("reports.activity")) {
+    menus.push(accountType === BusinessAccountType.Supplier ? "performance" : "reports")
+  }
+
+  if (accountType === BusinessAccountType.Garage) {
+    add("garage.bookings.manage", "bookings")
+    add("garage.schedule.manage", "schedule")
+    add("garage.services.manage", "services")
+  }
+  if (accountType === BusinessAccountType.Fleet) {
+    add("fleet.vehicles.manage", "vehicles")
+    add("fleet.rfqs.create", "rfqs")
+    add("fleet.orders.create", "orders")
+  }
+  if (accountType === BusinessAccountType.Supplier) {
+    add("supplier.inventory.manage", "inventory")
+    add("supplier.rfqs.quote", "rfq-inbox")
+    add("supplier.orders.manage", "orders")
+  }
+
+  return menus
+}
+
 const allowedActionFor = (
   action: string,
   account: {
@@ -1533,7 +1815,7 @@ const allowedActionFor = (
   return { allowed: true, reason: null }
 }
 
-const buildEntitlementPayload = (
+const buildEntitlementPayload = async (
   account: BusinessAccountFull | Prisma.BusinessAccountGetPayload<{
     include: { plan: true; roles: true; permissions: true }
   }>,
@@ -1544,6 +1826,7 @@ const buildEntitlementPayload = (
   const baseLimits = limitsForPlan(account.plan)
   const limits = applyLimitAddOns(baseLimits, enabledAddOnFeatures)
   const usageCounts = usageWithZeroes(usage)
+  const addOnPrices = await getAddOnPriceMap(account.type)
   const featureSet = featureSetForPlan(account.plan, account.type)
   const addOnFeatures = addOnFeatureSet(enabledAddOnFeatures, account.type)
   addOnFeatures.forEach((feature) => featureSet.add(feature))
@@ -1552,10 +1835,18 @@ const buildEntitlementPayload = (
   const requestableLabels = businessRequestableFeatureLabels as Record<string, string>
   const lockedFeatures = knownFeatures
     .filter((feature) => !enabledFeatures.includes(feature))
-    .map((feature) => ({
-      key: feature,
-      label: requestableLabels[feature] ?? feature,
-    }))
+    .map((feature) => {
+      const priceItem = addOnCatalogItemFor(account.type, feature)
+      const price = priceItem ? priceForCatalogItem(priceItem, addOnPrices) : null
+      return {
+        key: feature,
+        label: requestableLabels[feature] ?? feature,
+        pricingModel: price?.pricingModel ?? "fixed",
+        priceAmount: price?.priceAmount ?? 0,
+        priceCurrency: price?.priceCurrency ?? defaultAddOnPriceCurrency,
+        validityDays: price?.validityDays ?? defaultAddOnValidityDays,
+      }
+    })
   const isEnterprisePlan = account.plan.code === BusinessPlanCode.Enterprise
   const requestableFeatures = isEnterprisePlan
     ? []
@@ -1568,12 +1859,12 @@ const buildEntitlementPayload = (
   )
   const limitAddOns = isEnterprisePlan
     ? []
-    : limitAddOnOptions(account.type, baseLimits, limits, usageCounts, enabledAddOnFeatures)
+    : limitAddOnOptions(account.type, baseLimits, limits, usageCounts, enabledAddOnFeatures, addOnPrices)
 
   const enabledMenus = account.plan.enabledMenus.filter(
     (menu) => menu !== "saved-searches" && menu !== "wishlist" && menu !== "security" && menu !== "api-keys",
   )
-  if (featureSet.has("api.standard") || featureSet.has("api.enterprise")) enabledMenus.push("api-keys")
+  enabledMenus.push(...menuKeysForFeatureSet(account.type, featureSet))
 
   return {
     plan: mapPlan({ ...account.plan, _count: { businessAccounts: 0 } }),
@@ -1594,43 +1885,8 @@ const buildEntitlementPayload = (
   }
 }
 
-const assertUsageFitsPlan = (
-  usage: Awaited<ReturnType<typeof usageForAccount>>,
-  plan: {
-    staffLimit: number | null
-    roleLimit: number | null
-    permissionLimit: number | null
-    brandLimit: number | null
-    categoryLimit: number | null
-    vehicleLimit: number | null
-    appointmentLimit: number | null
-    productLimit: number | null
-    rfqLimit: number | null
-    orderLimit: number | null
-    serviceLimit: number | null
-  },
-) => {
-  for (const [label, used, limit] of [
-    ["staff users", usage.staff, plan.staffLimit],
-    ["roles", usage.roles, plan.roleLimit],
-    ["permissions", usage.permissions, plan.permissionLimit],
-    ["brands", usage.brands, plan.brandLimit],
-    ["categories", usage.categories, plan.categoryLimit],
-    ["vehicles", usage.vehicles, plan.vehicleLimit],
-    ["monthly bookings", usage.appointments, plan.appointmentLimit],
-    ["products", usage.products, plan.productLimit],
-    ["RFQs", usage.rfqs, plan.rfqLimit],
-    ["orders", usage.orders, plan.orderLimit],
-    ["services", usage.services, plan.serviceLimit],
-  ] as const) {
-    if (limit !== null && used > limit) {
-      throw new Error(`Cannot change plan. Current ${label} usage is ${used}, but selected plan allows ${limit}.`)
-    }
-  }
-}
-
 const planLimitMessage = (planName: string, itemLabel: string, limit: number) =>
-  `Your ${planName} plan allows up to ${limit} active ${itemLabel}. Extra ${itemLabel} were temporarily inactive and were not deleted. Upgrade your plan to restore them.`
+  `Your ${planName} plan/add-ons allow up to ${limit} active ${itemLabel}. Extra ${itemLabel} were temporarily inactive and were not deleted. Increase your limit to restore more.`
 
 const supplierPlanSuspensionMessage = (input: {
   planName: string
@@ -1672,18 +1928,23 @@ async function enforcePlanLimitedRecords(input: {
       return
     }
     const services = await db.garageService.findMany({
-      where: { garageId: input.account.ownerUserId },
+      where: { garageId: input.account.ownerUserId, status: { in: ["active", "plan_suspended"] } },
       orderBy: [{ status: "asc" }, { bookingsCount: "desc" }, { updatedAt: "desc" }],
       select: { id: true, status: true },
     })
     const keepIds = services.slice(0, limit).map((item) => item.id)
+    const reason = planLimitMessage(input.plan.name, "services", limit)
     await db.garageService.updateMany({
       where: { garageId: input.account.ownerUserId, id: { in: keepIds }, status: "plan_suspended" },
       data: { status: "active", planSuspendedAt: null, planSuspensionReason: null },
     })
     await db.garageService.updateMany({
       where: { garageId: input.account.ownerUserId, id: { notIn: keepIds }, status: "active" },
-      data: { status: "plan_suspended", planSuspendedAt: now, planSuspensionReason: planLimitMessage(input.plan.name, "services", limit) },
+      data: { status: "plan_suspended", planSuspendedAt: now, planSuspensionReason: reason },
+    })
+    await db.garageService.updateMany({
+      where: { garageId: input.account.ownerUserId, id: { notIn: keepIds }, status: "plan_suspended" },
+      data: { planSuspendedAt: now, planSuspensionReason: reason },
     })
   }
 
@@ -1818,7 +2079,7 @@ export async function reconcileSupplierProductPlan(supplierId: string) {
     },
     include: {
       plan: true,
-      addOnRequests: { where: activeAddOnRequestWhere() },
+      addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect },
     },
   })
   if (!account) return
@@ -1833,6 +2094,44 @@ export async function reconcileSupplierProductPlan(supplierId: string) {
       categoryLimit: limits.categories,
       serviceLimit: limits.services,
       vehicleLimit: limits.vehicles,
+    },
+  })
+}
+
+export async function reconcileGarageServicePlan(userId: string) {
+  const account = await db.businessAccount.findFirst({
+    where: {
+      type: BusinessAccountType.Garage,
+      isActive: true,
+      OR: [
+        { ownerUserId: userId },
+        {
+          members: {
+            some: {
+              userId,
+              status: BusinessMemberStatus.Active,
+            },
+          },
+        },
+      ],
+    },
+    include: {
+      plan: true,
+      addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect },
+    },
+  })
+  if (!account) return
+
+  const limits = effectiveLimitsForAccount(account)
+  await enforcePlanLimitedRecords({
+    account,
+    plan: {
+      ...account.plan,
+      serviceLimit: limits.services,
+      vehicleLimit: limits.vehicles,
+      productLimit: limits.products,
+      brandLimit: limits.brands,
+      categoryLimit: limits.categories,
     },
   })
 }
@@ -1872,6 +2171,27 @@ export async function changeBusinessAccountPlan(input: {
     where: { id: account.id },
     data: { planId: nextPlan.id },
   })
+  if (nextPlan.priceAmount > account.plan.priceAmount) {
+    await recordBusinessPaymentTransaction({
+      businessAccountId: account.id,
+      payerUserId: input.ownerUserId,
+      type: "plan",
+      sourceId: nextPlan.id,
+      sourceKey: nextPlan.code,
+      description: `Plan upgraded from ${account.plan.name} to ${nextPlan.name}`,
+      amount: nextPlan.priceAmount,
+      currency: nextPlan.priceCurrency,
+      metadata: {
+        fromPlanId: account.plan.id,
+        fromPlanName: account.plan.name,
+        fromPlanPriceAmount: account.plan.priceAmount,
+        toPlanId: nextPlan.id,
+        toPlanName: nextPlan.name,
+        toPlanPriceAmount: nextPlan.priceAmount,
+        accountType: account.type,
+      },
+    })
+  }
   await enforcePlanLimitedRecords({ account, plan: nextPlan })
   await logBusinessActivity({
     businessAccountId: account.id,
@@ -1946,7 +2266,7 @@ async function findUserBusinessAccount(userId: string, accountType: BusinessAcco
         },
       },
     },
-    include: { plan: true, addOnRequests: { where: activeAddOnRequestWhere() } },
+    include: { plan: true, addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect } },
   })
 }
 
@@ -1987,6 +2307,23 @@ export async function getEffectiveBusinessLimits(input: { userId: string; accoun
   }
 }
 
+export async function listMyBusinessPaymentTransactions(input: {
+  userId: string
+  businessAccountId?: unknown
+}) {
+  const businessAccountId = cleanText(input.businessAccountId, 80)
+  const access = await getMyBusinessAccess(input.userId)
+  const account = access.find((item) => !businessAccountId || item.businessAccount.id === businessAccountId)
+  if (!account) throw new Error("Business account was not found")
+
+  const rows = await db.businessPaymentTransaction.findMany({
+    where: { businessAccountId: account.businessAccount.id },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  })
+  return rows.map(mapBusinessPaymentTransaction)
+}
+
 async function findWritableBusinessAccount(userId: string, businessAccountId: unknown) {
   const id = cleanText(businessAccountId, 80)
   if (!id) throw new Error("Business account id is required")
@@ -2002,15 +2339,10 @@ async function findWritableBusinessAccount(userId: string, businessAccountId: un
         },
       },
     },
-    include: { plan: true, addOnRequests: { where: activeAddOnRequestWhere() } },
+    include: { plan: true, addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect } },
   })
   if (!account) throw new Error("Business account was not found")
   return account
-}
-
-const asJsonObject = (value: unknown): Prisma.InputJsonObject => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  return value as Prisma.InputJsonObject
 }
 
 const mapSavedSearch = (row: {
@@ -2123,12 +2455,13 @@ const businessAddOnDetailsForAccount = (
       throw new Error("This limit is not available for this dashboard")
     }
     const baseLimit = limitsForPlan(account.plan)[limitAddOn.metric]
-    const currentLimit = effectiveLimitsForAccount(account)[limitAddOn.metric]
     if (baseLimit === null) throw new Error("This limit is already unlimited in the current plan")
-    if (limitAddOn.targetLimit <= (currentLimit ?? 0)) {
-      throw new Error(`Add a ${limitAddOnLabels[limitAddOn.metric]} limit higher than ${currentLimit ?? 0}`)
+    return {
+      label: `Add ${limitAddOn.extraUnits} extra ${limitAddOnLabels[limitAddOn.metric]}`,
+      pricingKey: limitPriceKey(limitAddOn.metric),
+      pricingModel: "per_unit" as const,
+      priceQuantity: limitAddOn.extraUnits,
     }
-    return { label: `Increase ${limitAddOnLabels[limitAddOn.metric]} limit to ${limitAddOn.targetLimit}` }
   }
 
   const featureLabel = (businessRequestableFeatureLabels as Record<string, string>)[featureKey]
@@ -2138,7 +2471,31 @@ const businessAddOnDetailsForAccount = (
   if (featureSetForPlan(account.plan).has(featureKey)) {
     throw new Error("This feature is already included in the current plan")
   }
-  return { label: featureLabel }
+  return {
+    label: featureLabel,
+    pricingKey: featureKey,
+    pricingModel: "fixed" as const,
+    priceQuantity: 1,
+  }
+}
+
+const priceQuoteForAddOnDetails = async (
+  accountType: BusinessAccountType,
+  details: ReturnType<typeof businessAddOnDetailsForAccount>,
+) => {
+  const catalogItem = addOnCatalogItemFor(accountType, details.pricingKey)
+  const rows = await readBusinessAddOnPriceRows(accountType).catch((error) => {
+    logError("Unable to load business add-on price quote; continuing without add-on price", error)
+    return []
+  })
+  const row = rows.find((item) => item.featureKey === details.pricingKey)
+  return calculateAddOnPrice({
+    pricingModel: catalogItem?.pricingModel ?? details.pricingModel,
+    quantity: details.priceQuantity,
+    priceAmount: row?.priceAmount ?? 0,
+    priceCurrency: row?.priceCurrency ?? defaultAddOnPriceCurrency,
+    validityDays: row?.validityDays ?? defaultAddOnValidityDays,
+  })
 }
 
 export async function requestBusinessAddOn(input: {
@@ -2150,14 +2507,18 @@ export async function requestBusinessAddOn(input: {
   const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
   const featureKey = cleanText(input.featureKey, 120)
   if (!featureKey) throw new Error("Feature key is required")
-  const { label } = businessAddOnDetailsForAccount(account, featureKey)
+  const addOnDetails = businessAddOnDetailsForAccount(account, featureKey)
+  const { label } = addOnDetails
+  const priceQuote = await priceQuoteForAddOnDetails(account.type, addOnDetails)
   const currentRequest = await db.businessAddOnRequest.findUnique({
     where: { businessAccountId_featureKey: { businessAccountId: account.id, featureKey } },
   })
-  if (currentRequest && activeAddOnStatuses.includes(currentRequest.status)) {
-    throw new Error("This add-on is already approved")
+  if (currentRequest && isActiveAddOnRequest(currentRequest)) {
+    throw new Error("This add-on is already added")
   }
   const note = cleanText(input.note, 500)
+  const enabledAt = new Date()
+  const validUntil = addDaysUtc(enabledAt, priceQuote.validityDays)
 
   const row = await db.businessAddOnRequest.upsert({
     where: {
@@ -2171,40 +2532,151 @@ export async function requestBusinessAddOn(input: {
       featureKey,
       label,
       note,
+      priceAmount: priceQuote.priceAmount,
+      priceCurrency: priceQuote.priceCurrency,
+      priceQuantity: priceQuote.priceQuantity,
+      unitPriceAmount: priceQuote.unitPriceAmount,
       requestedByUserId: input.userId,
-      status: BusinessAddOnRequestStatus.Requested,
+      status: BusinessAddOnRequestStatus.Enabled,
+      decidedAt: enabledAt,
+      validFrom: enabledAt,
+      validUntil,
+      renewalAt: validUntil,
     },
     update: {
       label,
       note,
+      priceAmount: priceQuote.priceAmount,
+      priceCurrency: priceQuote.priceCurrency,
+      priceQuantity: priceQuote.priceQuantity,
+      unitPriceAmount: priceQuote.unitPriceAmount,
       requestedByUserId: input.userId,
-      status: BusinessAddOnRequestStatus.Requested,
+      status: BusinessAddOnRequestStatus.Enabled,
       decidedByAdminId: null,
-      decidedAt: null,
+      decidedAt: enabledAt,
+      validFrom: enabledAt,
+      validUntil,
+      renewalAt: validUntil,
+    },
+  })
+
+  await recordBusinessPaymentTransaction({
+    businessAccountId: account.id,
+    payerUserId: input.userId,
+    type: "add_on",
+    sourceId: row.id,
+    sourceKey: featureKey,
+    description: `Add-on enabled: ${label}`,
+    amount: priceQuote.priceAmount,
+    currency: priceQuote.priceCurrency,
+    metadata: {
+      featureKey,
+      label,
+      note,
+      priceQuantity: priceQuote.priceQuantity,
+      unitPriceAmount: priceQuote.unitPriceAmount,
+      validityDays: priceQuote.validityDays,
+      validFrom: toIso(row.validFrom),
+      validUntil: toIso(row.validUntil),
+      renewalAt: toIso(row.renewalAt),
+      accountType: account.type,
+      planName: account.plan.name,
     },
   })
 
   await logBusinessActivity({
     businessAccountId: account.id,
     actorUserId: input.userId,
-    action: "business_addon.requested",
+    action: "business_addon.enabled",
     entityType: "business_addon",
     entityId: row.id,
     metadata: {
       featureKey,
       label,
       note,
-      status: "requested",
+      priceAmount: priceQuote.priceAmount,
+      priceCurrency: priceQuote.priceCurrency,
+      priceQuantity: priceQuote.priceQuantity,
+      unitPriceAmount: priceQuote.unitPriceAmount,
+      validityDays: priceQuote.validityDays,
+      validFrom: toIso(row.validFrom),
+      validUntil: toIso(row.validUntil),
+      renewalAt: toIso(row.renewalAt),
+      status: row.status,
       accountType: account.type,
       planName: account.plan.name,
     },
   })
+
+  await createNotificationsSafely([{
+    recipientUserId: input.userId,
+    type: "business.addon.enabled",
+    title: "Add-on enabled",
+    body: `${label} is now enabled for your ${account.type} account.`,
+    linkUrl: "/add-ons",
+    entityType: "business_addon",
+    entityId: row.id,
+  }])
+
+  const requester = await db.user.findUnique({
+    where: { id: input.userId },
+    select: { id: true, email: true, phone: true, firstName: true, lastName: true, companyName: true },
+  })
+  if (requester?.email) {
+    await sendSmtpMail({
+      to: requester.email,
+      subject: `AutoParts Pro add-on enabled - ${label}`,
+      text: [
+        "Hello,",
+        "",
+        `Your AutoParts Pro add-on "${label}" is now enabled for "${account.name}".`,
+        `Plan: ${account.plan.name}`,
+        `Price: ${formatMoneyText(priceQuote.priceAmount, priceQuote.priceCurrency)}`,
+        `Validity: ${priceQuote.validityDays} days`,
+        `Valid until: ${formatMailDate(validUntil)}`,
+        "",
+        "You can use this feature from your dashboard now.",
+        "",
+        "AutoParts Pro Support",
+      ].join("\n"),
+      html: [
+        `<div style="margin:0;background:#f8fafc;padding:24px 0;font-family:Arial,Helvetica,sans-serif;color:#111827">`,
+        `<div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">`,
+        `<div style="background:#0f172a;color:#ffffff;padding:24px 28px">`,
+        `<p style="margin:0 0 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#cbd5e1">AutoParts Pro Add-ons</p>`,
+        `<h1 style="margin:0;font-size:22px;line-height:1.3">Add-on enabled</h1>`,
+        `</div>`,
+        `<div style="padding:28px">`,
+        `<p style="margin:0 0 14px;font-size:15px;line-height:1.6">Hello ${escapeHtml(fullName(requester))},</p>`,
+        `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#334155">Your add-on is enabled and ready to use from your dashboard.</p>`,
+        `<table role="presentation" style="width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 22px">`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Add-on</td><td style="padding:10px 0;font-weight:600;word-break:break-word">${escapeHtml(label)}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Business</td><td style="padding:10px 0;word-break:break-word">${escapeHtml(account.name)}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Plan</td><td style="padding:10px 0">${escapeHtml(account.plan.name)}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Price</td><td style="padding:10px 0">${escapeHtml(formatMoneyText(priceQuote.priceAmount, priceQuote.priceCurrency))}</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Validity</td><td style="padding:10px 0">${priceQuote.validityDays} days</td></tr>`,
+        `<tr><td style="width:36%;padding:10px 0;color:#64748b;vertical-align:top">Valid until</td><td style="padding:10px 0">${escapeHtml(formatMailDate(validUntil))}</td></tr>`,
+        `</table>`,
+        `<p style="margin:0;font-size:14px;line-height:1.6;color:#64748b">You can use this feature from your dashboard now.</p>`,
+        `<p style="margin:22px 0 0;font-size:14px;color:#334155">AutoParts Pro Support</p>`,
+        `</div></div></div>`,
+      ].join(""),
+    }).catch((error) => logError("Unable to email add-on enabled confirmation", error))
+  }
 
   return {
     id: row.id,
     featureKey,
     label,
     status: row.status,
+    priceAmount: row.priceAmount,
+    priceCurrency: row.priceCurrency,
+    priceQuantity: row.priceQuantity,
+    unitPriceAmount: row.unitPriceAmount,
+    validityDays: priceQuote.validityDays,
+    validFrom: toIso(row.validFrom),
+    validUntil: toIso(row.validUntil),
+    renewalAt: toIso(row.renewalAt),
   }
 }
 
@@ -2216,6 +2688,10 @@ const mapAddOnRequest = (row: Prisma.BusinessAddOnRequestGetPayload<{
   label: row.label,
   note: row.note,
   status: row.status,
+  priceAmount: row.priceAmount,
+  priceCurrency: row.priceCurrency,
+  priceQuantity: row.priceQuantity,
+  unitPriceAmount: row.unitPriceAmount,
   requestedBy: row.requestedBy ? { id: row.requestedBy.id, name: fullName(row.requestedBy), email: row.requestedBy.email } : null,
   decidedBy: row.decidedBy ? { id: row.decidedBy.id, name: row.decidedBy.name, email: row.decidedBy.email } : null,
   decidedAt: toIso(row.decidedAt),
@@ -2256,6 +2732,68 @@ export async function listAdminBusinessAddOnRequests(status?: unknown) {
     take: 100,
   })
   return rows.map(mapAddOnRequest)
+}
+
+const defaultBusinessAddOnPrices = () =>
+  Object.values(BusinessAccountType).flatMap((accountType) =>
+    addOnCatalogForAccountType(accountType).map((item) => ({
+      accountType,
+      featureKey: item.featureKey,
+      label: item.label,
+      pricingModel: item.pricingModel,
+      priceAmount: 0,
+      priceCurrency: defaultAddOnPriceCurrency,
+      validityDays: defaultAddOnValidityDays,
+    })),
+  )
+
+export async function listAdminBusinessAddOnPrices() {
+  let rows: StoredAddOnPriceRow[] = []
+  try {
+    rows = await readBusinessAddOnPriceRows()
+  } catch (error) {
+    logError("Unable to load business add-on prices; returning default catalog", error)
+    return defaultBusinessAddOnPrices()
+  }
+  const prices = new Map(rows.map((row) => [addOnPriceMapKey(row.accountType, row.featureKey), row]))
+  return defaultBusinessAddOnPrices().map((item) => {
+    const row = prices.get(addOnPriceMapKey(item.accountType, item.featureKey))
+    return {
+      accountType: item.accountType,
+      featureKey: item.featureKey,
+      label: row?.label ?? item.label,
+      pricingModel: item.pricingModel,
+      priceAmount: row?.priceAmount ?? 0,
+      priceCurrency: row?.priceCurrency ?? defaultAddOnPriceCurrency,
+      validityDays: row?.validityDays ?? defaultAddOnValidityDays,
+    }
+  })
+}
+
+export async function updateAdminBusinessAddOnPrices(input: {
+  prices: unknown
+}) {
+  if (!Array.isArray(input.prices)) throw new Error("Prices must be an array")
+  const rows = input.prices.map((price) => {
+    if (!price || typeof price !== "object") throw new Error("Each price row must be an object")
+    const payload = price as Record<string, unknown>
+    const accountType = cleanText(payload.accountType, 40) as BusinessAccountType | null
+    if (!accountType || !Object.values(BusinessAccountType).includes(accountType)) throw new Error("Valid business type is required")
+    const featureKey = cleanText(payload.featureKey, 120)
+    if (!featureKey) throw new Error("Add-on key is required")
+    const catalogItem = addOnCatalogItemFor(accountType, featureKey)
+    if (!catalogItem) throw new Error(`${featureKey} is not a valid add-on for ${accountType}`)
+    return {
+      ...catalogItem,
+      priceAmount: cleanPriceAmount(payload.priceAmount),
+      priceCurrency: cleanPriceCurrency(payload.priceCurrency),
+      validityDays: cleanValidityDays(payload.validityDays ?? defaultAddOnValidityDays),
+    }
+  })
+
+  await upsertBusinessAddOnPriceRows(rows)
+
+  return listAdminBusinessAddOnPrices()
 }
 
 export async function listAdminBusinessAddOnRequestsPage(input: {
@@ -2308,11 +2846,11 @@ export async function createAdminBusinessAddOnRequest(input: {
   if (!businessAccountId) throw new Error("Business account ID or public ID is required")
   const featureKey = cleanText(input.featureKey, 120)
   if (!featureKey) throw new Error("Feature key is required")
-  const status = (cleanText(input.status, 40) as BusinessAddOnRequestStatus | null) ?? BusinessAddOnRequestStatus.Approved
+  const status = (cleanText(input.status, 40) as BusinessAddOnRequestStatus | null) ?? BusinessAddOnRequestStatus.Enabled
   if (!Object.values(BusinessAddOnRequestStatus).includes(status)) {
     throw new Error("Valid add-on status is required")
   }
-  const validity = cleanAddOnValidity(input)
+  const requestedValidity = cleanAddOnValidity(input)
 
   const account = await db.businessAccount.findFirst({
     where: {
@@ -2322,18 +2860,31 @@ export async function createAdminBusinessAddOnRequest(input: {
     include: {
       plan: true,
       owner: { select: { id: true, email: true, phone: true, firstName: true, lastName: true, companyName: true } },
-      addOnRequests: { where: activeAddOnRequestWhere() },
+      addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect },
     },
   })
   if (!account) throw new Error("Business account was not found")
 
-  const { label } = businessAddOnDetailsForAccount(account, featureKey)
+  const addOnDetails = businessAddOnDetailsForAccount(account, featureKey)
+  const { label } = addOnDetails
+  const priceQuote = await priceQuoteForAddOnDetails(account.type, addOnDetails)
   const current = await db.businessAddOnRequest.findUnique({
     where: { businessAccountId_featureKey: { businessAccountId: account.id, featureKey } },
     select: { status: true },
   })
 
   const decidedAt = status === BusinessAddOnRequestStatus.Requested ? null : new Date()
+  const validFrom = activeAddOnStatuses.includes(status)
+    ? requestedValidity.validFrom ?? decidedAt ?? new Date()
+    : requestedValidity.validFrom
+  const validUntil = activeAddOnStatuses.includes(status) && !requestedValidity.validUntil
+    ? addDaysUtc(validFrom ?? new Date(), priceQuote.validityDays)
+    : requestedValidity.validUntil
+  const validity = {
+    validFrom,
+    validUntil,
+    renewalAt: requestedValidity.renewalAt ?? validUntil,
+  }
   const note = cleanText(input.note, 500)
   const row = await db.businessAddOnRequest.upsert({
     where: {
@@ -2348,6 +2899,10 @@ export async function createAdminBusinessAddOnRequest(input: {
       label,
       note,
       status,
+      priceAmount: priceQuote.priceAmount,
+      priceCurrency: priceQuote.priceCurrency,
+      priceQuantity: priceQuote.priceQuantity,
+      unitPriceAmount: priceQuote.unitPriceAmount,
       decidedByAdminId: decidedAt ? input.adminId : null,
       decidedAt,
       validFrom: validity.validFrom,
@@ -2358,6 +2913,10 @@ export async function createAdminBusinessAddOnRequest(input: {
       label,
       note,
       status,
+      priceAmount: priceQuote.priceAmount,
+      priceCurrency: priceQuote.priceCurrency,
+      priceQuantity: priceQuote.priceQuantity,
+      unitPriceAmount: priceQuote.unitPriceAmount,
       decidedByAdminId: decidedAt ? input.adminId : null,
       decidedAt,
       validFrom: validity.validFrom,
@@ -2369,7 +2928,7 @@ export async function createAdminBusinessAddOnRequest(input: {
         include: {
           plan: true,
           owner: { select: { id: true, email: true, phone: true, firstName: true, lastName: true, companyName: true } },
-          addOnRequests: { where: activeAddOnRequestWhere() },
+          addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect },
         },
       },
       requestedBy: true,
@@ -2400,6 +2959,11 @@ export async function createAdminBusinessAddOnRequest(input: {
       featureKey,
       label,
       note,
+      priceAmount: row.priceAmount,
+      priceCurrency: row.priceCurrency,
+      priceQuantity: row.priceQuantity,
+      unitPriceAmount: row.unitPriceAmount,
+      validityDays: priceQuote.validityDays,
       previousStatus: current?.status ?? null,
       status,
       validFrom: toIso(row.validFrom),
@@ -2539,7 +3103,7 @@ export async function updateAdminBusinessAddOnRequest(input: {
         include: {
           plan: true,
           owner: { select: { id: true, email: true, phone: true, firstName: true, lastName: true, companyName: true } },
-          addOnRequests: { where: activeAddOnRequestWhere() },
+          addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect },
         },
       },
       requestedBy: true,
@@ -3056,13 +3620,14 @@ export async function listAdminBusinessSupportTicketsPage(input: {
 }
 
 export async function getAdminBusinessWorkflowCounts() {
-  const [pendingAddOns, requestedAddOns, activeTickets, newTickets] = await Promise.all([
+  const [pendingAddOns, requestedAddOns, paidAddOns, activeTickets, newTickets] = await Promise.all([
     db.businessAddOnRequest.count({ where: { status: { in: [BusinessAddOnRequestStatus.Requested, BusinessAddOnRequestStatus.Approved] } } }),
     db.businessAddOnRequest.count({ where: { status: BusinessAddOnRequestStatus.Requested } }),
+    db.businessAddOnRequest.count({ where: { status: { in: activeAddOnStatuses } } }),
     db.businessSupportTicket.count({ where: { status: { in: [BusinessSupportTicketStatus.Open, BusinessSupportTicketStatus.InProgress] } } }),
     db.businessSupportTicket.count({ where: { status: BusinessSupportTicketStatus.Open } }),
   ])
-  return { pendingAddOns, requestedAddOns, activeTickets, newTickets }
+  return { pendingAddOns, requestedAddOns, paidAddOns, activeTickets, newTickets }
 }
 
 export async function updateAdminBusinessSupportTicket(input: {
@@ -3519,7 +4084,7 @@ export async function getMyBusinessAccess(userId: string) {
           plan: true,
           roles: true,
           permissions: true,
-          addOnRequests: { where: activeAddOnRequestWhere() },
+          addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect },
         },
       },
     },
@@ -3536,12 +4101,22 @@ export async function getMyBusinessAccess(userId: string) {
     const account = membership.businessAccount
     const isOwner = account.ownerUserId === userId
     const usage = await usageForAccount(account)
-    const entitlements = buildEntitlementPayload(
+    const entitlements = await buildEntitlementPayload(
       account,
       usage,
       account.addOnRequests.map((request) => request.featureKey),
       account.addOnRequests,
     )
+    let paymentTransactions: Awaited<ReturnType<typeof db.businessPaymentTransaction.findMany>> = []
+    try {
+      paymentTransactions = await db.businessPaymentTransaction.findMany({
+        where: { businessAccountId: account.id },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      })
+    } catch (error) {
+      logError("Unable to load business payment transactions; continuing without payment history", error)
+    }
     const permissionCodes = new Set(permissions.map((permission) => permission.code))
     const permissionFeatures = new Set(permissions.map((permission) => permission.featureKey).filter(Boolean))
     const roleMenuKeys = permissions.map((permission) => permission.menuKey).filter(Boolean)
@@ -3614,6 +4189,7 @@ export async function getMyBusinessAccess(userId: string) {
       limitAddOns: entitlements.limitAddOns,
       addOns: entitlements.addOns,
       activeAddOns: entitlements.activeAddOns,
+      paymentTransactions: paymentTransactions.map(mapBusinessPaymentTransaction),
       actions,
       entitlements,
     }
@@ -3984,7 +4560,7 @@ export async function acceptBusinessInvitation(input: {
             roles: {
               orderBy: { createdAt: "asc" },
             },
-            addOnRequests: { where: activeAddOnRequestWhere() },
+            addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect },
           },
         },
       },

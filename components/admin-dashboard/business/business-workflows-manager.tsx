@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { CirclePlus, Clock3, Eye, LifeBuoy, MoreHorizontal, Search, Zap } from "lucide-react"
+import { CircleDollarSign, CirclePlus, Clock3, Eye, LifeBuoy, MoreHorizontal, Search, Zap } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -40,7 +40,20 @@ type AddOnRequest = {
   validFrom?: string | null
   validUntil?: string | null
   renewalAt?: string | null
+  priceAmount?: number | null
+  priceCurrency?: string | null
+  priceQuantity?: number | null
+  unitPriceAmount?: number | null
   createdAt: string
+}
+type AddOnPrice = {
+  accountType: string
+  featureKey: string
+  label: string
+  pricingModel: string
+  priceAmount: number
+  priceCurrency: string
+  validityDays: number
 }
 type SupportTicket = { id: string; subject: string; message: string; status: string; priority: string; category?: string | null; createdBy: Person; businessAccount: Account; createdAt: string }
 type PageData<T> = { items: T[]; total: number; page: number; pageSize: number; totalPages: number }
@@ -52,8 +65,9 @@ type PendingAction =
   | { type: "delete"; kind: "tickets"; item: SupportTicket }
 
 const ticketStatuses = ["Open", "InProgress", "Resolved", "Closed"]
-const addOnStatuses = ["Requested", "Approved", "Enabled", "Rejected"]
+const addOnStatuses = ["Enabled", "Rejected"]
 const accountTypes = ["Garage", "Fleet", "Supplier"]
+const supportedCurrencies = ["AED", "USD", "EUR", "GBP", "SAR", "INR"]
 const addOnPresets = [
   { key: "api.standard", label: "API access" },
   { key: "api.enterprise", label: "Enterprise API access" },
@@ -71,13 +85,18 @@ const initialManualAddOnForm = {
   businessAccountId: "",
   customFeatureKey: "",
   preset: "api.standard",
-  status: "Approved",
+  status: "Enabled",
   validFrom: "",
   validUntil: "",
 }
-const statusLabel = (status: string) => status === "InProgress" ? "In Progress" : status
+const statusLabel = (status: string) => {
+  if (status === "InProgress") return "In Progress"
+  if (status === "Enabled" || status === "Approved") return "Paid"
+  if (status === "Requested") return "Payment pending"
+  return status
+}
 const statusClass = (status: string) => {
-  if (status === "Enabled" || status === "Resolved") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+  if (status === "Enabled" || status === "Approved" || status === "Resolved") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
   if (status === "Closed") return "border-slate-500/30 bg-slate-500/10 text-slate-300"
   if (status === "Open") return "border-blue-500/30 bg-blue-500/10 text-blue-300"
   if (status === "Rejected") return "border-red-500/30 bg-red-500/10 text-red-300"
@@ -104,8 +123,11 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
 })
 const formatDateTime = (value: string) => dateTimeFormatter.format(new Date(value))
 const formatOptionalDate = (value?: string | null) => value ? dateFormatter.format(new Date(value)) : "Not set"
+const formatValidity = (days?: number | null) => typeof days === "number" && days > 0 ? `${days} day${days === 1 ? "" : "s"}` : "Not set"
 const dateInputValue = (value?: string | null) => value ? value.slice(0, 10) : ""
 const renewalDateFromExpiry = (value: string) => value
+const formatMoney = (amount?: number | null, currency = "AED") =>
+  typeof amount === "number" ? `${currency} ${(amount / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Not quoted"
 const hoursSince = (value: string) => Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 36e5))
 const ageLabel = (value: string) => {
   const hours = hoursSince(value)
@@ -126,7 +148,7 @@ export function BusinessWorkflowsManager({
   queue: Queue
   addOns: PageData<AddOnRequest>
   tickets: PageData<SupportTicket>
-  counts: { pendingAddOns: number; requestedAddOns?: number; activeTickets: number; newTickets?: number }
+  counts: { pendingAddOns: number; requestedAddOns?: number; paidAddOns?: number; activeTickets: number; newTickets?: number }
   filters: { query: string; status: string; accountType: string }
 }) {
   const router = useRouter()
@@ -144,11 +166,16 @@ export function BusinessWorkflowsManager({
   const [accountOptions, setAccountOptions] = useState<AccountOption[]>([])
   const [selectedAccount, setSelectedAccount] = useState<AccountOption | null>(null)
   const [accountSearchLoading, setAccountSearchLoading] = useState(false)
+  const [pricesOpen, setPricesOpen] = useState(false)
+  const [prices, setPrices] = useState<AddOnPrice[]>([])
+  const [pricesLoading, setPricesLoading] = useState(false)
+  const [priceAccountType, setPriceAccountType] = useState("Garage")
   const pageData = queue === "tickets" ? tickets : addOns
   const statuses = queue === "tickets" ? ticketStatuses : addOnStatuses
   const manualFeatureKey = manualAddOnForm.preset === "custom"
     ? manualAddOnForm.customFeatureKey.trim()
     : manualAddOnForm.preset
+  const visiblePrices = prices.filter((price) => price.accountType === priceAccountType)
 
   useEffect(() => {
     if (!manualAddOnOpen) return
@@ -175,6 +202,18 @@ export function BusinessWorkflowsManager({
       window.clearTimeout(timeout)
     }
   }, [accountSearch, manualAddOnOpen])
+
+  useEffect(() => {
+    if (!pricesOpen) return
+    void fetch("/api/v1/admin/business/add-on-prices", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: { prices?: AddOnPrice[] }) => setPrices(payload.prices ?? []))
+      .catch(() => {
+        setPrices([])
+        toast.error("Unable to load add-on prices.")
+      })
+      .finally(() => setPricesLoading(false))
+  }, [pricesOpen])
 
   function navigate(next: { queue?: Queue; page?: number; query?: string; status?: string; accountType?: string }) {
     const params = new URLSearchParams()
@@ -269,11 +308,44 @@ export function BusinessWorkflowsManager({
     }
   }
 
+  async function savePrices() {
+    setSaving(true)
+    try {
+      const response = await fetch("/api/v1/admin/business/add-on-prices", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prices }),
+      })
+      const result = (await response.json().catch(() => null)) as { ok?: boolean; message?: string; prices?: AddOnPrice[] } | null
+      if (!response.ok || result?.ok === false) {
+        toast.error(result?.message ?? "Unable to update add-on prices.")
+        return
+      }
+      setPrices(result?.prices ?? prices)
+      toast.success("Add-on prices updated.")
+    } catch {
+      toast.error("Unable to update add-on prices.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function updatePrice(featureKey: string, patch: Partial<Pick<AddOnPrice, "priceAmount" | "priceCurrency" | "validityDays">>) {
+    setPrices((current) => current.map((price) =>
+      price.accountType === priceAccountType && price.featureKey === featureKey ? { ...price, ...patch } : price,
+    ))
+  }
+
   const openManualAddOn = () => {
     setManualAddOnOpen(true)
     setAccountSearch("")
     setSelectedAccount(null)
     setManualAddOnForm((current) => ({ ...current, businessAccountId: "" }))
+  }
+
+  const openPrices = () => {
+    setPricesLoading(true)
+    setPricesOpen(true)
   }
 
   async function confirmAction() {
@@ -357,8 +429,8 @@ export function BusinessWorkflowsManager({
             <p className="text-xs text-[#9CA3AF]">Active tickets</p>
           </div>
           <div className="rounded-lg border border-[#2A2A2A] bg-[#050505] px-4 py-3">
-            <p className="text-lg font-semibold text-white">{counts.requestedAddOns ?? counts.pendingAddOns}</p>
-            <p className="text-xs text-[#9CA3AF]">New add-ons</p>
+	            <p className="text-lg font-semibold text-white">{counts.paidAddOns ?? counts.pendingAddOns}</p>
+	            <p className="text-xs text-[#9CA3AF]">Paid add-ons</p>
           </div>
         </div>
       </div>
@@ -373,9 +445,14 @@ export function BusinessWorkflowsManager({
           </Button>
         </div>
         {queue === "add-ons" ? (
-          <Button onClick={openManualAddOn}>
-            <CirclePlus /> Add add-on
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={openPrices}>
+              <CircleDollarSign /> Manage prices
+            </Button>
+            <Button onClick={openManualAddOn}>
+              <CirclePlus /> Add add-on
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -422,12 +499,12 @@ export function BusinessWorkflowsManager({
                 </>
               ) : (
                 <>
-                  <TableHead>Request</TableHead>
+                  <TableHead>Add-on</TableHead>
                   <TableHead>Business</TableHead>
                   <TableHead>Plan / Type</TableHead>
-                  <TableHead>Received</TableHead>
+                  <TableHead>Purchased</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Fast response</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </>
               )}
             </TableRow>
@@ -459,29 +536,25 @@ export function BusinessWorkflowsManager({
                 </TableRow>
               ))
               : addOns.items.map((item) => (
-                <TableRow key={item.id} className={item.status === "Requested" ? "bg-[#DC2626]/5" : ""}>
-                  <TableCell>
-                    {item.status === "Requested" ? <Badge className="mb-2 bg-[#DC2626] text-white hover:bg-[#DC2626]">New</Badge> : null}
-                    <p className="font-medium text-white">{item.label}</p>
-                    <p className="max-w-xs truncate text-xs text-[#9CA3AF]">{item.featureKey}</p>
-                    <p className="text-xs text-[#6B7280]">Expires: {formatOptionalDate(item.validUntil)} · Renewal: {formatOptionalDate(item.renewalAt)}</p>
-                  </TableCell>
-                  <TableCell><p>{item.businessAccount.name}</p><p className="text-xs text-[#9CA3AF]">{item.businessAccount.publicId}</p></TableCell>
-                  <TableCell><p>{item.businessAccount.plan.name}</p><p className="text-xs text-[#9CA3AF]">{item.businessAccount.type}</p></TableCell>
-                  <TableCell><p className="font-medium text-white">{formatDateTime(item.createdAt)}</p><p className="flex items-center gap-1 text-xs text-[#9CA3AF]"><Clock3 className="h-3 w-3" />{ageLabel(item.createdAt)}</p></TableCell>
-                  <TableCell><Badge variant="outline" className={statusClass(item.status)}>{statusLabel(item.status)}</Badge></TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      {item.status === "Requested" ? (
-                        <Button
-                          size="sm"
-                          onClick={() => setPendingAction({ type: "status", kind: "add-ons", item, status: "Approved" })}
-                        >
-                          Approve
-                        </Button>
-                      ) : null}
-                      {actions("add-ons", item)}
-                    </div>
+	                <TableRow key={item.id}>
+	                  <TableCell>
+	                    <p className="font-medium text-white">{item.label}</p>
+	                    <p className="max-w-xs truncate text-xs text-[#9CA3AF]">{item.featureKey}</p>
+	                    <p className="text-xs text-[#FCA5A5]">Price: {formatMoney(item.priceAmount, item.priceCurrency ?? "AED")}</p>
+	                    <p className="text-xs text-[#6B7280]">Valid till: {formatOptionalDate(item.validUntil)} · Renewal: {formatOptionalDate(item.renewalAt)}</p>
+	                  </TableCell>
+	                  <TableCell>
+	                    <p>{item.businessAccount.name}</p>
+	                    <p className="text-xs text-[#9CA3AF]">{item.businessAccount.publicId}</p>
+	                    <p className="break-all text-xs text-[#6B7280]">Buyer: {item.requestedBy?.name || item.requestedBy?.email || "Admin/manual"}</p>
+	                  </TableCell>
+	                  <TableCell><p>{item.businessAccount.plan.name}</p><p className="text-xs text-[#9CA3AF]">{item.businessAccount.type}</p></TableCell>
+	                  <TableCell><p className="font-medium text-white">{formatDateTime(item.createdAt)}</p><p className="flex items-center gap-1 text-xs text-[#9CA3AF]"><Clock3 className="h-3 w-3" />{ageLabel(item.createdAt)}</p></TableCell>
+	                  <TableCell><Badge variant="outline" className={statusClass(item.status)}>{statusLabel(item.status)}</Badge></TableCell>
+	                  <TableCell className="text-right">
+	                    <div className="flex justify-end gap-2">
+	                      {actions("add-ons", item)}
+	                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -588,7 +661,7 @@ export function BusinessWorkflowsManager({
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {addOnStatuses.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+	                    {addOnStatuses.map((item) => <SelectItem key={item} value={item}>{statusLabel(item)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -621,15 +694,92 @@ export function BusinessWorkflowsManager({
                 <Input
                   value={manualAddOnForm.customFeatureKey}
                   onChange={(event) => setManualAddOnForm((current) => ({ ...current, customFeatureKey: event.target.value }))}
-                  placeholder="Example: limit.services.8, limit.products.100, api.standard"
+                  placeholder="Example: limit.services.5, limit.products.25, api.standard"
                 />
-                <p className="text-xs text-muted-foreground">Capacity keys use `limit.metric.target`, for example `limit.services.8`.</p>
+                <p className="text-xs text-muted-foreground">Capacity keys use `limit.metric.extraUnits`, for example `limit.services.5` adds 5 service slots to the current limit.</p>
               </div>
             ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setManualAddOnOpen(false)}>Cancel</Button>
             <Button disabled={saving} onClick={() => void createManualAddOn()}>{saving ? "Adding..." : "Add add-on"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pricesOpen} onOpenChange={setPricesOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto" style={{ width: "min(94vw, 980px)", maxWidth: "min(94vw, 980px)" }}>
+          <DialogHeader>
+            <DialogTitle>Manage add-on prices</DialogTitle>
+	            <DialogDescription>Set the price, currency, and validity shown in Garage, Fleet, and Supplier dashboards. Limit add-ons are priced per extra unit.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Select value={priceAccountType} onValueChange={setPriceAccountType}>
+              <SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {accountTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <div className="overflow-hidden rounded-lg border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Add-on</TableHead>
+	                    <TableHead>Pricing</TableHead>
+	                    <TableHead>Price</TableHead>
+	                    <TableHead>Currency</TableHead>
+	                    <TableHead>Validity</TableHead>
+	                  </TableRow>
+	                </TableHeader>
+	                <TableBody>
+	                  {pricesLoading ? (
+	                    <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">Loading prices...</TableCell></TableRow>
+	                  ) : visiblePrices.length ? visiblePrices.map((price) => (
+                    <TableRow key={`${price.accountType}:${price.featureKey}`}>
+                      <TableCell>
+                        <p className="font-medium">{price.label}</p>
+                        <p className="text-xs text-muted-foreground">{price.featureKey}</p>
+                      </TableCell>
+                      <TableCell>{price.pricingModel === "per_unit" ? "Per extra unit" : "Fixed"}</TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          value={String(price.priceAmount / 100)}
+                          onChange={(event) => updatePrice(price.featureKey, { priceAmount: Math.round((Number(event.target.value) || 0) * 100) })}
+                        />
+                        <p className="mt-1 text-xs text-muted-foreground">{formatMoney(price.priceAmount, price.priceCurrency)}</p>
+	                      </TableCell>
+	                      <TableCell>
+	                        <Select value={price.priceCurrency} onValueChange={(value) => updatePrice(price.featureKey, { priceCurrency: value })}>
+	                          <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+	                          <SelectContent>
+	                            {supportedCurrencies.map((currency) => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}
+	                          </SelectContent>
+	                        </Select>
+	                      </TableCell>
+	                      <TableCell>
+	                        <Input
+	                          type="number"
+	                          min={1}
+	                          step={1}
+	                          value={String(price.validityDays ?? 30)}
+	                          onChange={(event) => updatePrice(price.featureKey, { validityDays: Math.max(1, Math.round(Number(event.target.value) || 1)) })}
+	                        />
+	                        <p className="mt-1 text-xs text-muted-foreground">{formatValidity(price.validityDays)}</p>
+	                      </TableCell>
+	                    </TableRow>
+	                  )) : (
+	                    <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">No add-ons found for this dashboard type.</TableCell></TableRow>
+	                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPricesOpen(false)}>Close</Button>
+            <Button disabled={saving || pricesLoading} onClick={() => void savePrices()}>{saving ? "Saving..." : "Save prices"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -721,15 +871,29 @@ export function BusinessWorkflowsManager({
                   <p className="font-medium">{selectedAddOn.businessAccount.plan.name}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Submitted by</p>
-                  <p className="break-words font-medium">{selectedAddOn.requestedBy?.name ?? "Unknown"}</p>
-                  <p className="break-all text-xs text-muted-foreground">{selectedAddOn.requestedBy?.email ?? "Email not provided"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Created</p>
+	                <p className="text-xs text-muted-foreground">Purchased by</p>
+	                  <p className="break-words font-medium">{selectedAddOn.requestedBy?.name ?? "Unknown"}</p>
+	                  <p className="break-all text-xs text-muted-foreground">{selectedAddOn.requestedBy?.email ?? "Email not provided"}</p>
+	                </div>
+	                <div>
+	                  <p className="text-xs text-muted-foreground">Purchased on</p>
                   <p className="font-medium">{formatDateTime(selectedAddOn.createdAt)}</p>
                   <p className="text-xs text-muted-foreground">{ageLabel(selectedAddOn.createdAt)}</p>
                 </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Quoted price</p>
+                  <p className="font-medium">{formatMoney(selectedAddOn.priceAmount, selectedAddOn.priceCurrency ?? "AED")}</p>
+                  {typeof selectedAddOn.unitPriceAmount === "number" ? (
+                    <p className="text-xs text-muted-foreground">
+                      {formatMoney(selectedAddOn.unitPriceAmount, selectedAddOn.priceCurrency ?? "AED")} x {selectedAddOn.priceQuantity ?? 1}
+                    </p>
+                  ) : null}
+	                </div>
+	                <div>
+	                  <p className="text-xs text-muted-foreground">Valid till</p>
+	                  <p className="font-medium">{formatOptionalDate(selectedAddOn.validUntil)}</p>
+	                  <p className="text-xs text-muted-foreground">Renewal: {formatOptionalDate(selectedAddOn.renewalAt)}</p>
+	                </div>
               </div>
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Request note</p>
@@ -768,7 +932,7 @@ export function BusinessWorkflowsManager({
                   <p className="text-sm font-medium">Update status</p>
                   <Select value={nextStatus} onValueChange={setNextStatus}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>{addOnStatuses.map((item) => <SelectItem key={item} value={item}>{statusLabel(item)}</SelectItem>)}</SelectContent>
+	                    <SelectContent>{addOnStatuses.map((item) => <SelectItem key={item} value={item}>{statusLabel(item)}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <Button disabled={saving || !selectedHasChanges} onClick={updateStatus}>{saving ? "Saving..." : "Update status"}</Button>

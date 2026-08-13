@@ -341,6 +341,7 @@ model User {
   notifications                   Notification[]              @relation("UserNotificationRecipient")
   sentNotifications               Notification[]              @relation("UserNotificationActor")
   notificationDevices             NotificationDevice[]        @relation("UserNotificationDevice")
+  businessPaymentTransactions     BusinessPaymentTransaction[] @relation("BusinessPaymentTransactionPayer")
   supplierReviewedBy              admin?                      @relation("SupplierApprovalReviewer", fields: [supplierReviewedByAdminId], references: [id], onDelete: SetNull)
 
   @@index([roles], type: Gin)
@@ -773,6 +774,7 @@ model BusinessAccount {
   addOnRequests BusinessAddOnRequest[]
   apiKeys       BusinessApiKey[]
   supportTickets BusinessSupportTicket[]
+  paymentTransactions BusinessPaymentTransaction[]
   savedSearches BusinessSavedSearch[]
   wishlistItems BusinessWishlistItem[]
 
@@ -925,6 +927,10 @@ model BusinessAddOnRequest {
   label             String
   note              String?
   status            BusinessAddOnRequestStatus @default(Requested)
+  priceAmount       Int?
+  priceCurrency     String?
+  priceQuantity     Int?
+  unitPriceAmount   Int?
   requestedByUserId String?
   decidedByAdminId  String?
   decidedAt         DateTime?
@@ -943,6 +949,46 @@ model BusinessAddOnRequest {
   @@index([status, createdAt])
   @@index([validUntil])
   @@map("business_add_on_requests")
+}
+
+model BusinessAddOnPrice {
+  id            String              @id @default(cuid())
+  accountType   BusinessAccountType
+  featureKey    String
+  label         String
+  pricingModel  String              @default("fixed")
+  priceAmount   Int                 @default(0)
+  priceCurrency String              @default("AED")
+  validityDays  Int                 @default(30)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@unique([accountType, featureKey])
+  @@index([accountType])
+  @@map("business_add_on_prices")
+}
+
+model BusinessPaymentTransaction {
+  id                String   @id @default(cuid())
+  businessAccountId String
+  payerUserId       String?
+  type              String
+  sourceId          String?
+  sourceKey         String?
+  description       String
+  amount            Int
+  currency          String   @default("AED")
+  status            String   @default("Paid")
+  metadata          Json?
+  createdAt         DateTime @default(now())
+
+  businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+  payer           User?           @relation("BusinessPaymentTransactionPayer", fields: [payerUserId], references: [id], onDelete: SetNull)
+
+  @@index([businessAccountId, createdAt])
+  @@index([payerUserId, createdAt])
+  @@index([type, createdAt])
+  @@map("business_payment_transactions")
 }
 
 model BusinessApiKey {

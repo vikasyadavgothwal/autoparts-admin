@@ -34,7 +34,7 @@ export async function BusinessPlatformPage({ section = "plans" }: { section?: "p
   )
   const activePlans = plans.filter((plan) => plan.isActive).length
   const subscribers = plans.reduce((sum, plan) => sum + plan.businessAccountCount, 0)
-  const pendingAddOns = addOnRequests.filter((request) => request.status === "Requested" || request.status === "Approved").length
+  const paidAddOns = addOnRequests.filter((request) => request.status === "Enabled" || request.status === "Approved").length
   const openTickets = supportTickets.filter((ticket) => ticket.status === "Open" || ticket.status === "InProgress").length
 
   return (
@@ -53,7 +53,7 @@ export async function BusinessPlatformPage({ section = "plans" }: { section?: "p
                   {[
                     { label: "Active plans", value: activePlans },
                     { label: "Subscribers", value: subscribers },
-                    { label: "Pending add-ons", value: pendingAddOns },
+                    { label: "Paid add-ons", value: paidAddOns },
                     { label: "Open tickets", value: openTickets },
                   ].map((item) => (
                     <div key={item.label} className="rounded-lg border border-white/10 bg-black/30 px-4 py-3 text-right">

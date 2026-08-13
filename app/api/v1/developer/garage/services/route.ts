@@ -3,7 +3,7 @@ import { NextRequest } from "next/server"
 import { apiCreated, apiError, apiErrorMessage, apiOk, readJsonBody } from "@/lib/auth/api-guards"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
-import { assertBusinessPlanLimit, logBusinessActivity } from "@/services/business/business-platform-service"
+import { assertBusinessPlanLimit, logBusinessActivity, reconcileGarageServicePlan } from "@/services/business/business-platform-service"
 import { requireDeveloperApiKey } from "@/services/business/business-api-key-service"
 import { createGarageService, listGarageServices } from "@/services/garage/garage-service"
 import type { GarageServiceInput } from "@/types/garage/services"
@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   const auth = await requireDeveloperApiKey(request, BusinessAccountType.Garage, "garage.services.read")
   if (!auth.ok) return auth.response
+  await reconcileGarageServicePlan(auth.context.ownerUserId)
   return apiOk({ services: await listGarageServices(auth.context.ownerUserId) })
 }
 
@@ -22,6 +23,7 @@ export async function POST(request: NextRequest) {
   const parsed = await readJsonBody<GarageServiceInput>(request)
   if (!parsed.ok) return apiError(parsed.message)
   try {
+    await reconcileGarageServicePlan(auth.context.ownerUserId)
     const currentCount = await db.garageService.count({ where: { garageId: auth.context.ownerUserId, status: "active" } })
     await assertBusinessPlanLimit({
       userId: auth.context.ownerUserId,
