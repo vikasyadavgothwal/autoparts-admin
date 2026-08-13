@@ -383,9 +383,9 @@ export function BusinessAccountPlanAssignment({
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#DC2626]">Admin plan assignment</p>
           <h2 className="mt-2 text-xl font-semibold text-white">Users & Plans</h2>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-[#9CA3AF]">
+          {/* <p className="mt-1 max-w-3xl text-sm leading-6 text-[#9CA3AF]">
             Admin can review each business profile&apos;s plan, active add-on permissions, and configured role permissions from one table.
-          </p>
+          </p> */}
         </div>
         <div className="rounded-lg border border-[#2A2A2A] bg-[#050505] px-4 py-3 text-right">
           <p className="text-lg font-semibold text-white">{accounts.length}</p>

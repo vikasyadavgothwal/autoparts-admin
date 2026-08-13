@@ -16,7 +16,7 @@ export function RfqPageContent() {
           <h1 className="text-3xl font-bold text-white">RFQs</h1>
           <p className="text-[#9CA3AF]">RFQ landing content for public page management.</p>
         </div>
-        <Button type="button">Save</Button>
+        <Button type="button">Publish</Button>
       </div>
 
       <Card className="rounded-lg border-[#2A2A2A] bg-[#1A1A1A] p-0">
@@ -34,4 +34,3 @@ export function RfqPageContent() {
     </div>
   )
 }
-

@@ -18,7 +18,7 @@ export function SuppliersPageContent() {
             Maintain supplier blocks, metadata, and publishing settings.
           </p>
         </div>
-        <Button type="button">Save</Button>
+        <Button type="button">Publish</Button>
       </div>
 
       <Card className="rounded-lg border-[#2A2A2A] bg-[#1A1A1A] p-0">
@@ -36,4 +36,3 @@ export function SuppliersPageContent() {
     </div>
   )
 }
-

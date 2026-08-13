@@ -58,7 +58,7 @@ export function LegalDocumentEditor({
 
     try {
       setIsSaving(true)
-      setStatusMessage("Saving...")
+      setStatusMessage("Publishing...")
       const value = editor.getHTML()
       const result = await saveLegalDocumentContent({
         slug,
@@ -334,14 +334,14 @@ export function LegalDocumentEditor({
               {isSaving ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
+                  Publishing...
                 </>
               ) : (
-                "Save"
+                "Publish"
               )}
             </Button>
             <span className="text-xs text-[#9CA3AF]">
-              {isSaving ? "Saving..." : statusMessage || "Ready to save"}
+              {isSaving ? "Publishing..." : statusMessage || "Ready to publish"}
             </span>
           </div>
         </CardContent>

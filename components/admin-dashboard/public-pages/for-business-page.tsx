@@ -104,7 +104,7 @@ export function ForBusinessPage({
     }))
     setSectionSaveStatus((previous: SaveSectionStatus) => ({
       ...previous,
-      [section]: "Saving...",
+      [section]: "Publishing...",
     }))
 
     try {

@@ -47,9 +47,7 @@ export async function BusinessPlatformPage({ section = "plans" }: { section?: "p
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#DC2626]">Subscription control center</p>
                   <h1 className="mt-3 text-3xl font-semibold text-white lg:text-4xl">Business Platform</h1>
-                  <p className="mt-3 max-w-3xl text-sm leading-6 text-[#B8BDC7]">
-                    Manage plan pricing, feature access, limits, add-on approvals, support priority, staff permissions, and device visibility across Fleet, Garage, and Supplier accounts.
-                  </p>
+
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:flex">
                   {[
@@ -98,9 +96,6 @@ export async function BusinessPlatformPage({ section = "plans" }: { section?: "p
           <div className="flex flex-col gap-4 border-b border-[#2A2A2A] pb-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-xl font-semibold text-white">Plan Management</h2>
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-[#9CA3AF]">
-                Configure commercial rules for each business type. Blank limits mean unlimited access; enter 0 to block a feature.
-              </p>
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
               {[

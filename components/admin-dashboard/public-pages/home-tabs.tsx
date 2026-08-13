@@ -146,7 +146,7 @@ export function HomeTabs({ initialConfig, initialSeo }: HomePageContentProps) {
     }))
     setSectionSaveStatus((previous: SaveSectionStatus) => ({
       ...previous,
-      [section]: "Saving...",
+      [section]: "Publishing...",
     }))
 
     try {
@@ -271,7 +271,7 @@ export function HomeTabs({ initialConfig, initialSeo }: HomePageContentProps) {
     }))
     setSectionSaveStatus((previous: SaveSectionStatus) => ({
       ...previous,
-      banner: "Image selected. Click Save to upload.",
+      banner: "Image selected. Click Publish to upload.",
     }))
 
     setPendingBannerImage(file)

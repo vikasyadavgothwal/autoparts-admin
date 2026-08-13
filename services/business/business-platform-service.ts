@@ -382,18 +382,25 @@ const activeAddOnStatuses: BusinessAddOnRequestStatus[] = [
   BusinessAddOnRequestStatus.Enabled,
 ]
 
+const enabledAddOnStatuses: BusinessAddOnRequestStatus[] = [BusinessAddOnRequestStatus.Enabled]
+
 const isRetiredBusinessFeatureKey = (key: string) =>
   key === "business.saved-searches.create" ||
   key === "business.wishlist.create" ||
+  key === "approval-workflows.manage" ||
+  key === "permissions.manage" ||
   key.startsWith("limit.savedSearches.") ||
   key.startsWith("limit.wishlist.")
 
 const isApiFeatureKey = (key: string) => key === "api.standard" || key === "api.enterprise"
 
+const apiAccessLevelForPlanCode = (code: BusinessPlanCode) =>
+  code === BusinessPlanCode.Enterprise ? "enterprise" : code === BusinessPlanCode.Pro ? "standard" : "none"
+
 const activeAddOnRequestWhere = (): Prisma.BusinessAddOnRequestWhereInput => {
   const now = new Date()
   return {
-    status: { in: activeAddOnStatuses },
+    status: { in: enabledAddOnStatuses },
     AND: [
       { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
       { OR: [{ validUntil: null }, { validUntil: { gt: now } }] },
@@ -549,7 +556,6 @@ export const businessEntitlementFeatures = {
 export const businessRequestableFeatureLabels = {
   "staff.manage": "Staff users",
   "roles.manage": "Custom roles",
-  "permissions.manage": "Custom permissions",
   "reports.usage": "Usage reports",
   "reports.activity": "Activity reports",
   "support.priority": "Priority support",
@@ -557,7 +563,6 @@ export const businessRequestableFeatureLabels = {
   "garage.schedule.manage": "Garage schedule management",
   "api.standard": "API access",
   "api.enterprise": "Enterprise API access",
-  "approval-workflows.manage": "Approval workflows",
   "marketplace.featured-vendor": "Featured vendor placement",
   "marketplace.search-boost": "Marketplace search boost",
 } satisfies Record<string, string>
@@ -756,7 +761,7 @@ const mapPlan = (plan: BusinessPlanWithCount) => ({
     featuredVendor: plan.featuredVendor,
     searchBoostLevel: plan.searchBoostLevel,
   },
-  apiAccessLevel: plan.code === BusinessPlanCode.Free ? "none" : plan.apiAccessLevel,
+  apiAccessLevel: apiAccessLevelForPlanCode(plan.code),
   approvalWorkflowEnabled: plan.approvalWorkflowEnabled,
   customRolesEnabled: plan.customRolesEnabled,
   enabledFeatures: plan.enabledFeatures.filter(
@@ -1011,6 +1016,7 @@ export async function updateBusinessPlan(
 ) {
   await ensureDefaultBusinessPlans()
   const where = { id: idOrCode }
+  const currentPlan = await db.businessPlan.findUniqueOrThrow({ where, select: { code: true } })
 
   const data: Prisma.BusinessPlanUpdateInput = {}
   const name = cleanText(input.name)
@@ -1080,8 +1086,7 @@ export async function updateBusinessPlan(
     if (typeof input[key] === "boolean") data[key] = input[key]
   }
 
-  const apiAccessLevel = cleanText(input.apiAccessLevel, 30)
-  if (apiAccessLevel) data.apiAccessLevel = apiAccessLevel.toLowerCase()
+  data.apiAccessLevel = apiAccessLevelForPlanCode(currentPlan.code)
 
   if (input.enabledFeatures !== undefined) data.enabledFeatures = cleanTextArray(input.enabledFeatures)
   if (input.enabledMenus !== undefined) data.enabledMenus = cleanTextArray(input.enabledMenus)
@@ -1448,14 +1453,15 @@ const featureSetForPlan = (plan: {
   code?: BusinessPlanCode
 }, accountType?: BusinessAccountType) => {
   const isFreePlan = plan.code === BusinessPlanCode.Free
-  const features = new Set(plan.enabledFeatures.filter((feature) => !isFreePlan || !isApiFeatureKey(feature)))
+  const features = new Set(plan.enabledFeatures.filter((feature) => !isApiFeatureKey(feature)))
   if (plan.dashboardReports) features.add("reports.dashboard")
   if (plan.usageReports) features.add("reports.usage")
   if (plan.activityReports) features.add("reports.activity")
   if (plan.prioritySupport) features.add("support.priority")
   if (plan.integrationLimit === null || plan.integrationLimit > 0) features.add("integrations.manage")
-  if (!isFreePlan && (plan.apiAccessLevel === "standard" || plan.apiAccessLevel === "enterprise")) features.add("api.standard")
-  if (!isFreePlan && plan.apiAccessLevel === "enterprise") features.add("api.enterprise")
+  const apiAccessLevel = plan.code ? apiAccessLevelForPlanCode(plan.code) : plan.apiAccessLevel
+  if (!isFreePlan && (apiAccessLevel === "standard" || apiAccessLevel === "enterprise")) features.add("api.standard")
+  if (!isFreePlan && apiAccessLevel === "enterprise") features.add("api.enterprise")
   if (plan.approvalWorkflowEnabled) features.add("approval-workflows.manage")
   if (plan.serviceLimit === null || plan.serviceLimit > 0) features.add("garage.services.manage")
   if (plan.appointmentLimit === null || plan.appointmentLimit > 0) {
@@ -1550,16 +1556,19 @@ const buildEntitlementPayload = (
       key: feature,
       label: requestableLabels[feature] ?? feature,
     }))
-  const requestableFeatures = lockedFeatures.filter((feature) =>
-    Boolean(requestableLabels[feature.key]),
-  )
+  const isEnterprisePlan = account.plan.code === BusinessPlanCode.Enterprise
+  const requestableFeatures = isEnterprisePlan
+    ? []
+    : lockedFeatures.filter((feature) => Boolean(requestableLabels[feature.key]))
   const actions = Object.fromEntries(
     Object.keys(businessEntitlementActionRules[account.type]).map((action) => [
       action,
       allowedActionFor(action, account, usageCounts, limits, addOnFeatures),
     ]),
   )
-  const limitAddOns = limitAddOnOptions(account.type, baseLimits, limits, usageCounts, enabledAddOnFeatures)
+  const limitAddOns = isEnterprisePlan
+    ? []
+    : limitAddOnOptions(account.type, baseLimits, limits, usageCounts, enabledAddOnFeatures)
 
   const enabledMenus = account.plan.enabledMenus.filter(
     (menu) => menu !== "saved-searches" && menu !== "wishlist" && menu !== "security" && menu !== "api-keys",
@@ -2105,6 +2114,9 @@ const businessAddOnDetailsForAccount = (
   },
   featureKey: string,
 ) => {
+  if (account.plan.code === BusinessPlanCode.Enterprise) {
+    throw new Error("Paid add-ons are not available for Enterprise plans")
+  }
   const limitAddOn = parseLimitAddOnKey(featureKey)
   if (limitAddOn) {
     if (!(limitAddOnMetrics[account.type] as readonly BusinessLimitMetric[]).includes(limitAddOn.metric)) {

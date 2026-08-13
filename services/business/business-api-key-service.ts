@@ -14,22 +14,30 @@ import { getMyBusinessAccess, logBusinessActivity } from "@/services/business/bu
 
 export const developerApiScopes = {
   Garage: [
+    "account.profile.read",
+    "account.profile.write",
     "garage.services.read",
     "garage.services.write",
     "garage.bookings.read",
     "garage.bookings.write",
   ],
   Fleet: [
+    "account.profile.read",
+    "account.profile.write",
     "fleet.vehicles.read",
     "fleet.vehicles.write",
   ],
   Supplier: [
+    "account.profile.read",
+    "account.profile.write",
     "supplier.inventory.read",
     "supplier.inventory.write",
   ],
 } satisfies Record<BusinessAccountType, string[]>
 
 export const developerApiScopeLabels = {
+  "account.profile.read": "Read business profile",
+  "account.profile.write": "Update business profile",
   "garage.services.read": "Read garage services",
   "garage.services.write": "Create and update garage services",
   "garage.bookings.read": "Read garage bookings",
@@ -408,16 +416,19 @@ export async function requireDeveloperApiKey(
     LIMIT 1
   `
   const row = rows[0]
-  if (!row || row.status !== "Active") {
-    return { ok: false, response: errorResponse(401, "API_KEY_REVOKED", "API key is invalid or revoked.") }
+  if (!row) {
+    return { ok: false, response: errorResponse(401, "API_KEY_INVALID", "The API key you provided is not valid. Check that you copied the complete key and try again.") }
+  }
+  if (row.status !== "Active") {
+    return { ok: false, response: errorResponse(401, "API_KEY_REVOKED", "This API key has been revoked. Create or use an active key and try again.") }
   }
   if (row.encryptedKey) {
     try {
       if (decryptApiKey(row.encryptedKey) !== apiKey) {
-        return { ok: false, response: errorResponse(401, "API_KEY_REVOKED", "API key is invalid or revoked.") }
+        return { ok: false, response: errorResponse(401, "API_KEY_INVALID", "The API key you provided is not valid. Check that you copied the complete key and try again.") }
       }
     } catch {
-      return { ok: false, response: errorResponse(401, "API_KEY_REVOKED", "API key is invalid or revoked.") }
+      return { ok: false, response: errorResponse(401, "API_KEY_INVALID", "The API key you provided is not valid. Check that you copied the complete key and try again.") }
     }
   }
   if (row.accountType !== accountType) {

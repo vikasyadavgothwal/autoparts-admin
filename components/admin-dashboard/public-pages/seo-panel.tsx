@@ -91,14 +91,14 @@ export function SeoPanel({ slug, initialSeo }: SeoPanelProps) {
       ogImage: objectUrl,
     }))
     setPendingOgImage(file)
-    setStatusMessage("Open Graph image selected. Click Save SEO to upload.")
+    setStatusMessage("Open Graph image selected. Click Publish to upload.")
     event.target.value = ""
   }
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setIsSaving(true)
-    setStatusMessage(pendingOgImage ? "Uploading image..." : "Saving SEO...")
+    setStatusMessage(pendingOgImage ? "Uploading image..." : "Publishing SEO...")
 
     try {
       if (pendingOgImage) {
@@ -243,7 +243,7 @@ export function SeoPanel({ slug, initialSeo }: SeoPanelProps) {
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#2A2A2A] pt-4">
             <p className="text-sm text-[#9CA3AF]">{statusMessage}</p>
             <Button type="submit" disabled={isSaving}>
-              {isSaving ? "Saving..." : "Save SEO"}
+              {isSaving ? "Publishing..." : "Publish"}
             </Button>
           </div>
         </form>

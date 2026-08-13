@@ -498,6 +498,54 @@ export async function updateSupplierProfile(
   return getSupplierProfile(supplierId);
 }
 
+export async function updateSupplierDeveloperProfile(
+  supplierId: string,
+  input: Record<string, unknown>,
+) {
+  const field = (name: string, maxLength: number) =>
+    Object.hasOwn(input, name) ? nullableText(input[name], maxLength) : undefined;
+  const postalCode = field("postalCode", 6);
+  const addressLine1 = field("addressLine1", 255);
+  const addressLine2 = field("addressLine2", 255);
+  const city = field("city", 120);
+  const state = field("state", 120);
+  const country = field("country", 120);
+
+  if (postalCode && !POSTAL_CODE_PATTERN.test(postalCode)) {
+    throw new Error("Postal code must be exactly 6 digits");
+  }
+  if (addressLine1 && !ADDRESS_LINE_PATTERN.test(addressLine1)) {
+    throw new Error("Address line 1 contains invalid characters");
+  }
+  if (addressLine2 && !ADDRESS_LINE_PATTERN.test(addressLine2)) {
+    throw new Error("Address line 2 contains invalid characters");
+  }
+  for (const [label, value] of [["City", city], ["State", state], ["Country", country]] as const) {
+    if (value && !PLACE_NAME_PATTERN.test(value)) {
+      throw new Error(`${label} contains invalid characters`);
+    }
+  }
+
+  await db.user.update({
+    where: { id: supplierId },
+    data: {
+      companyName: field("companyName", 160),
+      firstName: field("firstName", 100),
+      lastName: field("lastName", 100),
+      supplierContactPerson: field("contactPerson", 160),
+      supplierDesignation: field("designation", 120),
+      addressLine1,
+      addressLine2,
+      city,
+      state,
+      postalCode,
+      country,
+    },
+  });
+
+  return getSupplierProfile(supplierId);
+}
+
 type SupplierDocumentUrlField =
   | "tradeLicenseImageUrl"
   | "vatTrnImageUrl"

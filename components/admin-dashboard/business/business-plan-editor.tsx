@@ -194,7 +194,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
       whatsappNotifications: supportTier !== "Basic",
       customRolesEnabled: securityTier !== "Basic",
       approvalWorkflowEnabled: securityTier === "Premium",
-      apiAccessLevel: securityTier === "Premium" ? "enterprise" : securityTier === "Standard" ? "standard" : "none",
+      apiAccessLevel: plan.code === "Enterprise" ? "enterprise" : plan.code === "Pro" ? "standard" : "none",
       isActive: true,
     }
 
@@ -233,7 +233,6 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#DC2626]">Plan workspace</p>
             <h3 className="mt-1 text-lg font-semibold text-white">{selectedAccount} plans</h3>
-            <p className="mt-1 text-xs text-[#9CA3AF]">Admin manages activation, ending date, usage limits, login security, and support.</p>
           </div>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className="inline-flex rounded-lg border border-[#2A2A2A] bg-[#050505] p-1">

@@ -110,7 +110,7 @@ function SectionSaveAction({
   onSave,
   saveStatus,
   isSaving,
-  saveLabel = "Save",
+  saveLabel = "Publish",
 }: SaveSectionProps) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#2A2A2A] pt-4">
@@ -130,7 +130,7 @@ function SectionSaveAction({
         )}
       </Button>
       <span className="text-xs text-[#9CA3AF]">
-        {isSaving ? "Saving..." : saveStatus || "Ready to save"}
+        {isSaving ? "Publishing..." : saveStatus || "Ready to publish"}
       </span>
     </div>
   )

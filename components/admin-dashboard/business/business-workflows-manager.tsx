@@ -63,8 +63,6 @@ const addOnPresets = [
   { key: "support.priority", label: "Priority support" },
   { key: "staff.manage", label: "Staff users" },
   { key: "roles.manage", label: "Custom roles" },
-  { key: "permissions.manage", label: "Custom permissions" },
-  { key: "approval-workflows.manage", label: "Approval workflows" },
   { key: "marketplace.featured-vendor", label: "Featured vendor placement" },
   { key: "marketplace.search-boost", label: "Marketplace search boost" },
   { key: "custom", label: "Custom / capacity key" },

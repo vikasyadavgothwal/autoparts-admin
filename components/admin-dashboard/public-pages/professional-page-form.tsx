@@ -42,14 +42,14 @@ export function ProfessionalPageForm({
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!canSave) {
-      const message = "Add content before saving."
+      const message = "Add content before publishing."
       setStatusMessage(message)
       toast.error(message)
       return
     }
 
     setIsSubmitting(true)
-    setStatusMessage("Saving...")
+    setStatusMessage("Publishing...")
     const values = { heading: heading.trim(), subheading: subheading.trim() }
     const fallbackResult: PublicPageContentResult<{
       heading: string
@@ -168,7 +168,7 @@ export function ProfessionalPageForm({
                 className="rounded-lg"
                 disabled={isSubmitting}
               >
-                {isSubmitting ? "Saving..." : "Save"}
+                {isSubmitting ? "Publishing..." : "Publish"}
               </Button>
             </div>
           </form>

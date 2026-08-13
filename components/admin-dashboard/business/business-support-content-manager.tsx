@@ -283,7 +283,7 @@ export function BusinessSupportContentManager({ supportContent }: Props) {
       </div>
 
       <div className="rounded-lg border border-[#2A2A2A] bg-[#050505] p-4">
-        <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Dashboard
+        <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Dashboard &nbsp; &nbsp;
           <select value={selectedAccountType} onChange={(event) => changeAccountType(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-3 text-sm text-white md:max-w-xs">
             {accountTypes.map((item) => <option key={item}>{item}</option>)}
           </select>
@@ -291,11 +291,11 @@ export function BusinessSupportContentManager({ supportContent }: Props) {
         <p className="mt-2 text-xs text-[#6B7280]">Only {selectedAccountType} videos and FAQs are shown here. New content is added to {selectedAccountType} only.</p>
       </div>
 
-      <div className="grid gap-3 rounded-lg border border-[#2A2A2A] bg-[#050505] p-4 text-sm text-[#D1D5DB] lg:grid-cols-3">
+      {/* <div className="grid gap-3 rounded-lg border border-[#2A2A2A] bg-[#050505] p-4 text-sm text-[#D1D5DB] lg:grid-cols-3">
         <div className="flex gap-3"><UploadCloud className="mt-0.5 h-4 w-4 text-[#DC2626]" /><p><strong className="text-white">Upload video:</strong> MP4, WebM, or MOV is uploaded to S3. The generated S3 URL is stored in the database.</p></div>
         <div className="flex gap-3"><Info className="mt-0.5 h-4 w-4 text-[#DC2626]" /><p><strong className="text-white">Paste URL:</strong> YouTube watch, short, live, embed, or youtu.be links are accepted and shown as embeds.</p></div>
         <div className="flex gap-3"><HelpCircle className="mt-0.5 h-4 w-4 text-[#DC2626]" /><p><strong className="text-white">Visibility:</strong> FAQ and videos are common for all plans. Choose only the dashboard type.</p></div>
-      </div>
+      </div> */}
 
       <form key={formKey} onSubmit={submit} className="grid gap-3 rounded-lg border border-[#2A2A2A] bg-[#050505] p-4 md:grid-cols-2">
         <input type="hidden" name="id" defaultValue={editing?.kind === kind ? editing.item.id : ""} />
