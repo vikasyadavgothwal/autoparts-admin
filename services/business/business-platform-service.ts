@@ -3281,10 +3281,10 @@ export async function createBusinessSupportTicket(input: {
   if (!message) throw new Error("Support message is required")
   const allowedCategories =
     account.plan.supportTier === "Premium"
-      ? new Set(["account_assistance", "onboarding_training"])
+      ? new Set(["booking_completion", "account_assistance", "onboarding_training"])
       : account.plan.supportTier === "Standard"
-        ? new Set(["account_assistance"])
-        : new Set<string>()
+        ? new Set(["booking_completion", "account_assistance"])
+        : new Set(["booking_completion"])
   if (category && !allowedCategories.has(category)) throw new Error("This support option is not included in your current plan")
 
   const row = await db.businessSupportTicket.create({
@@ -3470,12 +3470,16 @@ export async function listBusinessSupportContent(input: { userId: string; busine
     ticketCategories:
       account.plan.supportTier === "Premium"
         ? [
+            { value: "booking_completion", label: "Booking completion / close request" },
             { value: "account_assistance", label: "Account assistance" },
             { value: "onboarding_training", label: "Onboarding / training support" },
           ]
         : account.plan.supportTier === "Standard"
-          ? [{ value: "account_assistance", label: "Account assistance" }]
-          : [],
+          ? [
+              { value: "booking_completion", label: "Booking completion / close request" },
+              { value: "account_assistance", label: "Account assistance" },
+            ]
+          : [{ value: "booking_completion", label: "Booking completion / close request" }],
     videos: await Promise.all(videos.map(mapSupportVideo)),
     faqs: faqs.map(mapSupportFaq),
   }

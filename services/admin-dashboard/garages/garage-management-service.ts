@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto"
 import { Star, TrendingUp, Users, Wrench } from "lucide-react"
 
 import { db } from "@/lib/database/prisma"
+import { BusinessAccountType, Prisma } from "@/lib/generated/prisma/client"
+import { logBusinessActivity } from "@/services/business/business-platform-service"
+import { createNotificationsSafely } from "@/services/notifications/notification-service"
 import type {
+  AdminGarageBookingRecord,
   GarageKpi,
   GarageRecord,
   GarageStatus,
@@ -43,6 +47,41 @@ type GarageRow = {
   reviews: GarageServiceReviewRecord[] | null
 }
 
+const WORKDAY_NAMES = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+] as const
+type GarageScheduleDay = (typeof WORKDAY_NAMES)[number]
+const WORKDAY_SET = new Set(WORKDAY_NAMES)
+
+type GarageProfileSchedule = {
+  workingDays: string[]
+  workingHoursByDay: Record<string, { enabled?: boolean }>
+}
+
+type GarageProfileRecordRow = {
+  workingDays: string[]
+  workingHoursByDay: Record<string, unknown> | null
+}
+
+type BookingDateRow = {
+  bookingDate: string | null
+}
+
+type AdminGarageBookingRow = AdminGarageBookingRecord & {
+  garageId: string
+}
+
+type GarageAdminScheduleInput = {
+  workingDays?: unknown
+  workingHoursByDay?: unknown
+}
+
 export type GarageAdminUpdateInput = {
   name?: unknown
   owner?: unknown
@@ -53,7 +92,14 @@ export type GarageAdminUpdateInput = {
   state?: unknown
   country?: unknown
   pincode?: unknown
+  workingDays?: unknown
+  workingHoursByDay?: unknown
   status?: unknown
+}
+
+export type GarageBookingAdminCompletionOverrideInput = {
+  reason?: unknown
+  evidence?: unknown
 }
 
 const text = (value: unknown, maxLength = 180) => {
@@ -65,6 +111,14 @@ const text = (value: unknown, maxLength = 180) => {
 const optionalText = (value: unknown, maxLength = 180) => {
   const normalized = text(value, maxLength)
   return normalized || null
+}
+
+const requiredReviewText = (value: unknown, label: string, minLength: number, maxLength: number) => {
+  const normalized = text(value, maxLength)
+  if (normalized.length < minLength) {
+    throw new Error(`${label} must be at least ${minLength} characters`)
+  }
+  return normalized
 }
 
 const email = (value: unknown) => {
@@ -94,6 +148,131 @@ const statusFromInput = (value: unknown) => {
     throw new Error("Status is invalid")
   }
   return normalized as GarageStatus
+}
+
+const daysFromInput = (value: unknown) =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => WORKDAY_SET.has(item))
+    : []
+
+const hoursByInput = (value: unknown): Record<string, { enabled?: boolean }> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+
+  const input = value as Record<string, unknown>
+  return Object.fromEntries(
+    Object.entries(input)
+      .filter(
+        (entry): entry is [GarageScheduleDay, unknown] =>
+          WORKDAY_SET.has(entry[0] as GarageScheduleDay) &&
+          Boolean(entry[1]),
+      )
+      .map(([day, rawValue]) => [
+        day,
+        { enabled: Boolean((rawValue as { enabled?: unknown })?.enabled) },
+      ]),
+  )
+}
+
+const toAvailability = (schedule: GarageProfileSchedule) => {
+  const hasHoursByDay = Object.keys(schedule.workingHoursByDay).length > 0
+  const selectedDays = hasHoursByDay
+    ? Object.entries(schedule.workingHoursByDay)
+        .filter(([, dayHours]) => Boolean(dayHours?.enabled))
+        .map(([day]) => day)
+    : schedule.workingDays
+
+  const availability = Object.fromEntries(
+    WORKDAY_NAMES.map((day) => [day, false]),
+  ) as Record<string, boolean>
+
+  if (selectedDays.length === 0) {
+    for (const day of WORKDAY_NAMES) {
+      availability[day] = true
+    }
+    return availability
+  }
+
+  for (const day of selectedDays) {
+    availability[day] = true
+  }
+
+  return availability
+}
+
+const parseProfileSchedule = (profile: GarageProfileRecordRow): GarageProfileSchedule => ({
+  workingDays: (profile.workingDays ?? []).filter(
+    (day): day is GarageScheduleDay => WORKDAY_SET.has(day as GarageScheduleDay),
+  ),
+  workingHoursByDay:
+    profile.workingHoursByDay && typeof profile.workingHoursByDay === "object"
+      ? (profile.workingHoursByDay as Record<string, { enabled?: boolean }>)
+      : {},
+})
+
+const bookingDayName = (value: string) =>
+  new Date(`${value}T12:00:00`).toLocaleDateString("en-US", { weekday: "long" })
+
+const findBlockedClosedDays = (
+  previous: GarageProfileSchedule,
+  next: GarageProfileSchedule,
+) => {
+  const previousAvailability = toAvailability(previous)
+  const nextAvailability = toAvailability(next)
+
+  return WORKDAY_NAMES.filter(
+    (day) => previousAvailability[day] && !nextAvailability[day],
+  )
+}
+
+const ensureNoActiveBookingsForClosedDays = async (
+  garageId: string,
+  input: GarageAdminScheduleInput,
+) => {
+  if (!("workingDays" in input) && !("workingHoursByDay" in input)) return
+
+  const [currentProfile] = await db.$queryRaw<GarageProfileRecordRow[]>`
+    SELECT
+      COALESCE("workingDays", ARRAY[]::text[]) AS "workingDays",
+      "workingHoursByDay"
+    FROM "garage_profiles"
+    WHERE "garageId" = ${garageId}
+    LIMIT 1
+  `
+  if (!currentProfile) return
+
+  const currentSchedule = parseProfileSchedule(currentProfile)
+  const requestedSchedule: GarageProfileSchedule = {
+    workingDays: daysFromInput(input.workingDays),
+    workingHoursByDay: hoursByInput(input.workingHoursByDay),
+  }
+  const closedDays = findBlockedClosedDays(currentSchedule, requestedSchedule)
+  if (closedDays.length === 0) return
+
+  const pendingBookings = await db.$queryRaw<BookingDateRow[]>`
+    SELECT "bookingDate"::text AS "bookingDate"
+    FROM "garage_bookings"
+    WHERE "garageId" = ${garageId}
+      AND "status" IN ('pending', 'pending_slot_selection', 'confirmed')
+      AND "bookingDate" IS NOT NULL
+  `
+  const blockedDays = closedDays.filter((day) =>
+    pendingBookings.some(
+      (booking) =>
+        booking.bookingDate &&
+        bookingDayName(booking.bookingDate) === day,
+    ),
+  )
+  if (blockedDays.length === 0) return
+
+  if (blockedDays.length === 1) {
+    throw new Error(
+      `Complete booking(s) on ${blockedDays[0]} before marking this day as closed.`,
+    )
+  }
+
+  throw new Error(
+    `Complete active bookings on ${blockedDays.join(", ")} before marking these days as closed.`,
+  )
 }
 
 const formatDate = (date: Date) =>
@@ -151,6 +330,7 @@ const mapGarage = (row: GarageRow): GarageRecord => {
     rating: row.reviewsCount ? String(Number(row.ratingAverage ?? 0)) : "No reviews",
     reviewsCount: asNumber(row.reviewsCount),
     reviews: row.reviews ?? [],
+    activeBookings: [],
     bookings: asNumber(row.bookingsCount),
     revenue: formatMoney(asNumber(row.revenueCents)),
     joinDate: formatDate(row.createdAt),
@@ -162,6 +342,19 @@ const mapGarage = (row: GarageRow): GarageRecord => {
     ),
   }
 }
+
+const mapAdminGarageBooking = (row: AdminGarageBookingRow): AdminGarageBookingRecord => ({
+  id: row.id,
+  publicId: row.publicId,
+  customerId: row.customerId,
+  customerName: row.customerName,
+  customerEmail: row.customerEmail,
+  customerPhone: row.customerPhone,
+  serviceName: row.serviceName,
+  bookingDate: row.bookingDate ? String(row.bookingDate).slice(0, 10) : null,
+  bookingTime: row.bookingTime,
+  status: row.status,
+})
 
 export async function listAdminGarages() {
   const rows = await db.$queryRaw<GarageRow[]>`
@@ -256,7 +449,155 @@ export async function listAdminGarages() {
     ORDER BY u."createdAt" DESC
   `
 
-  return rows.map(mapGarage)
+  const garages = rows.map(mapGarage)
+  const garageIds = garages.map((garage) => garage.internalId)
+
+  if (garageIds.length === 0) return garages
+
+  const bookingRows = await db.$queryRaw<AdminGarageBookingRow[]>`
+    SELECT
+      "id",
+      "publicId",
+      "garageId",
+      "customerId",
+      "customerName",
+      "customerEmail",
+      "customerPhone",
+      "serviceName",
+      "bookingDate"::text AS "bookingDate",
+      "bookingTime",
+      "status"
+    FROM "garage_bookings"
+    WHERE "garageId" IN (${Prisma.join(garageIds)})
+      AND "status" IN ('pending', 'pending_slot_selection', 'confirmed')
+    ORDER BY "bookingDate" ASC NULLS LAST, "bookingTime" ASC NULLS LAST, "createdAt" DESC
+  `
+
+  const bookingsByGarage = new Map<string, AdminGarageBookingRecord[]>()
+  for (const row of bookingRows) {
+    const bookings = bookingsByGarage.get(row.garageId) ?? []
+    bookings.push(mapAdminGarageBooking(row))
+    bookingsByGarage.set(row.garageId, bookings)
+  }
+
+  return garages.map((garage) => ({
+    ...garage,
+    activeBookings: bookingsByGarage.get(garage.internalId) ?? [],
+  }))
+}
+
+export async function completeGarageBookingByAdmin(
+  adminId: string,
+  bookingId: string,
+  input: GarageBookingAdminCompletionOverrideInput,
+) {
+  const reason = requiredReviewText(input.reason, "Override reason", 20, 500)
+  const evidence = requiredReviewText(input.evidence, "Evidence note", 20, 1200)
+  const trimmedBookingId = text(bookingId, 120)
+  if (!trimmedBookingId) throw new Error("Booking is required")
+
+  const [existing] = await db.$queryRaw<Array<AdminGarageBookingRow & {
+    garageName: string | null
+    businessAccountId: string | null
+  }>>`
+    SELECT
+      gb."id",
+      gb."publicId",
+      gb."garageId",
+      gb."customerId",
+      gb."customerName",
+      gb."customerEmail",
+      gb."customerPhone",
+      gb."serviceName",
+      gb."bookingDate"::text AS "bookingDate",
+      gb."bookingTime",
+      gb."status",
+      COALESCE(g."companyName", NULLIF(CONCAT_WS(' ', g."firstName", g."lastName"), ''), g."email") AS "garageName",
+      ba."id" AS "businessAccountId"
+    FROM "garage_bookings" gb
+    LEFT JOIN "users" g ON g."id" = gb."garageId"
+    LEFT JOIN "business_accounts" ba
+      ON ba."ownerUserId" = gb."garageId"
+      AND ba."type" = ${BusinessAccountType.Garage}::"BusinessAccountType"
+    WHERE gb."id" = ${trimmedBookingId}
+      OR gb."publicId" = ${trimmedBookingId}
+    LIMIT 1
+  `
+
+  if (!existing) throw new Error("Booking not found")
+  if (!existing.customerId) {
+    throw new Error("Offline garage-created appointments do not need Admin OTP override")
+  }
+  if (existing.status === "completed") {
+    throw new Error("This booking is already completed")
+  }
+  if (existing.status === "cancelled") {
+    throw new Error("Cancelled bookings cannot be completed")
+  }
+  if (existing.status !== "confirmed") {
+    throw new Error("Only confirmed customer bookings can be completed by Admin override")
+  }
+  if (!existing.bookingDate || !existing.bookingTime) {
+    throw new Error("Booking must have a scheduled date and time before completion")
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      UPDATE "garage_bookings"
+      SET "status" = 'completed'::"GarageBookingStatus",
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${existing.id}
+    `
+
+    await tx.$executeRaw`
+      UPDATE "garage_booking_completion_otps"
+      SET "consumedAt" = COALESCE("consumedAt", CURRENT_TIMESTAMP)
+      WHERE "bookingId" = ${existing.id}
+        AND "consumedAt" IS NULL
+    `
+  })
+
+  await logBusinessActivity({
+    businessAccountId: existing.businessAccountId,
+    action: "garage_booking.completed_by_admin_override",
+    entityType: "garage_booking",
+    entityId: existing.id,
+    metadata: {
+      adminId,
+      garageId: existing.garageId,
+      customerId: existing.customerId,
+      reason,
+      evidence,
+    },
+  })
+
+  await createNotificationsSafely([
+    {
+      recipientUserId: existing.garageId,
+      actorAdminId: adminId,
+      type: "booking.completed_by_admin",
+      title: "Booking completed by Admin",
+      body: `${existing.publicId} was completed after Admin review.`,
+      linkUrl: "/bookings",
+      entityType: "garage_booking",
+      entityId: existing.id,
+    },
+    {
+      recipientUserId: existing.customerId,
+      actorAdminId: adminId,
+      type: "booking.completed_by_admin",
+      title: "Booking marked completed",
+      body: `${existing.serviceName} was marked completed after Admin review.`,
+      linkUrl: "/bookings",
+      entityType: "garage_booking",
+      entityId: existing.id,
+    },
+  ])
+
+  return {
+    ...mapAdminGarageBooking(existing),
+    status: "completed" as const,
+  }
 }
 
 export function buildGarageKpis(rows: readonly GarageRecord[]): GarageKpi[] {
@@ -316,6 +657,7 @@ export async function updateAdminGarage(id: string, input: GarageAdminUpdateInpu
 
   if (!name) throw new Error("Garage name is required")
   if (!owner) throw new Error("Owner name is required")
+  await ensureNoActiveBookingsForClosedDays(id, input)
 
   const updatedCount = await db.$transaction(async (tx) => {
     const count = await tx.$executeRaw`

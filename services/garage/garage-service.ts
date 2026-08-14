@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto"
 
 import { db } from "@/lib/database/prisma"
 import { Prisma } from "@/lib/generated/prisma/client"
+import {
+  pagination,
+  paginationMeta,
+  type PaginatedResult,
+  type PaginationInput,
+} from "@/services/garage/pagination"
 import type {
   GarageServiceInput,
   GarageServiceRecord,
@@ -148,6 +154,29 @@ export async function listGarageServices(garageId: string) {
     ORDER BY "createdAt" DESC
   `
   return rows.map(mapService)
+}
+
+export async function listGarageServicesPage(
+  garageId: string,
+  input: PaginationInput = {},
+): Promise<PaginatedResult<GarageServiceRecord>> {
+  const { page, pageSize, skip } = pagination(input)
+  const [count] = await db.$queryRaw<Array<{ total: number }>>`
+    SELECT COUNT(*)::int AS "total"
+    FROM "garage_services"
+    WHERE "garageId" = ${garageId}
+  `
+  const rows = await db.$queryRaw<GarageServiceRow[]>`
+    ${serviceSelect}
+    WHERE "garageId" = ${garageId}
+    ORDER BY "createdAt" DESC
+    LIMIT ${pageSize} OFFSET ${skip}
+  `
+
+  return {
+    items: rows.map(mapService),
+    pagination: paginationMeta(page, pageSize, count?.total ?? 0),
+  }
 }
 
 export async function createGarageService(

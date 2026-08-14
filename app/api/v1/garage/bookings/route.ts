@@ -11,6 +11,7 @@ import {
 import {
   createGarageOfflineBooking,
   listGarageBookings,
+  listGarageBookingsPage,
 } from "@/services/garage/garage-booking-service"
 import type { GarageOfflineBookingInput } from "@/types/garage/bookings"
 
@@ -20,9 +21,22 @@ export async function GET(request: NextRequest) {
   const auth = await requireGarageFromRequest(request)
   if (!auth.ok) return auth.response
 
+  if (request.nextUrl.searchParams.get("all") === "1") {
+    return NextResponse.json({
+      ok: true,
+      bookings: await listGarageBookings(auth.user.id),
+    })
+  }
+
+  const result = await listGarageBookingsPage(auth.user.id, {
+    page: request.nextUrl.searchParams.get("page"),
+    pageSize: request.nextUrl.searchParams.get("pageSize"),
+  })
+
   return NextResponse.json({
     ok: true,
-    bookings: await listGarageBookings(auth.user.id),
+    bookings: result.items,
+    pagination: result.pagination,
   })
 }
 

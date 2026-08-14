@@ -28,7 +28,11 @@ import { SectionTable } from "@/components/admin-dashboard/shared/section-table"
 import type { StatusTone } from "@/types/admin-dashboard/shared/status-badge"
 import type { SectionTableColumn } from "@/types/admin-dashboard/shared/section-table"
 import type { GaragesTableProps } from "@/types/admin-dashboard/garages/garages-table"
-import type { GarageRecord, GarageStatus } from "@/types/admin-dashboard/garages/garages-types"
+import type {
+  AdminGarageBookingRecord,
+  GarageRecord,
+  GarageStatus,
+} from "@/types/admin-dashboard/garages/garages-types"
 
 const GARAGE_STATUS_TONES: Record<string, StatusTone> = {
   Active: "success",
@@ -40,6 +44,9 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
   const router = useRouter()
   const [editingGarage, setEditingGarage] = useState<GarageRecord | null>(null)
   const [reviewGarage, setReviewGarage] = useState<GarageRecord | null>(null)
+  const [bookingGarage, setBookingGarage] = useState<GarageRecord | null>(null)
+  const [overrideBooking, setOverrideBooking] =
+    useState<AdminGarageBookingRecord | null>(null)
   const [deletingGarage, setDeletingGarage] = useState<GarageRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -109,6 +116,43 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
       router.refresh()
     })
   }
+
+  function handleOverrideSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!overrideBooking) return
+
+    const formData = new FormData(event.currentTarget)
+    const body = Object.fromEntries(formData.entries())
+    setError(null)
+
+    startTransition(async () => {
+      const response = await fetch(
+        `/api/v1/admin/garage-bookings/${overrideBooking.id}/complete-override`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      )
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | { message?: string }
+          | null
+        setError(payload?.message ?? "Unable to complete booking")
+        return
+      }
+
+      setOverrideBooking(null)
+      setBookingGarage(null)
+      router.refresh()
+    })
+  }
+
+  const statusLabel = (status: AdminGarageBookingRecord["status"]) =>
+    status === "pending_slot_selection"
+      ? "Awaiting Slot"
+      : status.charAt(0).toUpperCase() + status.slice(1)
 
   return (
     <>
@@ -196,6 +240,9 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-36">
                   <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                  <DropdownMenuItem onSelect={() => setBookingGarage(garage)}>
+                    View bookings
+                  </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => setReviewGarage(garage)}>
                     View reviews
                   </DropdownMenuItem>
@@ -215,6 +262,153 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
           </tr>
         ))}
       </SectionTable>
+
+      <Dialog
+        open={Boolean(bookingGarage)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBookingGarage(null)
+            setError(null)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Active bookings</DialogTitle>
+            <DialogDescription>
+              {bookingGarage?.name} · {bookingGarage?.activeBookings?.length ?? 0} active
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+            {bookingGarage?.activeBookings?.length ? (
+              bookingGarage.activeBookings.map((booking) => {
+                const canOverride = Boolean(
+                  booking.customerId &&
+                    booking.status === "confirmed" &&
+                    booking.bookingDate &&
+                    booking.bookingTime,
+                )
+
+                return (
+                  <div
+                    key={booking.id}
+                    className="rounded-lg border border-dashboard-panel-border p-4"
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="font-medium text-dashboard-text">
+                          {booking.publicId} · {booking.serviceName}
+                        </div>
+                        <div className="mt-1 text-sm text-dashboard-muted">
+                          {booking.customerName} · {booking.customerEmail || booking.customerPhone}
+                        </div>
+                        <div className="mt-1 text-sm text-dashboard-muted">
+                          {booking.bookingDate ?? "No date"} · {booking.bookingTime ?? "No time"} ·{" "}
+                          {statusLabel(booking.status)}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!canOverride || isPending}
+                        onClick={() => {
+                          setError(null)
+                          setOverrideBooking(booking)
+                        }}
+                      >
+                        Admin complete
+                      </Button>
+                    </div>
+                    {!canOverride ? (
+                      <p className="mt-3 text-xs text-dashboard-muted">
+                        Override is available only for confirmed customer-created bookings
+                        with a scheduled date and time.
+                      </p>
+                    ) : null}
+                  </div>
+                )
+              })
+            ) : (
+              <p className="text-sm text-dashboard-muted">
+                No active bookings for this garage.
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(overrideBooking)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setOverrideBooking(null)
+            setError(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Complete booking by Admin review?</DialogTitle>
+            <DialogDescription>
+              This bypasses customer OTP only after dispute/evidence review.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form className="grid gap-4" onSubmit={handleOverrideSubmit}>
+            <div className="rounded-lg border border-dashboard-panel-border p-3 text-sm">
+              <div className="font-medium text-dashboard-text">
+                {overrideBooking?.publicId} · {overrideBooking?.serviceName}
+              </div>
+              <div className="mt-1 text-dashboard-muted">
+                {overrideBooking?.customerName}
+              </div>
+            </div>
+
+            <label className="grid gap-1 text-sm font-medium">
+              Override reason
+              <textarea
+                name="reason"
+                minLength={20}
+                maxLength={500}
+                required
+                className="min-h-24 rounded-lg border border-input bg-transparent px-3 py-2 text-sm"
+                placeholder="Explain why the customer OTP cannot be obtained."
+              />
+            </label>
+
+            <label className="grid gap-1 text-sm font-medium">
+              Evidence reviewed
+              <textarea
+                name="evidence"
+                minLength={20}
+                maxLength={1200}
+                required
+                className="min-h-28 rounded-lg border border-input bg-transparent px-3 py-2 text-sm"
+                placeholder="Summarize proof, support ticket, photos, invoice, call notes, or other evidence."
+              />
+            </label>
+
+            {error ? (
+              <p className="text-sm font-medium text-dashboard-danger">{error}</p>
+            ) : null}
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isPending}
+                onClick={() => setOverrideBooking(null)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isPending}>
+                Complete booking
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(reviewGarage)}

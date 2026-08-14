@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto"
+
 import { db } from "@/lib/database/prisma"
 import { UserRole } from "@/lib/generated/prisma/client"
 import {
@@ -116,16 +118,20 @@ export async function savePartForUser(
 
   await db.$executeRaw`
     INSERT INTO "user_saved_parts" (
+      "id",
       "userId",
       "partUid",
       "watchPriceChanges",
-      "watchStockReturns"
+      "watchStockReturns",
+      "updatedAt"
     )
     VALUES (
+      ${randomUUID()},
       ${userId},
       ${normalizedPartUid},
       ${Boolean(normalizeWatchFlag(options.watchForPriceDrops))},
-      ${Boolean(normalizeWatchFlag(options.watchForStockReturns))}
+      ${Boolean(normalizeWatchFlag(options.watchForStockReturns))},
+      CURRENT_TIMESTAMP
     )
     ON CONFLICT ("userId", "partUid")
     DO UPDATE SET

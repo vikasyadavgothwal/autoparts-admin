@@ -12,6 +12,12 @@ import {
   calculateGarageBookingAdvanceAmount,
   getGarageBookingAdvanceSetting,
 } from "@/services/platform-settings/platform-settings-service"
+import {
+  pagination,
+  paginationMeta,
+  type PaginatedResult,
+  type PaginationInput,
+} from "@/services/garage/pagination"
 import type {
   GarageBookingInput,
   GarageOfflineBookingInput,
@@ -758,6 +764,29 @@ export async function listGarageBookings(garageId: string) {
   return rows.map(mapBooking)
 }
 
+export async function listGarageBookingsPage(
+  garageId: string,
+  input: PaginationInput = {},
+): Promise<PaginatedResult<GarageBookingRecord>> {
+  const { page, pageSize, skip } = pagination(input)
+  const [count] = await db.$queryRaw<Array<{ total: number }>>`
+    SELECT COUNT(*)::int AS "total"
+    FROM "garage_bookings"
+    WHERE "garageId" = ${garageId}
+  `
+  const rows = await db.$queryRaw<GarageBookingRow[]>`
+    ${bookingSelect}
+    WHERE "garageId" = ${garageId}
+    ORDER BY "createdAt" DESC, "bookingDate" DESC, "bookingTime" DESC
+    LIMIT ${pageSize} OFFSET ${skip}
+  `
+
+  return {
+    items: rows.map(mapBooking),
+    pagination: paginationMeta(page, pageSize, count?.total ?? 0),
+  }
+}
+
 export async function updateGarageBookingStatus(
   garageId: string,
   bookingId: string,
@@ -769,9 +798,10 @@ export async function updateGarageBookingStatus(
   if (nextStatus === "completed") {
     const [booking] = await db.$queryRaw<Array<{
       customerId: string | null
+      customerEmail: string | null
       status: GarageBookingStatus
     }>>`
-      SELECT "customerId", "status"
+      SELECT "customerId", "customerEmail", "status"
       FROM "garage_bookings"
       WHERE "garageId" = ${garageId}
         AND ("id" = ${bookingId} OR "publicId" = ${bookingId})
@@ -782,7 +812,7 @@ export async function updateGarageBookingStatus(
     if (booking.status === "cancelled") {
       throw new Error("Cancelled bookings cannot be completed")
     }
-    if (booking.customerId) {
+    if (booking.customerId && booking.customerEmail) {
       await verifyGarageBookingCompletionOtp(garageId, bookingId, options.completionOtp)
     }
   }
@@ -864,7 +894,7 @@ export async function requestGarageBookingCompletionOtp(
     throw new Error("Cancelled bookings cannot be completed")
   }
   if (!booking.customerId) {
-    throw new Error("Offline appointments do not require customer OTP")
+    throw new Error("Offline garage-created appointments do not require customer OTP")
   }
   if (!booking.customerEmail) {
     throw new Error("Customer email is not available for this booking")

@@ -48,6 +48,106 @@ const DAYS = [
 const DAY_SET = new Set<string>(DAYS)
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
 
+type GarageProfileScheduleRow = {
+  workingDays: string[]
+  workingHoursByDay: Record<string, unknown> | null
+}
+
+type BookingDateRow = {
+  bookingDate: string | null
+}
+
+type GarageDaySchedule = {
+  workingDays: string[]
+  workingHoursByDay: Record<string, GarageDayHours>
+}
+
+const normalizedSchedule = (
+  hoursByDay: Record<string, GarageDayHours>,
+  fallbackDays: string[],
+) => {
+  const explicitDays = Object.entries(hoursByDay)
+    .filter(([, dayHours]) => dayHours.enabled)
+    .map(([day]) => day)
+  return explicitDays.length > 0 ? explicitDays : fallbackDays
+}
+
+const bookingDayName = (value: string) =>
+  new Date(`${value}T12:00:00`).toLocaleDateString("en-US", { weekday: "long" })
+
+const validateNoActiveBookingsOnClosedDays = async (
+  garageId: string,
+  input: GarageProfileInput,
+  hoursByDay: Record<string, GarageDayHours>,
+  fallbackDays: string[],
+) => {
+  if (!("workingDays" in input) && !("workingHoursByDay" in input)) return
+
+  const [currentProfile] = await db.$queryRaw<GarageProfileScheduleRow[]>`
+    SELECT
+      COALESCE("workingDays", ARRAY[]::text[]) AS "workingDays",
+      "workingHoursByDay"
+    FROM "garage_profiles"
+    WHERE "garageId" = ${garageId}
+    LIMIT 1
+  `
+  if (!currentProfile) return
+
+  const currentHoursByDay =
+    currentProfile.workingHoursByDay &&
+    typeof currentProfile.workingHoursByDay === "object"
+      ? (currentProfile.workingHoursByDay as Record<string, GarageDayHours>)
+      : {}
+
+  const currentSchedule: GarageDaySchedule = {
+    workingDays: (currentProfile.workingDays ?? []).filter((day): day is string =>
+      DAY_SET.has(day),
+    ),
+    workingHoursByDay: currentHoursByDay,
+  }
+  const requestedSchedule: GarageDaySchedule = {
+    workingDays: fallbackDays,
+    workingHoursByDay: hoursByDay,
+  }
+
+  const nextOpenDays = normalizedSchedule(
+    requestedSchedule.workingHoursByDay,
+    requestedSchedule.workingDays,
+  )
+  const currentOpenDays = normalizedSchedule(
+    currentSchedule.workingHoursByDay,
+    currentSchedule.workingDays,
+  )
+  const closedDays = currentOpenDays.filter((day) => !nextOpenDays.includes(day))
+  if (closedDays.length === 0) return
+
+  const pendingBookings = await db.$queryRaw<BookingDateRow[]>`
+    SELECT "bookingDate"::text AS "bookingDate"
+    FROM "garage_bookings"
+    WHERE "garageId" = ${garageId}
+      AND "status" IN ('pending', 'pending_slot_selection', 'confirmed')
+      AND "bookingDate" IS NOT NULL
+  `
+
+  const blockedDays = closedDays.filter((day) =>
+    pendingBookings.some(
+      (booking) =>
+        booking.bookingDate && bookingDayName(booking.bookingDate) === day,
+    ),
+  )
+  if (blockedDays.length === 0) return
+
+  if (blockedDays.length === 1) {
+    throw new Error(
+      `Complete booking(s) on ${blockedDays[0]} before marking this day as closed.`,
+    )
+  }
+
+  throw new Error(
+    `Complete active bookings on ${blockedDays.join(", ")} before marking these days as closed.`,
+  )
+}
+
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
 
@@ -337,6 +437,12 @@ export async function updateGarageProfile(
     .filter(([, hours]) => hours.enabled)
     .map(([day]) => day)
   const legacyDays = days.length ? days : workingDays(input.workingDays)
+  await validateNoActiveBookingsOnClosedDays(
+    garageId,
+    input,
+    hoursByDay,
+    legacyDays,
+  )
   const certifications = stringList(input.certifications, 30, 160)
   const galleryImageUrls = stringList(input.galleryImageUrls, 20, 2048)
   const galleryImageKeys = stringList(input.galleryImageKeys, 20, 2048)

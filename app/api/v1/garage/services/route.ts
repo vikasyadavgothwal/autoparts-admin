@@ -16,7 +16,11 @@ import {
   logBusinessActivity,
   reconcileGarageServicePlan,
 } from "@/services/business/business-platform-service"
-import { createGarageService, listGarageServices } from "@/services/garage/garage-service"
+import {
+  createGarageService,
+  listGarageServices,
+  listGarageServicesPage,
+} from "@/services/garage/garage-service"
 import type { GarageServiceInput } from "@/types/garage/services"
 
 export const dynamic = "force-dynamic"
@@ -41,7 +45,15 @@ export async function GET(request: NextRequest) {
   return withGarageApiRoute(request, async (user) => {
     const account = await getGarageBusinessAccount(user.id)
     await reconcileGarageServicePlan(account?.ownerUserId ?? user.id)
-    return apiOk({ services: await listGarageServices(account?.ownerUserId ?? user.id) })
+    const garageId = account?.ownerUserId ?? user.id
+    if (request.nextUrl.searchParams.get("all") === "1") {
+      return apiOk({ services: await listGarageServices(garageId) })
+    }
+    const result = await listGarageServicesPage(garageId, {
+      page: request.nextUrl.searchParams.get("page"),
+      pageSize: request.nextUrl.searchParams.get("pageSize"),
+    })
+    return apiOk({ services: result.items, pagination: result.pagination })
   })
 }
 
