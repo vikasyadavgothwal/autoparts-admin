@@ -1,8 +1,8 @@
 "use client"
 
-import { FormEvent, useState } from "react"
+import { ChangeEvent, FormEvent, useState } from "react"
 import { toast } from "sonner"
-import { Film, HelpCircle, Info, Pencil, PlayCircle, Save, Trash2, UploadCloud, X } from "lucide-react"
+import { Film, HelpCircle, Pencil, PlayCircle, Save, Trash2, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -22,6 +22,7 @@ const faqQuestionMinWords = 3
 const faqQuestionMaxWords = 40
 const faqAnswerMinWords = 6
 const faqAnswerMaxWords = 250
+const RequiredMark = () => <span aria-hidden="true" className="text-[#DC2626]"> *</span>
 
 const wordCount = (value: string) => value.trim().split(/\s+/).filter(Boolean).length
 
@@ -243,6 +244,20 @@ export function BusinessSupportContentManager({ supportContent }: Props) {
     }
   }
 
+  const onVideoFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (!allowedVideoTypes.includes(file.type)) {
+      toast.error("Upload only MP4, WebM, or MOV video files.")
+      event.currentTarget.value = ""
+      return
+    }
+    if (file.size > maxVideoSize) {
+      toast.error("Video file must be 250 MB or smaller.")
+      event.currentTarget.value = ""
+    }
+  }
+
   async function deleteContent() {
     if (!pendingDelete) return
     setIsDeleting(true)
@@ -310,12 +325,12 @@ export function BusinessSupportContentManager({ supportContent }: Props) {
           <p className="mt-1 font-medium text-white">{selectedAccountType}</p>
         </div>
         {kind === "video" ? <>
-          <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Video title<Input name="title" minLength={2} maxLength={160} required defaultValue={editingVideo?.title ?? ""} className="bg-[#050505]" /></label>
+          <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Video title<RequiredMark /><Input name="title" minLength={2} maxLength={160} required defaultValue={editingVideo?.title ?? ""} className="bg-[#050505]" /></label>
           <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">YouTube URL<Input name="videoUrl" type="url" defaultValue={editingVideo && !editingVideoIsUpload ? editingVideo.videoUrl : ""} placeholder={editingVideoIsUpload ? "Leave blank to keep uploaded video" : "https://youtube.com/watch?v=..."} className="bg-[#050505]" /></label>
-          <label className="space-y-1 text-xs font-medium text-[#9CA3AF] md:col-span-2">Upload video file<input name="videoFile" type="file" accept="video/mp4,video/webm,video/quicktime" className="block w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-3 py-2 text-sm text-white file:mr-3 file:rounded-md file:border-0 file:bg-[#DC2626] file:px-3 file:py-1.5 file:text-sm file:text-white" /><span className="block text-[11px] font-normal text-[#6B7280]">{editingVideo ? "Leave URL and upload empty to keep the current video." : "Use either a YouTube URL or upload. Saving adds a new video for this dashboard."}</span></label>
+          <label className="space-y-1 text-xs font-medium text-[#9CA3AF] md:col-span-2">Upload video file<input name="videoFile" type="file" accept="video/mp4,video/webm,video/quicktime" onChange={onVideoFileChange} className="block w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-3 py-2 text-sm text-white file:mr-3 file:rounded-md file:border-0 file:bg-[#DC2626] file:px-3 file:py-1.5 file:text-sm file:text-white" /><span className="block text-[11px] font-normal text-[#6B7280]">{editingVideo ? "Leave URL and upload empty to keep the current video." : "Use either a YouTube URL or upload. Saving adds a new video for this dashboard."}</span></label>
         </> : <>
-          <label className="space-y-1 text-xs font-medium text-[#9CA3AF] md:col-span-2">Question<Input name="question" minLength={5} maxLength={300} required defaultValue={editingFaq?.question ?? ""} className="bg-[#050505]" /><span className="block text-[11px] font-normal text-[#6B7280]">Required, 5-300 characters, {faqQuestionMinWords}-{faqQuestionMaxWords} words.</span></label>
-          <label className="space-y-1 text-xs font-medium text-[#9CA3AF] md:col-span-2">Answer<textarea name="answer" minLength={10} maxLength={2000} required defaultValue={editingFaq?.answer ?? ""} className="min-h-24 w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-3 py-2 text-sm text-white" /><span className="block text-[11px] font-normal text-[#6B7280]">Required, 10-2000 characters, {faqAnswerMinWords}-{faqAnswerMaxWords} words.</span></label>
+          <label className="space-y-1 text-xs font-medium text-[#9CA3AF] md:col-span-2">Question<RequiredMark /><Input name="question" minLength={5} maxLength={300} required defaultValue={editingFaq?.question ?? ""} className="bg-[#050505]" /><span className="block text-[11px] font-normal text-[#6B7280]">Required, 5-300 characters, {faqQuestionMinWords}-{faqQuestionMaxWords} words.</span></label>
+          <label className="space-y-1 text-xs font-medium text-[#9CA3AF] md:col-span-2">Answer<RequiredMark /><textarea name="answer" minLength={10} maxLength={2000} required defaultValue={editingFaq?.answer ?? ""} className="min-h-24 w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-3 py-2 text-sm text-white" /><span className="block text-[11px] font-normal text-[#6B7280]">Required, 10-2000 characters, {faqAnswerMinWords}-{faqAnswerMaxWords} words.</span></label>
         </>}
         <div className="flex items-end"><Button disabled={isSaving} className="gap-2"><Save className="h-4 w-4" />{isSaving ? "Saving..." : editing?.kind === kind ? "Update content" : "Save content"}</Button></div>
       </form>

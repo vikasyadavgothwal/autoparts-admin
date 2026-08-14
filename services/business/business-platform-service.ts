@@ -618,6 +618,41 @@ const supportTicketStatusColor = (status: BusinessSupportTicketStatus) => {
 }
 
 const supportTicketCode = (id: string) => `AUTO-${(id.replace(/[^a-z0-9]/gi, "").slice(-8) || id.slice(-8)).toUpperCase()}`
+const staffNamePattern = /^[A-Za-z][A-Za-z\s.'-]*$/
+const roleNamePattern = /^[A-Za-z0-9][A-Za-z0-9\s._/-]*$/
+
+const textLength = (value: unknown) =>
+  typeof value === "string"
+    ? value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().length
+    : 0
+
+const validateStaffName = (value: string, label: string) => {
+  if (value.length > 50) throw new Error(`${label} cannot exceed 50 characters`)
+  if (!staffNamePattern.test(value)) {
+    throw new Error("Name can contain only letters, spaces, apostrophes, periods, and hyphens")
+  }
+}
+
+const validateBusinessRoleInput = (input: { name: unknown; description?: unknown; permissionIds: string[] }) => {
+  const nameLength = textLength(input.name)
+  if (nameLength < 3 || nameLength > 80) {
+    throw new Error("Role name must be between 3 and 80 characters")
+  }
+  const name = cleanText(input.name, 80)
+  if (!name || !roleNamePattern.test(name)) {
+    throw new Error("Role name contains invalid characters")
+  }
+  if (textLength(input.description) > 240) {
+    throw new Error("Description cannot exceed 240 characters")
+  }
+  if (!input.permissionIds.length) {
+    throw new Error("Select at least one permission")
+  }
+  return {
+    name,
+    description: cleanText(input.description, 240),
+  }
+}
 
 const addOnStatusColor = (status: BusinessAddOnRequestStatus) => {
   if (status === BusinessAddOnRequestStatus.Rejected) return "#dc2626"
@@ -3274,11 +3309,17 @@ export async function createBusinessSupportTicket(input: {
   category?: unknown
 }) {
   const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
-  const subject = cleanText(input.subject, 160)
+  const subject = cleanText(input.subject, 150)
   const message = cleanText(input.message, 2000)
   const category = cleanText(input.category, 80)
   if (!subject) throw new Error("Support subject is required")
   if (!message) throw new Error("Support message is required")
+  if (textLength(input.subject) < 3 || textLength(input.subject) > 150) {
+    throw new Error("Subject must be between 3 and 150 characters")
+  }
+  if (textLength(input.message) < 10 || textLength(input.message) > 2000) {
+    throw new Error("Message must be between 10 and 2000 characters")
+  }
   const allowedCategories =
     account.plan.supportTier === "Premium"
       ? new Set(["booking_completion", "account_assistance", "onboarding_training"])
@@ -4268,16 +4309,15 @@ export async function createBusinessRole(input: {
     throw new Error("Role limit reached for this plan")
   }
 
-  const name = cleanText(input.name)
-  if (!name) throw new Error("Role name is required")
+  const validPermissionIds = new Set(account.permissions.map((permission) => permission.id))
+  const permissionIds = cleanTextArray(input.permissionIds).filter((id) => validPermissionIds.has(id))
+  const roleInput = validateBusinessRoleInput({ name: input.name, description: input.description, permissionIds })
   const duplicateRole = account.roles.find(
-    (role) => role.name.trim().toLowerCase() === name.toLowerCase(),
+    (role) => role.name.trim().toLowerCase() === roleInput.name.toLowerCase(),
   )
   if (duplicateRole) {
     throw new Error("A role with this name already exists")
   }
-  const validPermissionIds = new Set(account.permissions.map((permission) => permission.id))
-  const permissionIds = cleanTextArray(input.permissionIds).filter((id) => validPermissionIds.has(id))
   if (
     limits.permissions !== null &&
     permissionIds.length > limits.permissions
@@ -4288,8 +4328,8 @@ export async function createBusinessRole(input: {
   const role = await db.businessRole.create({
     data: {
       businessAccountId: account.id,
-      name,
-      description: cleanText(input.description, 500),
+      name: roleInput.name,
+      description: roleInput.description,
       permissionIds,
     },
   })
@@ -4334,10 +4374,12 @@ export async function inviteBusinessStaff(input: {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new Error("Valid staff email is required")
   }
-  const firstName = cleanText(input.firstName, 100)
+  const firstName = cleanText(input.firstName, 50)
   if (!firstName) throw new Error("Staff first name is required")
-  const lastName = cleanText(input.lastName, 100)
+  validateStaffName(firstName, "First name")
+  const lastName = cleanText(input.lastName, 50)
   if (!lastName) throw new Error("Staff last name is required")
+  validateStaffName(lastName, "Last name")
   const existingUser = await db.user.findUnique({
     where: { email },
     select: { id: true },
@@ -4727,14 +4769,16 @@ export async function setBusinessMemberRoleIds(input: {
   if (member.userId === account.ownerUserId) {
     throw new Error("Owner role assignments cannot be updated")
   }
-  const firstName = input.firstName === undefined ? undefined : cleanText(input.firstName, 100)
+  const firstName = input.firstName === undefined ? undefined : cleanText(input.firstName, 50)
   if (input.firstName !== undefined && !firstName) {
     throw new Error("Staff first name is required")
   }
-  const lastName = input.lastName === undefined ? undefined : cleanText(input.lastName, 100)
+  if (firstName) validateStaffName(firstName, "First name")
+  const lastName = input.lastName === undefined ? undefined : cleanText(input.lastName, 50)
   if (input.lastName !== undefined && !lastName) {
     throw new Error("Staff last name is required")
   }
+  if (lastName) validateStaffName(lastName, "Last name")
 
   const ownerRoleIds = new Set(account.roles.filter((role) => role.isOwnerRole).map((role) => role.id))
   const submittedRoleIds = cleanTextArray(input.roleIds)
@@ -4743,6 +4787,9 @@ export async function setBusinessMemberRoleIds(input: {
   }
   const validRoleIds = new Set(account.roles.filter((role) => !role.isOwnerRole).map((role) => role.id))
   const nextRoleIds = submittedRoleIds.filter((id) => validRoleIds.has(id))
+  if (!nextRoleIds.length) {
+    throw new Error("Select at least one role for this staff account")
+  }
 
   const updatedMember = await db.businessAccountMember.update({
     where: { id: member.id },
@@ -4948,20 +4995,23 @@ export async function updateBusinessRole(input: {
   if (!role) throw new Error("Business role was not found")
   if (role.isOwnerRole) throw new Error("Owner role cannot be updated")
 
-  const nextName = input.name !== undefined ? cleanText(input.name) : role.name
-  if (nextName === null) throw new Error("Role name is required")
-  const duplicateRole = account.roles.find(
-    (row) =>
-      row.id !== role.id &&
-      row.name.trim().toLowerCase() === nextName.toLowerCase(),
-  )
-  if (duplicateRole) {
-    throw new Error("A role with this name already exists")
-  }
   const validPermissionIds = new Set(account.permissions.map((permission) => permission.id))
   const permissionIds = input.permissionIds === undefined
     ? role.permissionIds
     : cleanTextArray(input.permissionIds).filter((id) => validPermissionIds.has(id))
+  const roleInput = validateBusinessRoleInput({
+    name: input.name === undefined ? role.name : input.name,
+    description: input.description === undefined ? role.description ?? "" : input.description,
+    permissionIds,
+  })
+  const duplicateRole = account.roles.find(
+    (row) =>
+      row.id !== role.id &&
+      row.name.trim().toLowerCase() === roleInput.name.toLowerCase(),
+  )
+  if (duplicateRole) {
+    throw new Error("A role with this name already exists")
+  }
   if (
     limits.permissions !== null &&
     permissionIds.length > limits.permissions
@@ -4972,8 +5022,8 @@ export async function updateBusinessRole(input: {
   const nextRole = await db.businessRole.update({
     where: { id: role.id },
     data: {
-      name: nextName,
-      description: cleanText(input.description ?? role.description, 500),
+      name: roleInput.name,
+      description: roleInput.description,
       permissionIds,
     },
   })

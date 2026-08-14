@@ -116,7 +116,8 @@ export function PartsMappingPage({
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-dashboard-muted" />
               <Input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                maxLength={120}
+                onChange={(event) => setQuery(event.target.value.slice(0, 120))}
                 placeholder="Search OEM or part name"
                 className="h-9 pl-9"
               />

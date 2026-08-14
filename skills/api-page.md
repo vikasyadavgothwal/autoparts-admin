@@ -10,6 +10,7 @@ For pages backed by write actions, also add loading and result status feedback i
 3. Keep route action calls in `actions/<audience>/<feature>/...` (or `actions/<feature>/...`) so each API maps to a feature folder.
 4. Validate request data before calling action logic.
 5. Return `NextResponse` with consistent status codes.
+6. For every accepted user-editable field, enforce field-appropriate server/API validation: required fields, max lengths, numeric ranges, date ordering, file type/size, URL/email/phone format, and trimmed text.
 
 ## API-Backed Page
 1. Create/update route page under `app/<path>/page.tsx`.
@@ -18,6 +19,7 @@ For pages backed by write actions, also add loading and result status feedback i
    - data shaping to `services/`
    - DB/API writes/reads to feature actions in `actions/<feature>/` (or `actions/<audience>/<feature>/`)
 4. Keep JSX clean; pass plain props to UI components.
+5. For any form controls, add client-side validation before API/action calls, red `*` markers for required fields, input-time blocking for clearly invalid numeric/text values where practical, and existing toast feedback for success/error states.
 
 ## Example pattern
 - `app/api/v1/admin/public-content/route.ts` -> uses `actions/admin-dashboard/public-pages/public-content.ts`
@@ -29,3 +31,5 @@ For pages backed by write actions, also add loading and result status feedback i
 - [ ] `services/` handles transformation and domain logic
 - [ ] Error handling returns clear response/status
 - [ ] No Prisma usage in component files
+- [ ] Required UI fields show a red `*`
+- [ ] Existing toast/notification library reports success and validation errors

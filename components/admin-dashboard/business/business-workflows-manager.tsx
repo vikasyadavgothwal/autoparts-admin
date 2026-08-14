@@ -137,6 +137,9 @@ const ageLabel = (value: string) => {
   return `${days}d ago`
 }
 const ticketCode = (id: string) => `AUTO-${(id.replace(/[^a-z0-9]/gi, "").slice(-8) || id.slice(-8)).toUpperCase()}`
+const invalidNumberKeys = new Set(["e", "E", "+", "-"])
+const featureKeyPattern = /^[a-z0-9][a-z0-9._-]*(\.\d+)?$/
+const RequiredMark = () => <span aria-hidden="true" className="text-[#DC2626]"> *</span>
 
 export function BusinessWorkflowsManager({
   queue,
@@ -245,6 +248,14 @@ export function BusinessWorkflowsManager({
   }
 
   async function saveStatus(kind: Queue, item: SupportTicket | AddOnRequest, statusValue: string, validity?: AddOnValidityForm) {
+    if (kind === "add-ons" && validity?.validFrom && validity.validUntil && validity.validUntil <= validity.validFrom) {
+      toast.error("Add-on expiry date must be after the valid-from date.")
+      return
+    }
+    if (kind === "add-ons" && validity?.renewalAt && validity.validUntil && validity.renewalAt < validity.validUntil) {
+      toast.error("Renewal date cannot be before the expiry date.")
+      return
+    }
     setSaving(true)
     const path = kind === "tickets" ? "support-tickets" : "add-ons"
     const response = await fetch(`/api/v1/admin/business/${path}/${encodeURIComponent(item.id)}`, {
@@ -274,6 +285,11 @@ export function BusinessWorkflowsManager({
     const businessAccountId = manualAddOnForm.businessAccountId.trim()
     if (!businessAccountId) return toast.error("Select a business account.")
     if (!manualFeatureKey) return toast.error("Select or enter an add-on key.")
+    if (manualFeatureKey.length > 80 || !featureKeyPattern.test(manualFeatureKey)) return toast.error("Enter a valid add-on key.")
+    if (manualAddOnForm.validFrom && manualAddOnForm.validUntil && manualAddOnForm.validUntil <= manualAddOnForm.validFrom) {
+      toast.error("Add-on expiry date must be after the valid-from date.")
+      return
+    }
 
     setSaving(true)
     try {
@@ -309,6 +325,19 @@ export function BusinessWorkflowsManager({
   }
 
   async function savePrices() {
+    const invalidPrice = prices.find((price) =>
+      !Number.isSafeInteger(price.priceAmount) ||
+      price.priceAmount < 0 ||
+      price.priceAmount > 100000000 ||
+      !supportedCurrencies.includes(price.priceCurrency) ||
+      !Number.isInteger(price.validityDays) ||
+      price.validityDays < 1 ||
+      price.validityDays > 3660,
+    )
+    if (invalidPrice) {
+      toast.error(`Enter valid price, currency, and validity for ${invalidPrice.label}.`)
+      return
+    }
     setSaving(true)
     try {
       const response = await fetch("/api/v1/admin/business/add-on-prices", {
@@ -465,7 +494,7 @@ export function BusinessWorkflowsManager({
       >
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-[#6B7280]" />
-          <Input value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" placeholder="Search subject, message, business, ID or email" />
+          <Input value={query} maxLength={120} onChange={(event) => setQuery(event.target.value.slice(0, 120))} className="pl-9" placeholder="Search subject, message, business, ID or email" />
         </div>
         <Select value={accountType} onValueChange={setAccountType}>
           <SelectTrigger><SelectValue placeholder="Business type" /></SelectTrigger>
@@ -589,11 +618,11 @@ export function BusinessWorkflowsManager({
           </DialogHeader>
           <div className="grid gap-5">
             <div className="space-y-3">
-              <p className="text-sm font-medium">Business account</p>
+              <p className="text-sm font-medium">Business account<RequiredMark /></p>
               <Input
                 value={accountSearch}
                 onChange={(event) => {
-                  setAccountSearch(event.target.value)
+                  setAccountSearch(event.target.value.slice(0, 120))
                   setSelectedAccount(null)
                   setManualAddOnForm((current) => ({ ...current, businessAccountId: "" }))
                 }}
@@ -642,7 +671,7 @@ export function BusinessWorkflowsManager({
             </div>
             <div className="grid gap-5 md:grid-cols-2">
               <div className="space-y-2">
-                <p className="text-sm font-medium">Add-on</p>
+                <p className="text-sm font-medium">Add-on<RequiredMark /></p>
                 <Select
                   value={manualAddOnForm.preset}
                   onValueChange={(value) => setManualAddOnForm((current) => ({ ...current, preset: value }))}
@@ -654,7 +683,7 @@ export function BusinessWorkflowsManager({
                 </Select>
               </div>
               <div className="space-y-2">
-                <p className="text-sm font-medium">Status</p>
+                <p className="text-sm font-medium">Status<RequiredMark /></p>
                 <Select
                   value={manualAddOnForm.status}
                   onValueChange={(value) => setManualAddOnForm((current) => ({ ...current, status: value }))}
@@ -690,10 +719,11 @@ export function BusinessWorkflowsManager({
             </div>
             {manualAddOnForm.preset === "custom" ? (
               <div className="space-y-2">
-                <p className="text-sm font-medium">Custom feature key</p>
+                <p className="text-sm font-medium">Custom feature key<RequiredMark /></p>
                 <Input
                   value={manualAddOnForm.customFeatureKey}
-                  onChange={(event) => setManualAddOnForm((current) => ({ ...current, customFeatureKey: event.target.value }))}
+                  maxLength={80}
+                  onChange={(event) => setManualAddOnForm((current) => ({ ...current, customFeatureKey: event.target.value.trim().slice(0, 80) }))}
                   placeholder="Example: limit.services.5, limit.products.25, api.standard"
                 />
                 <p className="text-xs text-muted-foreground">Capacity keys use `limit.metric.extraUnits`, for example `limit.services.5` adds 5 service slots to the current limit.</p>
@@ -746,7 +776,9 @@ export function BusinessWorkflowsManager({
                           type="number"
                           step="0.01"
                           min={0}
+                          max={1000000}
                           value={String(price.priceAmount / 100)}
+                          onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }}
                           onChange={(event) => updatePrice(price.featureKey, { priceAmount: Math.round((Number(event.target.value) || 0) * 100) })}
                         />
                         <p className="mt-1 text-xs text-muted-foreground">{formatMoney(price.priceAmount, price.priceCurrency)}</p>
@@ -763,8 +795,10 @@ export function BusinessWorkflowsManager({
 	                        <Input
 	                          type="number"
 	                          min={1}
+                            max={3660}
 	                          step={1}
 	                          value={String(price.validityDays ?? 30)}
+                            onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }}
 	                          onChange={(event) => updatePrice(price.featureKey, { validityDays: Math.max(1, Math.round(Number(event.target.value) || 1)) })}
 	                        />
 	                        <p className="mt-1 text-xs text-muted-foreground">{formatValidity(price.validityDays)}</p>

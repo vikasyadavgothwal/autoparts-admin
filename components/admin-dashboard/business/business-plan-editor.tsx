@@ -110,6 +110,8 @@ const reportCopy: Record<ReportLevel, string> = {
   standard: "Dashboard, usage, and activity reports",
   premium: "Advanced dashboard, usage, activity, and deeper analytics",
 }
+const invalidNumberKeys = new Set(["e", "E", "+", "-"])
+const RequiredMark = () => <span aria-hidden="true" className="text-[#DC2626]"> *</span>
 
 const readLimit = (formData: FormData, key: keyof typeof fieldLabels) => {
   const raw = String(formData.get(key) ?? "").trim()
@@ -274,8 +276,8 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
               <section className="rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Basic information</p>
                 <div className="grid gap-3">
-                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Plan name<Input name="name" defaultValue={plan.name} className="bg-[#050505]" /></label>
-                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Short description<Input name="description" defaultValue={plan.description ?? ""} className="bg-[#050505]" /></label>
+                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Plan name<RequiredMark /><Input name="name" defaultValue={plan.name} maxLength={80} className="bg-[#050505]" /></label>
+                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Short description<Input name="description" defaultValue={plan.description ?? ""} maxLength={160} className="bg-[#050505]" /></label>
                 </div>
               </section>
 
@@ -285,7 +287,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
                   {planLimitFields[plan.accountType].map((key) => (
                     <label key={key} className="space-y-1 text-xs font-medium text-[#9CA3AF]">
                       {fieldLabels[key]}
-                      <Input name={key} inputMode="numeric" defaultValue={plan.limits[limitValueKeys[key]] ?? ""} placeholder="Unlimited" className="bg-[#050505]" />
+                      <Input name={key} type="number" min={0} max={100000} step={1} inputMode="numeric" defaultValue={plan.limits[limitValueKeys[key]] ?? ""} placeholder="Unlimited" onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }} className="bg-[#050505]" />
                     </label>
                   ))}
                 </div>
@@ -304,11 +306,11 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
               <section className="mt-4 rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Pricing</p>
                 <div className="grid gap-3 md:grid-cols-3">
-                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Monthly price<Input name="price" inputMode="decimal" defaultValue={plan.price.amount / 100} className="bg-[#050505]" /></label>
-                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Annual autopay rate<Input name="yearlyPrice" inputMode="decimal" defaultValue={plan.price.yearlyAmount / 100} className="bg-[#050505]" /></label>
-                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Currency<Input name="priceCurrency" defaultValue={plan.price.currency} className="bg-[#050505]" /></label>
-                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Billing interval<Input name="billingPeriod" defaultValue={plan.price.billingPeriod} className="bg-[#050505]" /></label>
-                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Monthly billing days<Input name="monthlyBillingDays" inputMode="numeric" defaultValue={plan.price.monthlyBillingDays} className="bg-[#050505]" /></label>
+                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Monthly price<RequiredMark /><Input name="price" type="number" min={0} max={1000000} step="0.01" inputMode="decimal" defaultValue={plan.price.amount / 100} onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }} className="bg-[#050505]" /></label>
+                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Annual autopay rate<RequiredMark /><Input name="yearlyPrice" type="number" min={0} max={1000000} step="0.01" inputMode="decimal" defaultValue={plan.price.yearlyAmount / 100} onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }} className="bg-[#050505]" /></label>
+                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Currency<RequiredMark /><Input name="priceCurrency" defaultValue={plan.price.currency} maxLength={4} className="bg-[#050505] uppercase" /></label>
+                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Billing interval<RequiredMark /><Input name="billingPeriod" defaultValue={plan.price.billingPeriod} maxLength={30} className="bg-[#050505]" /></label>
+                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">Monthly billing days<RequiredMark /><Input name="monthlyBillingDays" type="number" min={1} max={366} step={1} inputMode="numeric" defaultValue={plan.price.monthlyBillingDays} onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }} className="bg-[#050505]" /></label>
                   <div className="space-y-1 text-xs font-medium text-[#9CA3AF]">Accounts<p className="flex h-9 items-center rounded-md border border-[#2A2A2A] px-2.5 text-sm text-white">{plan.businessAccountCount}</p></div>
                 </div>
               </section>
@@ -316,7 +318,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
 
             <div className="mt-4 grid gap-4 xl:grid-cols-3">
               <section className="rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Reports</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Reports<RequiredMark /></p>
                 <select name="reportLevel" defaultValue={reportLevel} className="h-9 w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-2.5 text-sm text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626]">
                   <option value="dashboard">Dashboard</option>
                   <option value="standard">Standard</option>
@@ -326,7 +328,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
               </section>
 
               <section className="rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Support</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Support<RequiredMark /></p>
                 <select name="supportTier" defaultValue={supportTier} className="h-9 w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-2.5 text-sm text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626]">
                   <option value="Basic">Basic</option>
                   <option value="Standard">Standard</option>
@@ -336,7 +338,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
               </section>
 
               <section className="rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Login security</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Login security<RequiredMark /></p>
                 <div className="grid gap-2">
                   <select name="securityTier" defaultValue={securityTier} className="h-9 w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-2.5 text-sm text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626]">
                     <option value="Basic">Basic</option>

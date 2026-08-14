@@ -1,7 +1,8 @@
 "use client"
 
-import { useActionState } from "react"
+import { useActionState, useEffect } from "react"
 import { Database, ScanLine, Search, ShieldCheck } from "lucide-react"
+import { toast } from "sonner"
 
 import { PageHeading } from "@/components/admin-dashboard/shared/page-heading"
 import { Button } from "@/components/ui/button"
@@ -47,6 +48,7 @@ const detailRows = (vehicle: AdminVinDecodedVehicle) => [
   ["Trim", vehicle.trim ?? "Not available"],
   ["AI Confidence", `${vehicle.confidence.toFixed(1)}%`],
 ]
+const RequiredMark = () => <span aria-hidden="true" className="text-dashboard-danger"> *</span>
 
 export function VinDecoderPage() {
   const [state, formAction, isPending] = useActionState(
@@ -54,6 +56,10 @@ export function VinDecoderPage() {
     initialState,
   )
   const result = state.result
+
+  useEffect(() => {
+    if (state.message) toast.error(state.message)
+  }, [state.message])
 
   return (
     <div className="space-y-6 pb-24">
@@ -86,7 +92,7 @@ export function VinDecoderPage() {
                   htmlFor="vin"
                   className="text-xs font-semibold uppercase text-dashboard-muted"
                 >
-                  VIN Input
+                  VIN Input<RequiredMark />
                 </Label>
                 <Input
                   id="vin"
@@ -97,6 +103,12 @@ export function VinDecoderPage() {
                   pattern="[A-HJ-NPR-Za-hj-npr-z0-9]{17}"
                   placeholder="Enter 17-character VIN"
                   defaultValue=""
+                  onInput={(event) => {
+                    event.currentTarget.value = event.currentTarget.value
+                      .replace(/[IOQioq\W_]/g, "")
+                      .toUpperCase()
+                      .slice(0, 17)
+                  }}
                   className="h-12 border-dashboard-panel-border bg-dashboard-page-bg px-4 font-mono text-[15px] font-semibold uppercase tracking-wider text-dashboard-text placeholder:text-brand-placeholder"
                 />
               </div>

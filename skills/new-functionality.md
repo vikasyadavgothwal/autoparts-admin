@@ -13,6 +13,7 @@ Add new feature logic with consistent boundaries.
    - Keep action filenames organized by feature (for example: `actions/admin-dashboard/public-pages/public-content.ts`).
 4. UI layer
    - Build or update components in `components/`.
+   - Every user-editable input, textarea, select, file upload, and custom input must have field-appropriate validation, red `*` markers for required fields, and input-time blocking for clearly invalid values where practical.
 5. Route/page wiring
    - Wire new screens or API pages in `app/`.
    - If API is needed, place API route at `app/api/v1/<audience>/<feature>/route.ts`.
@@ -21,6 +22,8 @@ Add new feature logic with consistent boundaries.
    - For update actions, add `isSaving`/status states in UI state.
    - Show "Saving...", success timestamps, and failures per section or screen.
    - Use `toast.success` and `toast.error` from `sonner` to surface outcomes.
+7. Trust boundary validation
+   - API routes/actions/services must validate the same critical constraints before writes: required fields, max lengths, numeric ranges, date ordering, file type/size, URL/email/phone format, and trimmed text.
 
 ## Rules
 - Components stay presentational where possible.
@@ -39,3 +42,5 @@ Add new feature logic with consistent boundaries.
 - [ ] Import paths resolve without inline deep dependencies
 - [ ] New files placed in clear feature folders
 - [ ] If API is created, it is under `app/api/v1/<audience>/...`
+- [ ] Editable fields validate before submit/API calls and required labels render a red `*`
+- [ ] Success and error states use existing toast/notification UI

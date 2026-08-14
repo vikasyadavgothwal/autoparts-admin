@@ -87,6 +87,11 @@ const cleanText = (value: unknown, max = 120) =>
     ? value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max)
     : ""
 
+const normalizedTextLength = (value: unknown) =>
+  typeof value === "string"
+    ? value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().length
+    : 0
+
 const hashApiKey = (apiKey: string) =>
   createHash("sha256").update(apiKey).digest("hex")
 
@@ -301,8 +306,13 @@ export async function createBusinessApiKey(input: {
     error.name = billing.code
     throw error
   }
-  const name = cleanText(input.name, 80) || "API key"
+  const nameLength = normalizedTextLength(input.name)
+  if (nameLength < 3 || nameLength > 80) {
+    throw new Error("API key name must be between 3 and 80 characters")
+  }
+  const name = cleanText(input.name, 80)
   const scopes = normalizeScopes(access.businessAccount.type, input.scopes)
+  if (!scopes.length) throw new Error("Select at least one API scope")
   const apiKey = `app_live_${access.businessAccount.type.toLowerCase()}_${randomBytes(32).toString("base64url")}`
   const encryptedKey = encryptApiKey(apiKey)
   const id = randomUUID()

@@ -70,6 +70,8 @@ const expectedDeliveryForOption = (confirmedAt: Date, value: string | null) =>
   value && value in deliveryOptions
     ? addCalendarDays(confirmedAt, deliveryOptions[value as DeliveryOption].days)
     : null;
+const MAX_PROOF_RECIPIENT_NAME_LENGTH = 80;
+const MAX_PROOF_NOTE_LENGTH = 500;
 
 const searchWhere = (search: string): Prisma.OrderWhereInput => {
   const query = search.trim();
@@ -549,6 +551,14 @@ export async function submitOrderProofOfDelivery(
     if (selectedItems.some((item) => item.deliveredAt)) {
       throw new Error("One or more selected items were already delivered");
     }
+    const proofRecipientName = input.recipientName?.trim().replace(/\s+/g, " ") || null;
+    const proofNote = input.note?.trim().replace(/\s+/g, " ") || null;
+    if (proofRecipientName && proofRecipientName.length > MAX_PROOF_RECIPIENT_NAME_LENGTH) {
+      throw new Error(`Recipient name cannot exceed ${MAX_PROOF_RECIPIENT_NAME_LENGTH} characters`);
+    }
+    if (proofNote && proofNote.length > MAX_PROOF_NOTE_LENGTH) {
+      throw new Error(`Delivery note cannot exceed ${MAX_PROOF_NOTE_LENGTH} characters`);
+    }
 
     const deliveredAt = new Date();
     await transaction.orderItem.updateMany({
@@ -557,8 +567,8 @@ export async function submitOrderProofOfDelivery(
         deliveredAt,
         proofOfDeliveryUrl: input.proofUrl,
         proofOfDeliveryKey: input.proofKey,
-        proofRecipientName: input.recipientName?.trim() || null,
-        proofOfDeliveryNote: input.note?.trim() || null,
+        proofRecipientName,
+        proofOfDeliveryNote: proofNote,
         proofSubmittedAt: deliveredAt,
       },
     });
@@ -574,8 +584,8 @@ export async function submitOrderProofOfDelivery(
         status: nextStatus,
         proofOfDeliveryUrl: input.proofUrl,
         proofOfDeliveryKey: input.proofKey,
-        proofRecipientName: input.recipientName?.trim() || null,
-        proofOfDeliveryNote: input.note?.trim() || null,
+        proofRecipientName,
+        proofOfDeliveryNote: proofNote,
         proofSubmittedAt: deliveredAt,
       },
     });

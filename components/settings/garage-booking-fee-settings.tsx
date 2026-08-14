@@ -9,6 +9,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 type AdvanceMode = "percentage" | "fixed";
+const invalidNumberKeys = new Set(["e", "E", "+", "-"]);
+
+const RequiredMark = () => <span aria-hidden="true" className="text-[#DC2626]"> *</span>;
+
+const normalizeAdvanceValue = (nextValue: string, mode: AdvanceMode) => {
+  const cleaned = nextValue.replace(/[^\d.]/g, "");
+  const [whole = "", ...fractionParts] = cleaned.split(".");
+  if (mode === "percentage") return whole.slice(0, 3);
+  const fraction = fractionParts.join("");
+  return `${whole.slice(0, 6)}${fractionParts.length ? `.${fraction.slice(0, 2)}` : ""}`;
+};
 
 export function GarageBookingFeeSettings() {
   const [mode, setMode] = useState<AdvanceMode>("percentage");
@@ -34,6 +45,20 @@ export function GarageBookingFeeSettings() {
   }, []);
 
   const save = async () => {
+    const parsedValue = Number(value);
+    if (!value.trim() || !Number.isFinite(parsedValue)) {
+      toast.error("Please enter a valid advance amount.");
+      return;
+    }
+    if (mode === "percentage" && (!Number.isInteger(parsedValue) || parsedValue < 0 || parsedValue > 100)) {
+      toast.error("Advance percentage must be a whole number from 0 to 100.");
+      return;
+    }
+    if (mode === "fixed" && (parsedValue < 0 || parsedValue > 100000)) {
+      toast.error("Fixed advance amount must be between AED 0 and AED 100,000.");
+      return;
+    }
+
     setSaving(true);
     try {
       const response = await fetch("/api/v1/admin/platform-settings", {
@@ -42,7 +67,7 @@ export function GarageBookingFeeSettings() {
         body: JSON.stringify({
           garageBookingAdvance: {
             mode,
-            value: Number(value),
+            value: parsedValue,
           },
         }),
       });
@@ -66,7 +91,7 @@ export function GarageBookingFeeSettings() {
       <CardContent className="space-y-4">
         <p className="text-sm text-[#9CA3AF]">Amount collected from the customer before a garage service booking. Choose either a percentage of the service price or a fixed AED amount.</p>
         <div className="max-w-xl space-y-3">
-          <Label htmlFor="garage-advance-value">Advance collection</Label>
+          <Label htmlFor="garage-advance-value">Advance collection<RequiredMark /></Label>
           <div className="grid gap-2 sm:grid-cols-[160px_1fr_auto]">
             <select
               value={mode}
@@ -85,7 +110,8 @@ export function GarageBookingFeeSettings() {
               step={mode === "percentage" ? "1" : "0.01"}
               value={value}
               disabled={loading || saving}
-              onChange={(event) => setValue(event.target.value)}
+              onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault(); }}
+              onChange={(event) => setValue(normalizeAdvanceValue(event.target.value, mode))}
               className="h-10 border-[#2A2A2A] bg-[#0A0A0A] px-3 py-2"
             />
             <Button disabled={loading || saving} onClick={() => void save()} className="h-10 bg-[#DC2626] px-4 py-2 text-white hover:bg-[#B91C1C]">{saving ? "Saving..." : "Save"}</Button>

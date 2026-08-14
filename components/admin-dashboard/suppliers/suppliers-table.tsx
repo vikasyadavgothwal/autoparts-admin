@@ -30,6 +30,7 @@ const SUPPLIER_STATUS_TONES: Record<SupplierStatus, StatusTone> = {
   Pending: "warning",
   Rejected: "danger",
 }
+const RequiredMark = () => <span aria-hidden="true" className="text-dashboard-danger"> *</span>
 
 type ReviewTarget = {
   supplier: SupplierRecord
@@ -325,8 +326,17 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
   function handleReview() {
     if (!reviewTarget) return
     setError(null)
-    if (reviewTarget.status === "Rejected" && !rejectionReason.trim()) {
-      setError("Enter a rejection reason for the supplier")
+    const normalizedReason = rejectionReason.trim()
+    if (reviewTarget.status === "Rejected" && !normalizedReason) {
+      const message = "Enter a rejection reason for the supplier"
+      setError(message)
+      toast.error(message)
+      return
+    }
+    if (reviewTarget.status === "Rejected" && (normalizedReason.length < 10 || normalizedReason.length > 1000)) {
+      const message = "Rejection reason must be 10 to 1000 characters."
+      setError(message)
+      toast.error(message)
       return
     }
 
@@ -339,7 +349,7 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
           body: JSON.stringify({
             status: reviewTarget.status,
             rejectionReason:
-              reviewTarget.status === "Rejected" ? rejectionReason : undefined,
+              reviewTarget.status === "Rejected" ? normalizedReason : undefined,
           }),
         },
       )
@@ -628,12 +638,12 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
                 htmlFor="supplier-rejection-reason"
                 className="text-sm font-medium text-dashboard-text"
               >
-                Rejection reason
+                Rejection reason<RequiredMark />
               </label>
               <textarea
                 id="supplier-rejection-reason"
                 value={rejectionReason}
-                onChange={(event) => setRejectionReason(event.target.value)}
+                onChange={(event) => setRejectionReason(event.target.value.slice(0, 1000))}
                 rows={4}
                 maxLength={1000}
                 className="w-full rounded-sm border border-dashboard-panel-border bg-dashboard-panel px-3 py-2 text-sm text-dashboard-text outline-none ring-dashboard-accent/20 focus:ring-2"

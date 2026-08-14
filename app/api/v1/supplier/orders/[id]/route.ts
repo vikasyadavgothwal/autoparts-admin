@@ -13,6 +13,8 @@ import {
 
 type RouteContext = { params: Promise<{ id: string }> };
 const MAX_PROOF_SIZE = 5 * 1024 * 1024;
+const MAX_PROOF_RECIPIENT_NAME_LENGTH = 80;
+const MAX_PROOF_NOTE_LENGTH = 500;
 const PROOF_EXTENSIONS: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -71,6 +73,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
         { status: 400 },
       );
     }
+    const recipientName = String(formData.get("recipientName") ?? "").trim().replace(/\s+/g, " ");
+    const note = String(formData.get("note") ?? "").trim().replace(/\s+/g, " ");
+    if (recipientName.length > MAX_PROOF_RECIPIENT_NAME_LENGTH) {
+      return NextResponse.json(
+        { ok: false, message: `Recipient name cannot exceed ${MAX_PROOF_RECIPIENT_NAME_LENGTH} characters` },
+        { status: 400 },
+      );
+    }
+    if (note.length > MAX_PROOF_NOTE_LENGTH) {
+      return NextResponse.json(
+        { ok: false, message: `Delivery note cannot exceed ${MAX_PROOF_NOTE_LENGTH} characters` },
+        { status: 400 },
+      );
+    }
     const extension = PROOF_EXTENSIONS[proof.type];
     const uploaded = await uploadObjectToS3({
       key: `order-delivery-proofs/${supplierId}/${id}/${Date.now()}-${crypto.randomUUID()}.${extension}`,
@@ -84,8 +100,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
         itemIds,
         proofUrl: uploaded.objectUrl,
         proofKey: uploaded.key,
-        recipientName: String(formData.get("recipientName") ?? ""),
-        note: String(formData.get("note") ?? ""),
+        recipientName,
+        note,
       }),
     });
   } catch (error) {

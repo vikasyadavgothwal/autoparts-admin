@@ -24,6 +24,8 @@ import type {
 
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
+const maxRfqBidNotesLength = 500
+const maxMoneyCents = 2147483647
 
 const requiredText = (value: unknown, label: string) => {
   const normalized = text(value)
@@ -41,11 +43,18 @@ const wholeNumber = (value: unknown, label: string, min = 0) => {
 
 const moneyToCents = (value: unknown) => {
   if (value === null || value === undefined || value === "") return null
-  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value))
+  if (typeof value === "string" && !/^\d+(\.\d{0,2})?$/.test(text(value))) {
+    throw new Error("Please enter a valid number")
+  }
+  const parsed = typeof value === "number" ? value : Number(text(value))
   if (!Number.isFinite(parsed) || parsed < 0) {
     throw new Error("Target price must be a non-negative number")
   }
-  return Math.round(parsed * 100)
+  const cents = Math.round(parsed * 100)
+  if (!Number.isSafeInteger(cents) || cents > maxMoneyCents) {
+    throw new Error("Amount is too large")
+  }
+  return cents
 }
 
 const requiredMoneyToCents = (value: unknown, label: string) => {
@@ -1082,6 +1091,13 @@ export async function submitRfqBid(
   if (validUntil && (Number.isNaN(validUntil.getTime()) || validUntil <= new Date())) {
     throw new Error("Quote validity date must be in the future")
   }
+  if (validUntil && validUntil > rfq.responseDeadline) {
+    throw new Error("Quote validity date cannot be after the RFQ deadline")
+  }
+  const notes = text(input.notes)
+  if (notes.length > maxRfqBidNotesLength) {
+    throw new Error(`Notes cannot exceed ${maxRfqBidNotesLength} characters`)
+  }
 
   if (!Array.isArray(input.items)) {
     throw new Error("Add at least one product quote")
@@ -1120,7 +1136,7 @@ export async function submitRfqBid(
         ...bidItems.map((item) => rfqBidDeliveryOptions[item.deliveryOption].days),
       ),
       validUntil,
-      notes: text(input.notes) || null,
+      notes: notes || null,
     }
     const totalAmount = bidItems.reduce((sum, item) => sum + item.lineTotal, 0)
     if (!Number.isSafeInteger(totalAmount)) throw new Error("Quote total is too large")

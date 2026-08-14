@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react"
 import type { FormEvent } from "react"
 import { MapPin, MoreHorizontal, Star } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -39,6 +40,15 @@ const GARAGE_STATUS_TONES: Record<string, StatusTone> = {
   Pending: "warning",
   Suspended: "danger",
 }
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PHONE_PATTERN = /^\+?\d{8,18}$/
+const POSTAL_CODE_PATTERN = /^[A-Za-z0-9 -]{3,20}$/
+const NAME_PATTERN = /^[A-Za-z0-9\s.'&()-]+$/
+const PLACE_PATTERN = /^[A-Za-z\s.'-]+$/
+const RequiredMark = () => <span aria-hidden="true" className="text-dashboard-danger"> *</span>
+
+const textField = (formData: FormData, key: string) =>
+  String(formData.get(key) ?? "").trim().replace(/\s+/g, " ")
 
 export function GaragesTable({ rows, columns }: GaragesTableProps) {
   const router = useRouter()
@@ -72,8 +82,28 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
     if (!editingGarage) return
 
     const formData = new FormData(event.currentTarget)
-    const body = Object.fromEntries(formData.entries())
+    const name = textField(formData, "name")
+    const owner = textField(formData, "owner")
+    const email = textField(formData, "email")
+    const phone = textField(formData, "phone").replace(/[^\d+]/g, "")
+    const address = textField(formData, "address")
+    const city = textField(formData, "city")
+    const state = textField(formData, "state")
+    const country = textField(formData, "country")
+    const pincode = textField(formData, "pincode")
+    const status = textField(formData, "status")
+    const body = { name, owner, email, phone, address, city, state, country, pincode, status }
     setError(null)
+    if (!name) return toast.error("Garage name is required.")
+    if (name.length > 120 || !NAME_PATTERN.test(name)) return toast.error("Garage name contains invalid characters or is too long.")
+    if (!owner) return toast.error("Owner name is required.")
+    if (owner.length > 80 || !NAME_PATTERN.test(owner)) return toast.error("Owner name contains invalid characters or is too long.")
+    if (email && (email.length > 254 || !EMAIL_PATTERN.test(email))) return toast.error("Please enter a valid email address.")
+    if (phone && !PHONE_PATTERN.test(phone)) return toast.error("Please enter a valid phone number.")
+    if (city && (city.length > 80 || !PLACE_PATTERN.test(city))) return toast.error("City contains invalid characters or is too long.")
+    if (state && (state.length > 80 || !PLACE_PATTERN.test(state))) return toast.error("State contains invalid characters or is too long.")
+    if (country && (country.length > 80 || !PLACE_PATTERN.test(country))) return toast.error("Country contains invalid characters or is too long.")
+    if (pincode && !POSTAL_CODE_PATTERN.test(pincode)) return toast.error("Please enter a valid pincode.")
 
     startTransition(async () => {
       const response = await fetch(`/api/v1/admin/garages/${editingGarage.internalId}`, {
@@ -87,10 +117,12 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
           | { message?: string }
           | null
         setError(payload?.message ?? "Unable to update garage")
+        toast.error(payload?.message ?? "Unable to update garage")
         return
       }
 
       setEditingGarage(null)
+      toast.success("Garage updated successfully.")
       router.refresh()
     })
   }
@@ -109,10 +141,12 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
           | { message?: string }
           | null
         setError(payload?.message ?? "Unable to delete garage")
+        toast.error(payload?.message ?? "Unable to delete garage")
         return
       }
 
       setDeletingGarage(null)
+      toast.success("Garage deleted successfully.")
       router.refresh()
     })
   }
@@ -122,8 +156,12 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
     if (!overrideBooking) return
 
     const formData = new FormData(event.currentTarget)
-    const body = Object.fromEntries(formData.entries())
+    const reason = textField(formData, "reason")
+    const evidence = textField(formData, "evidence")
+    const body = { reason, evidence }
     setError(null)
+    if (reason.length < 20 || reason.length > 500) return toast.error("Override reason must be 20 to 500 characters.")
+    if (evidence.length < 20 || evidence.length > 1200) return toast.error("Evidence reviewed must be 20 to 1200 characters.")
 
     startTransition(async () => {
       const response = await fetch(
@@ -140,11 +178,13 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
           | { message?: string }
           | null
         setError(payload?.message ?? "Unable to complete booking")
+        toast.error(payload?.message ?? "Unable to complete booking")
         return
       }
 
       setOverrideBooking(null)
       setBookingGarage(null)
+      toast.success("Booking completed by Admin review.")
       router.refresh()
     })
   }
@@ -366,7 +406,7 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
             </div>
 
             <label className="grid gap-1 text-sm font-medium">
-              Override reason
+              Override reason<RequiredMark />
               <textarea
                 name="reason"
                 minLength={20}
@@ -378,7 +418,7 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
             </label>
 
             <label className="grid gap-1 text-sm font-medium">
-              Evidence reviewed
+              Evidence reviewed<RequiredMark />
               <textarea
                 name="evidence"
                 minLength={20}
@@ -486,12 +526,12 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
           <form className="grid gap-4" onSubmit={handleEditSubmit}>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1 text-sm font-medium">
-                Garage name
-                <Input name="name" defaultValue={editDefaults.name} required />
+                Garage name<RequiredMark />
+                <Input name="name" defaultValue={editDefaults.name} maxLength={120} required />
               </label>
               <label className="grid gap-1 text-sm font-medium">
-                Owner
-                <Input name="owner" defaultValue={editDefaults.owner} required />
+                Owner<RequiredMark />
+                <Input name="owner" defaultValue={editDefaults.owner} maxLength={80} required />
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 Email
@@ -499,34 +539,35 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
                   name="email"
                   type="email"
                   defaultValue={editDefaults.email}
+                  maxLength={254}
                 />
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 Mobile
-                <Input name="phone" defaultValue={editDefaults.phone} />
+                <Input name="phone" defaultValue={editDefaults.phone} maxLength={18} />
               </label>
               <label className="grid gap-1 text-sm font-medium sm:col-span-2">
                 Address
-                <Input name="address" defaultValue={editDefaults.address} />
+                <Input name="address" defaultValue={editDefaults.address} maxLength={255} />
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 City
-                <Input name="city" defaultValue={editDefaults.city} />
+                <Input name="city" defaultValue={editDefaults.city} maxLength={80} />
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 State
-                <Input name="state" defaultValue={editDefaults.state} />
+                <Input name="state" defaultValue={editDefaults.state} maxLength={80} />
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 Country
-                <Input name="country" defaultValue={editDefaults.country} />
+                <Input name="country" defaultValue={editDefaults.country} maxLength={80} />
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 Pincode
-                <Input name="pincode" defaultValue={editDefaults.pincode} />
+                <Input name="pincode" defaultValue={editDefaults.pincode} maxLength={20} />
               </label>
               <label className="grid gap-1 text-sm font-medium">
-                Status
+                Status<RequiredMark />
                 <select
                   name="status"
                   defaultValue={editDefaults.status}

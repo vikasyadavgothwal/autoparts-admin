@@ -4,6 +4,7 @@ import { db } from "@/lib/database/prisma"
 import { hashPassword } from "@/lib/auth/password"
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/
 
 const normalizeEmail = (value: string | null | undefined) => {
   const email = value?.trim().toLowerCase() ?? ""
@@ -46,8 +47,11 @@ export async function resetUserPasswordWithToken(input: {
   if (!/^[a-f0-9]{64}$/i.test(token)) {
     throw new Error("Password reset link is invalid or expired")
   }
-  if (password.length < 8) {
-    throw new Error("Password must be at least 8 characters")
+  if (password.length < 8 || password.length > 128) {
+    throw new Error("Password must be between 8 and 128 characters")
+  }
+  if (!PASSWORD_PATTERN.test(password)) {
+    throw new Error("Password must include uppercase, lowercase, and number characters")
   }
 
   const [request] = await db.$queryRaw<Array<{

@@ -35,6 +35,7 @@ type AdminLookupRecord = {
 }
 const toActionMessage = (message: string) => ({ ok: false as const, message })
 const now = () => new Date()
+const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/
 const addMinutesFromNow = (minutes: number): Date => {
   const target = now()
   target.setMinutes(target.getMinutes() + minutes)
@@ -280,6 +281,12 @@ export const changeAdminPassword = async (input: {
   }
   if (input.newPassword.length < 8) {
     return toActionMessage("New password must be at least 8 characters")
+  }
+  if (input.newPassword.length > 128) {
+    return toActionMessage("New password must be 128 characters or fewer")
+  }
+  if (!PASSWORD_PATTERN.test(input.newPassword)) {
+    return toActionMessage("New password must include uppercase, lowercase, and number characters")
   }
   if (input.currentPassword === input.newPassword) {
     return toActionMessage("New password must be different from current password")

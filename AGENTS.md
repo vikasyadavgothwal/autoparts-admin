@@ -20,6 +20,7 @@ Workflow Notes:
 - Keep agent-level guidance in dedicated skill files so updates are isolated and easier to maintain.
 - Skills docs live in the `skills/` folder and are organized by task type.
 - Use existing project structure and existing aliases; avoid introducing a `src` folder.
+- Validate every new or changed user-editable input, textarea, select, file upload, and custom input before submission/API calls; trim whitespace, prevent clearly invalid values where practical, show required fields with a red `*`, and use the existing toast/notification system for success and error feedback.
 
 When adding anything new:
 - Do not add business logic inside UI components.

@@ -271,7 +271,8 @@ export function QueriesPage({
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9CA3AF]" />
             <Input
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              maxLength={120}
+              onChange={(event) => setSearch(event.target.value.slice(0, 120))}
               placeholder="Search name, email, phone, company, source..."
               className="h-10 border-[#2A2A2A] bg-[#1A1A1A] pl-9 text-white"
             />

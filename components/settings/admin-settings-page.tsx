@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { ShieldCheck, UserRound, KeyRound, Settings2 } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,6 +15,12 @@ type AdminProfile = {
   name: string | null
 }
 
+const PASSWORD_MIN_LENGTH = 8
+const PASSWORD_MAX_LENGTH = 128
+const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/
+
+const RequiredMark = () => <span aria-hidden="true" className="text-[#DC2626]"> *</span>
+
 export function AdminSettingsPage({ admin }: { admin: AdminProfile }) {
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
@@ -24,8 +31,32 @@ export function AdminSettingsPage({ admin }: { admin: AdminProfile }) {
   async function changePassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setMessage(null)
+    if (!currentPassword) {
+      toast.error("Current password is required.")
+      return
+    }
+    if (!newPassword) {
+      toast.error("New password is required.")
+      return
+    }
+    if (!confirmPassword) {
+      toast.error("Confirm password is required.")
+      return
+    }
+    if (newPassword.length < PASSWORD_MIN_LENGTH || newPassword.length > PASSWORD_MAX_LENGTH) {
+      toast.error(`New password must be between ${PASSWORD_MIN_LENGTH} and ${PASSWORD_MAX_LENGTH} characters.`)
+      return
+    }
+    if (!PASSWORD_PATTERN.test(newPassword)) {
+      toast.error("New password must include uppercase, lowercase, and number characters.")
+      return
+    }
+    if (currentPassword === newPassword) {
+      toast.error("New password must be different from current password.")
+      return
+    }
     if (newPassword !== confirmPassword) {
-      setMessage("New password and confirmation do not match.")
+      toast.error("New password and confirmation do not match.")
       return
     }
     setSavingPassword(true)
@@ -43,11 +74,14 @@ export function AdminSettingsPage({ admin }: { admin: AdminProfile }) {
       setNewPassword("")
       setConfirmPassword("")
       setMessage("Password changed. Please sign in again.")
+      toast.success("Password changed successfully.")
       window.setTimeout(() => {
         window.location.href = "/login"
       }, 900)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to change password")
+      const errorMessage = error instanceof Error ? error.message : "Unable to change password"
+      setMessage(errorMessage)
+      toast.error(errorMessage)
     } finally {
       setSavingPassword(false)
     }
@@ -117,16 +151,16 @@ export function AdminSettingsPage({ admin }: { admin: AdminProfile }) {
           <CardContent>
             <form className="space-y-4" onSubmit={changePassword}>
               <div className="space-y-2">
-                <Label htmlFor="current-password">Current Password</Label>
-                <Input id="current-password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} className="border-[#2A2A2A] bg-[#0A0A0A]" required />
+                <Label htmlFor="current-password">Current Password<RequiredMark /></Label>
+                <Input id="current-password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value.slice(0, PASSWORD_MAX_LENGTH))} maxLength={PASSWORD_MAX_LENGTH} className="border-[#2A2A2A] bg-[#0A0A0A]" required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="new-password">New Password</Label>
-                <Input id="new-password" type="password" minLength={8} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} className="border-[#2A2A2A] bg-[#0A0A0A]" required />
+                <Label htmlFor="new-password">New Password<RequiredMark /></Label>
+                <Input id="new-password" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={newPassword} onChange={(event) => setNewPassword(event.target.value.slice(0, PASSWORD_MAX_LENGTH))} className="border-[#2A2A2A] bg-[#0A0A0A]" required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="confirm-password">Confirm New Password</Label>
-                <Input id="confirm-password" type="password" minLength={8} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="border-[#2A2A2A] bg-[#0A0A0A]" required />
+                <Label htmlFor="confirm-password">Confirm New Password<RequiredMark /></Label>
+                <Input id="confirm-password" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value.slice(0, PASSWORD_MAX_LENGTH))} className="border-[#2A2A2A] bg-[#0A0A0A]" required />
               </div>
               {message ? <p className="rounded-md border border-[#2A2A2A] bg-[#0A0A0A] px-3 py-2 text-sm text-[#E5E7EB]">{message}</p> : null}
               <Button type="submit" disabled={savingPassword} className="w-full bg-[#DC2626] text-white hover:bg-[#B91C1C]">
