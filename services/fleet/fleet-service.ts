@@ -26,6 +26,7 @@ const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
 const maxRfqBidNotesLength = 500
 const maxMoneyCents = 2147483647
+const rfqRankedBidLimit = 6
 
 const requiredText = (value: unknown, label: string) => {
   const normalized = text(value)
@@ -439,7 +440,7 @@ async function refreshRfqRankingWindow(rfqId: string) {
     },
   })
   const rankedBids = await scoreRfqBids(bids)
-  const topBids = rankedBids.slice(0, 5)
+  const topBids = rankedBids.slice(0, rfqRankedBidLimit)
   const rankedAt = new Date()
 
   await db.$transaction(async (transaction) => {
@@ -494,34 +495,43 @@ const mapRfqMoney = <T extends {
   parts: Array<{ targetPrice: number | null }>
   bids?: Array<{
     totalAmount: number
+    rankingPosition?: number | null
+    supplier?: { featuredSupplier?: boolean | null } | null
     items?: Array<{ unitPrice: number; lineTotal: number }>
   }>
   order?: { totalAmount: number } | null
-}>(rfq: T) => ({
-  ...rfq,
-  quoteWindowEndsAt: rfqQuoteWindowEndsAt(rfq),
-  quoteWindowActive: rfq.status === RfqStatus.open && new Date() < rfqQuoteWindowEndsAt(rfq),
-  parts: rfq.parts.map((part) => ({
-    ...part,
-    targetPrice: part.targetPrice === null ? null : part.targetPrice / 100,
-  })),
-  ...(rfq.bids
-    ? { bids: rfq.bids.map((bid) => ({
-        ...bid,
-        totalAmount: bid.totalAmount / 100,
-        ...(bid.items ? {
-          items: bid.items.map((item) => ({
-            ...item,
-            unitPrice: item.unitPrice / 100,
-            lineTotal: item.lineTotal / 100,
-          })),
-        } : {}),
-      })) }
-    : {}),
-  ...(rfq.order
-    ? { order: { ...rfq.order, totalAmount: rfq.order.totalAmount / 100 } }
-    : {}),
-})
+}>(rfq: T) => {
+  const hasFeaturedSupplier = rfq.bids?.some((bid) => bid.supplier?.featuredSupplier) ?? false
+
+  return {
+    ...rfq,
+    quoteWindowEndsAt: rfqQuoteWindowEndsAt(rfq),
+    quoteWindowActive: rfq.status === RfqStatus.open && new Date() < rfqQuoteWindowEndsAt(rfq),
+    parts: rfq.parts.map((part) => ({
+      ...part,
+      targetPrice: part.targetPrice === null ? null : part.targetPrice / 100,
+    })),
+    ...(rfq.bids
+      ? { bids: rfq.bids.map((bid) => ({
+          ...bid,
+          featuredSupplier:
+            Boolean(bid.supplier?.featuredSupplier) ||
+            (!hasFeaturedSupplier && bid.rankingPosition === 1),
+          totalAmount: bid.totalAmount / 100,
+          ...(bid.items ? {
+            items: bid.items.map((item) => ({
+              ...item,
+              unitPrice: item.unitPrice / 100,
+              lineTotal: item.lineTotal / 100,
+            })),
+          } : {}),
+        })) }
+      : {}),
+    ...(rfq.order
+      ? { order: { ...rfq.order, totalAmount: rfq.order.totalAmount / 100 } }
+      : {}),
+  }
+}
 
 export async function listFleetVehicles(
   fleetId: string,
@@ -875,7 +885,7 @@ export async function listFleetRfqs(
           include: {
             items: { orderBy: { createdAt: "asc" } },
             supplier: {
-              select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
+              select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true, featuredSupplier: true },
             },
           },
           orderBy: { totalAmount: "asc" },
@@ -911,6 +921,7 @@ export async function listFleetRfqs(
               firstName: true,
               lastName: true,
               email: true,
+              featuredSupplier: true,
             },
           },
         },
@@ -966,7 +977,7 @@ export async function listUserRfqs(
           include: {
             items: { orderBy: { createdAt: "asc" } },
             supplier: {
-              select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
+              select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true, featuredSupplier: true },
             },
           },
           orderBy: { totalAmount: "asc" },
@@ -1001,6 +1012,7 @@ export async function listUserRfqs(
               firstName: true,
               lastName: true,
               email: true,
+              featuredSupplier: true,
             },
           },
         },
@@ -1032,13 +1044,13 @@ export async function listAdminRfqs(page = 1, pageSize = 100) {
         parts: true,
         fleetVehicle: true,
         requester: {
-          select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
+          select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true, featuredSupplier: true },
         },
         bids: {
           include: {
             items: { orderBy: { createdAt: "asc" } },
             supplier: {
-              select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true },
+              select: { id: true, supplierPublicId: true, companyName: true, firstName: true, lastName: true, email: true, featuredSupplier: true },
             },
           },
           orderBy: { totalAmount: "asc" },

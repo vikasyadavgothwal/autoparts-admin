@@ -7,6 +7,10 @@ import {
   type Prisma,
 } from "@/lib/generated/prisma/client"
 import {
+  featuredCategorySource,
+  isFeaturedCategoryActive,
+} from "@/services/featured-vendor/featured-vendor-category-service"
+import {
   mapMappedCatalogPart,
   mapSupplierPart,
   normalizeText,
@@ -77,6 +81,34 @@ const mappedSupplierPartWhere: Prisma.SupplierPartWhereInput = {
   isActive: true,
   mappingStatus: SupplierPartMappingStatus.mapped,
   partUid: { not: null },
+}
+
+const normalizeCategoryName = (value: string | null | undefined) =>
+  normalizeText(value).toLowerCase()
+
+async function activeFeaturedCategoryNamesForSupplier(supplierId: string) {
+  const [account, rows] = await Promise.all([
+    db.businessAccount.findFirst({
+      where: { ownerUserId: supplierId, type: "Supplier", isActive: true },
+      select: { plan: { select: { featuredVendor: true } } },
+    }),
+    db.supplierFeaturedCategory.findMany({
+      where: { supplierId },
+      include: {
+        category: { select: { name: true } },
+        addOnRequest: { select: { status: true, validFrom: true, validUntil: true } },
+      },
+    }),
+  ])
+  const planFeatured = Boolean(account?.plan.featuredVendor)
+
+  return new Set(
+    rows
+      .filter((row) => row.source !== featuredCategorySource.plan || planFeatured)
+      .filter((row) => isFeaturedCategoryActive(row, planFeatured))
+      .map((row) => normalizeCategoryName(row.category.name))
+      .filter(Boolean),
+  )
 }
 
 
@@ -206,7 +238,9 @@ export async function listSupplierPartsPage(input: {
             { originalBrand: { contains: query, mode: "insensitive" } },
             { originalMpn: { contains: query, mode: "insensitive" } },
             { originalOemNumber: { contains: query, mode: "insensitive" } },
+            { category: { contains: query, mode: "insensitive" } },
             { partUid: { contains: query, mode: "insensitive" } },
+            { part: { is: { category: { contains: query, mode: "insensitive" } } } },
             {
               supplier: {
                 is: {
@@ -230,7 +264,7 @@ export async function listSupplierPartsPage(input: {
     ...(input.status ? { mappingStatus: input.status } : {}),
   }
 
-  const [parts, total, inactiveCount] = await Promise.all([
+  const [parts, total, inactiveCount, featuredCategoryNames] = await Promise.all([
     db.supplierPart.findMany({
       where,
       skip: (page - 1) * pageSize,
@@ -266,10 +300,17 @@ export async function listSupplierPartsPage(input: {
     }),
     db.supplierPart.count({ where }),
     db.supplierPart.count({ where: inactiveWhere }),
+    activeFeaturedCategoryNamesForSupplier(input.supplierId),
   ])
 
   return {
-    parts: parts.map(mapSupplierPart),
+    parts: parts.map((part) => {
+      const categoryNames = [part.part?.category, part.category].map(normalizeCategoryName).filter(Boolean)
+      return {
+        ...mapSupplierPart(part),
+        isFeaturedVendorProduct: categoryNames.some((categoryName) => featuredCategoryNames.has(categoryName)),
+      }
+    }),
     inactiveCount,
     pagination: {
       page,

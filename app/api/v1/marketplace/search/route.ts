@@ -20,6 +20,9 @@ export async function GET(request: NextRequest) {
       make: searchParams.get("make"),
       model: searchParams.get("model"),
       q: searchParams.get("q"),
+      deliveryCity: searchParams.get("deliveryCity"),
+      deliveryState: searchParams.get("deliveryState"),
+      deliveryCountry: searchParams.get("deliveryCountry"),
       limit: Number.parseInt(searchParams.get("limit") ?? "", 10) || null,
       includeRankingMetadata,
     })

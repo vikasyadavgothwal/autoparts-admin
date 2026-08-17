@@ -96,6 +96,12 @@ const planTone: Record<PlanCode, string> = {
   Enterprise: "border-[#6B7280]/50 bg-[#151515]",
 }
 
+const defaultSupplierSearchBoostLevel: Record<PlanCode, number> = {
+  Free: 1,
+  Pro: 1,
+  Enterprise: 2,
+}
+
 const tierDefaults: Record<PlanCode, { securityTier: SecurityTier; supportTier: SupportTier; loginSecurityMode: LoginSecurityMode; reportLevel: ReportLevel }> = {
   Free: { securityTier: "Basic", supportTier: "Basic", loginSecurityMode: "password", reportLevel: "dashboard" },
   Pro: { securityTier: "Standard", supportTier: "Standard", loginSecurityMode: "otp", reportLevel: "standard" },
@@ -244,6 +250,9 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
       payload.featuredVendor = formData.get("featuredVendor") === "on"
       payload.featuredVendorCategoryLimit = payload.featuredVendor ? featuredCategoryLimit.value : null
       payload.allowedFeaturedVendorCategoryIds = payload.featuredVendor ? allowedFeaturedVendorCategoryIds : []
+      payload.searchBoostLevel = formData.get("marketplaceSearchBoostEnabled") === "on"
+        ? Math.max(plan.marketplace?.searchBoostLevel ?? 0, defaultSupplierSearchBoostLevel[plan.code])
+        : 0
       if (payload.featuredVendor && !allowedFeaturedVendorCategoryIds.length) return toast.error("Select at least one allowed Featured Vendor category.")
     }
 
@@ -405,10 +414,14 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
             {plan.accountType === "Supplier" ? (
               <section className="mt-4 rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Marketplace</p>
-                <div className="grid gap-3 md:grid-cols-[1fr_160px]">
+                <div className="grid gap-3 md:grid-cols-[1fr_1fr_160px]">
                   <label className="flex items-center gap-2 text-sm font-medium text-[#D1D5DB]">
                     <Checkbox name="featuredVendor" defaultChecked={plan.marketplace?.featuredVendor === true} />
                     Featured Vendor included
+                  </label>
+                  <label className="flex items-center gap-2 text-sm font-medium text-[#D1D5DB]">
+                    <Checkbox name="marketplaceSearchBoostEnabled" defaultChecked={(plan.marketplace?.searchBoostLevel ?? 0) > 0} />
+                    Marketplace ranking boost
                   </label>
                   <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">
                     Category limit

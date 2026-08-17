@@ -22,6 +22,8 @@ const DEFAULT_CURRENCY = "AED"
 const DEFAULT_PRODUCT_IMAGE =
   "https://images.unsplash.com/photo-1486262715619-67b85e0b08d3?w=900&h=900&fit=crop"
 const DEFAULT_RANKING_SCORE_MAX = 100
+const PDP_OFFER_LIMIT = 6
+const MARKETPLACE_OFFER_LIMIT = 6
 
 const DEFAULT_SCORE_WEIGHTS = {
   relevance: 25,
@@ -37,6 +39,8 @@ const DEFAULT_SCORE_WEIGHTS = {
 type RankedOfferSearchContext = {
   queryText?: string | null
   includeRankingMetadata?: boolean
+  applyPlanBoost?: boolean
+  deliveryLocation?: DeliveryLocation
 }
 
 export type MarketplaceOfferRankingScores = {
@@ -71,6 +75,9 @@ const supplierPartInclude = {
       lastName: true,
       email: true,
       avatarUrl: true,
+      city: true,
+      state: true,
+      country: true,
       supplierApprovalStatus: true,
       featuredSupplier: true,
       ownedBusinessAccounts: {
@@ -164,8 +171,17 @@ type MarketplaceSearchInput = {
   make?: string | null
   model?: string | null
   q?: string | null
+  deliveryCity?: string | null
+  deliveryState?: string | null
+  deliveryCountry?: string | null
   limit?: number | null
   includeRankingMetadata?: boolean
+}
+
+type DeliveryLocation = {
+  city?: string | null
+  state?: string | null
+  country?: string | null
 }
 
 const normalizeText = (value: unknown): string =>
@@ -173,6 +189,9 @@ const normalizeText = (value: unknown): string =>
 
 const normalizeToken = (value: string): string =>
   value.toUpperCase().replace(/[^A-Z0-9]+/g, "")
+
+const normalizeLocation = (value: string | null | undefined): string =>
+  normalizeText(value).toLowerCase()
 
 const containsInsensitive = (value: string) => ({
   contains: value,
@@ -275,6 +294,15 @@ const rankedOfferModels = async (
   const queryTextTokens = context?.queryText
     ? getSearchTokens(context.queryText)
     : []
+  const usePlanBoost = context?.applyPlanBoost !== false
+  const deliveryLocation = {
+    city: normalizeLocation(context?.deliveryLocation?.city),
+    state: normalizeLocation(context?.deliveryLocation?.state),
+    country: normalizeLocation(context?.deliveryLocation?.country),
+  }
+  const hasDeliveryLocation = Boolean(
+    deliveryLocation.city || deliveryLocation.state || deliveryLocation.country,
+  )
   const getLeadTimeDays = (value: string | null | undefined): number | null => {
     if (!value) {
       return null
@@ -316,6 +344,45 @@ const rankedOfferModels = async (
     return Math.max(min, Math.min(max, value))
   }
 
+  const exactQueryMatch = (offer: MarketplaceSupplierPart) => {
+    const normalizedQuery = normalizePartNumber(context?.queryText ?? "")
+    if (!normalizedQuery) {
+      return 0
+    }
+
+    return [
+      offer.normalizedMpn,
+      offer.normalizedOemNumber,
+      offer.originalMpn,
+      offer.originalOemNumber,
+      offer.vendorSku,
+    ].some((value) => normalizePartNumber(value ?? "") === normalizedQuery)
+      ? 1
+      : 0
+  }
+
+  const deliveryLocationMatch = (offer: MarketplaceSupplierPart) => {
+    if (!hasDeliveryLocation) {
+      return 0
+    }
+
+    const supplierCity = normalizeLocation(offer.supplier.city)
+    const supplierState = normalizeLocation(offer.supplier.state)
+    const supplierCountry = normalizeLocation(offer.supplier.country)
+
+    if (deliveryLocation.city && supplierCity === deliveryLocation.city) {
+      return 1
+    }
+    if (deliveryLocation.state && supplierState === deliveryLocation.state) {
+      return 0.7
+    }
+    if (deliveryLocation.country && supplierCountry === deliveryLocation.country) {
+      return 0.4
+    }
+
+    return 0
+  }
+
   const buildOfferSearchText = (
     offer: MarketplaceSupplierPart,
     offerContent: ReturnType<typeof extractVendorContent>,
@@ -350,10 +417,12 @@ const rankedOfferModels = async (
       : 1
 
     const pricing = Number.isFinite(cheapestPrice) && price > 0
-      ? clampScore(price, cheapestPrice)
+      ? clampRange(cheapestPrice / price, 0, 1)
       : 0
 
-    const subscriptionBoostRaw = clampRange((plan?.searchBoostLevel ?? 0) + (isOfferFeaturedVendor(model.offer) ? 1 : 0), 0, 5)
+    const subscriptionBoostRaw = usePlanBoost
+      ? clampRange((plan?.searchBoostLevel ?? 0) + (isOfferFeaturedVendor(model.offer) ? 1 : 0), 0, 5)
+      : 0
     const subscriptionBoost = clampScore(subscriptionBoostRaw, 5)
 
     const productCompletenessFields = [
@@ -390,10 +459,13 @@ const rankedOfferModels = async (
       null as number | null,
     )
     const days = fastestLeadTime ?? (model.offer.updatedAt?.getTime() ? 7 : null)
-    const deliverySla = days === null
+    const baseDeliverySla = days === null
       ? 0
       : clampScore(21 - clampRange(days, 1, 30), 20) * 0.7 +
         (performance?.deliveryRate ?? 0) * 0.3
+    const deliverySla = hasDeliveryLocation
+      ? baseDeliverySla * 0.75 + deliveryLocationMatch(model.offer) * 0.25
+      : baseDeliverySla
 
     const relevanceScore = relevance * DEFAULT_SCORE_WEIGHTS.relevance
     const pricingScore = pricing * DEFAULT_SCORE_WEIGHTS.pricing
@@ -450,8 +522,15 @@ const rankedOfferModels = async (
     const rightScore = right.ranking.total
     return (
       rightScore - leftScore ||
-      getSupplierPartEffectivePriceCents(left.model.offer) -
-        getSupplierPartEffectivePriceCents(right.model.offer) ||
+      right.ranking.relevance - left.ranking.relevance ||
+      right.ranking.pricing - left.ranking.pricing ||
+      exactQueryMatch(right.model.offer) - exactQueryMatch(left.model.offer) ||
+      right.model.offer.stock - left.model.offer.stock ||
+      right.ranking.deliverySla - left.ranking.deliverySla ||
+      deliveryLocationMatch(right.model.offer) -
+        deliveryLocationMatch(left.model.offer) ||
+      (right.reviewSummary?.ratingAverage ?? 0) -
+        (left.reviewSummary?.ratingAverage ?? 0) ||
       right.model.offer.updatedAt.getTime() - left.model.offer.updatedAt.getTime()
     )
   })
@@ -845,20 +924,26 @@ const summarizeProduct = async (
     getUniqueSellableOfferModels(part.supplierParts),
     searchContext,
   )
-  const offerModels = rankedOffers.slice(0, 5)
+  const offerModels = rankedOffers.slice(0, MARKETPLACE_OFFER_LIMIT)
+  const recommendedOfferId = offerModels[0]?.model.offer.id ?? null
   const offers = (
     await Promise.all(
       offerModels.map((offerModel) =>
         buildOffer(
           offerModel.model.offer,
-          false,
+          offerModel.model.offer.id === recommendedOfferId,
           offerModel.reviewSummary,
           includeRankingMeta ? offerModel.ranking : undefined,
         ),
       ),
     )
-  ).sort((left, right) => left.price - right.price)
-  const minOffer = offers[0] ?? null
+  )
+  const minOffer =
+    offers.length > 0
+      ? offers.reduce((lowest, offer) =>
+          offer.price < lowest.price ? offer : lowest,
+        )
+      : null
   const vendorContentOffers = part.supplierParts.filter(hasVendorContent)
   const selectedContentOffer =
     vendorContentOffers[
@@ -967,7 +1052,7 @@ const findPartUidsByPartSearch = async (query: string) => {
     ...(tokenSupplierFilter ? [tokenSupplierFilter] : []),
   ]
 
-  const [indexedParts, directParts, supplierParts] = await Promise.all([
+  const [indexedParts, directParts, supplierParts, boostedSupplierPartUids] = await Promise.all([
     db.partNumberIndex.findMany({
       where: { OR: numberIndexFilters },
       select: { partUid: true },
@@ -987,6 +1072,7 @@ const findPartUidsByPartSearch = async (query: string) => {
       select: { partUid: true },
       take: 100,
     }),
+    findBoostedSupplierPartUidsByKeyword(normalizedQuery, 100),
   ])
 
   return Array.from(
@@ -996,8 +1082,58 @@ const findPartUidsByPartSearch = async (query: string) => {
       ...supplierParts
         .map((part) => part.partUid)
         .filter((partUid): partUid is string => Boolean(partUid)),
+      ...boostedSupplierPartUids,
     ]),
   )
+}
+
+const findBoostedSupplierPartUidsByKeyword = async (
+  query: string,
+  limit: number,
+) => {
+  const normalizedQuery = normalizeText(query)
+  const normalizedNumber = normalizePartNumber(normalizedQuery)
+  const searchTokens = getSearchTokens(normalizedQuery)
+  const keywordFilters = [
+    ...supplierPartFiltersFor(normalizedQuery, normalizedNumber),
+    ...searchTokens.flatMap((token) =>
+      supplierPartFiltersFor(token, normalizePartNumber(token)),
+    ),
+  ]
+
+  if (!keywordFilters.length) {
+    return []
+  }
+
+  const rows = await db.supplierPart.findMany({
+    where: {
+      AND: [
+        mappedSupplierPartWhere,
+        { partUid: { not: null } },
+        {
+          supplier: {
+            is: {
+              ownedBusinessAccounts: {
+                some: {
+                  type: BusinessAccountType.Supplier,
+                  isActive: true,
+                  plan: { searchBoostLevel: { gt: 0 } },
+                },
+              },
+            },
+          },
+        },
+        { OR: keywordFilters },
+      ],
+    },
+    select: { partUid: true },
+    orderBy: [{ updatedAt: "desc" }],
+    take: limit,
+  })
+
+  return rows
+    .map((row) => row.partUid)
+    .filter((partUid): partUid is string => Boolean(partUid))
 }
 
 const parseYear = (year: string | null | undefined): number | null => {
@@ -1147,6 +1283,11 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
   const partNumber = normalizeText(input.partNumber)
   const vin = normalizeText(input.vin)
   const textQuery = normalizeText(input.q)
+  const deliveryLocation = {
+    city: normalizeText(input.deliveryCity) || null,
+    state: normalizeText(input.deliveryState) || null,
+    country: normalizeText(input.deliveryCountry) || null,
+  }
   const includeRankingMetadata = input.includeRankingMetadata === true
   let parts: MarketplacePart[] = []
   let searchType: "partNumber" | "vin" | "text" = "text"
@@ -1163,10 +1304,23 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
     parts = await loadPartsByUids(await findPartUidsByVehicle(input), limit)
   } else {
     parts = await searchPartsByText(textQuery, limit)
+    if (textQuery) {
+      const boostedParts = await loadPartsByUids(
+        await findBoostedSupplierPartUidsByKeyword(textQuery, limit),
+        limit,
+      )
+      parts = Array.from(
+        new Map([...parts, ...boostedParts].map((part) => [part.partUid, part])).values(),
+      ).slice(0, limit)
+    }
   }
   const products = await Promise.all(
     parts.map((part) =>
-      summarizeProduct(part, { queryText: searchContext }, includeRankingMetadata),
+      summarizeProduct(
+        part,
+        { queryText: searchContext, deliveryLocation },
+        includeRankingMetadata,
+      ),
     ),
   )
 
@@ -1181,14 +1335,25 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
       make: normalizeText(input.make) || null,
       model: normalizeText(input.model) || null,
       q: textQuery || null,
+      deliveryCity: deliveryLocation.city,
+      deliveryState: deliveryLocation.state,
+      deliveryCountry: deliveryLocation.country,
     },
     count: products.length,
     products,
   }
 }
 
-export async function getMarketplaceProduct(partUid: string) {
+export async function getMarketplaceProduct(
+  partUid: string,
+  input: DeliveryLocation = {},
+) {
   const normalizedPartUid = normalizeText(partUid)
+  const deliveryLocation = {
+    city: normalizeText(input.city) || null,
+    state: normalizeText(input.state) || null,
+    country: normalizeText(input.country) || null,
+  }
   if (!normalizedPartUid) {
     return { ok: false as const, message: "Product id is required" }
   }
@@ -1213,8 +1378,11 @@ export async function getMarketplaceProduct(partUid: string) {
   }
 
   const offerModels = (
-    await rankedOfferModels(getUniqueSellableOfferModels(part.supplierParts))
-  ).slice(0, 5)
+    await rankedOfferModels(getUniqueSellableOfferModels(part.supplierParts), {
+      applyPlanBoost: false,
+      deliveryLocation,
+    })
+  ).slice(0, PDP_OFFER_LIMIT)
   const recommendedOfferId = offerModels[0]?.model.offer.id ?? null
   const offers = await Promise.all(
     offerModels.map((offerModel) =>
