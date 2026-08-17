@@ -7,7 +7,9 @@ import {
   ChevronDown,
   Cookie,
   FileText as FileTextIcon,
+  Bot,
   House,
+  LayoutDashboard,
   LayoutTemplate,
   LifeBuoy,
   MessageSquareText,
@@ -24,6 +26,9 @@ import {
   Plug,
   ScanLine,
   Settings,
+  Database,
+  GitBranch,
+  Link2,
 } from "lucide-react"
 import {
   Sidebar,
@@ -43,7 +48,17 @@ import type { AppPageLinkKey } from "@/lib/routes"
 import type { AppSidebarNavItem } from "@/types/app-sidebar"
 
 const items: readonly AppSidebarNavItem[] = [
-  { title: "Overview", url: "/", icon: House },
+  { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "VIN Decoder", url: appRoutes.vinDecoder, icon: ScanLine },
+  { title: "Vehicle Database", url: appRoutes.vehicleDatabase, icon: Database },
+  { title: "Fitment Rules", url: appRoutes.fitmentRules, icon: GitBranch },
+  { title: "OE Mapping", url: appRoutes.oeMapping, icon: Link2 },
+  { title: "Cross References", url: appRoutes.crossReferences, icon: Link2 },
+  { title: "Supplier Validation", url: appRoutes.supplierValidation, icon: ShieldCheck },
+  { title: "Inventory Mapping", url: appRoutes.inventoryMapping, icon: PackageSearch },
+  { title: "Analytics", url: appRoutes.marketplaceAnalytics, icon: ChartColumn },
+  { title: "AI Intelligence", url: appRoutes.aiIntelligence, icon: Bot },
+  { title: "Reports", url: "/reports", icon: ChartColumn },
   { title: "Users", url: "/users", icon: Users },
   { title: "Suppliers", url: appRoutes.supplier, icon: Building2 },
   { title: "Garages", url: "/garages", icon: Wrench },
@@ -51,8 +66,6 @@ const items: readonly AppSidebarNavItem[] = [
   { title: "Queries", url: appRoutes.queries, icon: MessageSquareText },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
   { title: "Parts Mapping", url: appRoutes.partsMapping, icon: PackageSearch },
-  { title: "VIN Decoder", url: appRoutes.vinDecoder, icon: ScanLine },
-  { title: "Reports", url: "/reports", icon: ChartColumn },
 ]
 
 const businessPlatformLinks = [
@@ -82,6 +95,10 @@ export function AppSidebar() {
   const currentPath = stripBasePath(usePathname())
 
   const isLinkActive = (url: string) => {
+    if (url === appRoutes.overview) {
+      return isDashboardOverviewPath(currentPath)
+    }
+
     if (url === "/dashboard/admin") {
       return isDashboardOverviewPath(currentPath) || currentPath === "/dashboard/admin"
     }
@@ -118,6 +135,9 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="flex-1 space-y-1 overflow-y-auto px-4 py-4">
+        <div className="px-4 pb-2 text-[11px] font-semibold uppercase tracking-wider text-[#9CA3AF]">
+          Intelligence Suite
+        </div>
         <SidebarMenu className="space-y-1">
           {items.map((item) => {
             const Icon = item.icon

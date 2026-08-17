@@ -1,13 +1,27 @@
 
 import {
+  Bot,
   Building2,
+  Car,
   DollarSign,
   FileText,
+  GitBranch,
+  Hash,
+  Package,
   ShoppingCart,
+  ShieldCheck,
+  ScanLine,
   TrendingUp,
   Users,
   Wrench,
 } from "lucide-react"
+import { db } from "@/lib/database/prisma"
+import {
+  PartNumberType,
+  SupplierApprovalStatus,
+  SupplierPartMappingStatus,
+  UserRole,
+} from "@/lib/generated/prisma/client"
 import type {
   DashboardStat,
   HealthMetric,
@@ -15,6 +29,93 @@ import type {
   RFQRecord,
   SupplierRecord,
 } from "@/types/admin-dashboard/dashboard/dashboard-data"
+
+const startOfToday = () => {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+}
+
+const compactNumber = (value: number) => {
+  const abs = Math.abs(value)
+  const units = [
+    { limit: 1_000_000_000, suffix: "b" },
+    { limit: 1_000_000, suffix: "m" },
+    { limit: 1_000, suffix: "k" },
+  ]
+  const unit = units.find((item) => abs >= item.limit)
+
+  if (!unit) return value.toLocaleString("en-US")
+
+  const compacted = value / unit.limit
+  const digits = compacted < 10 && compacted % 1 !== 0 ? 1 : 0
+  return `${compacted.toFixed(digits).replace(/\.0$/, "")}${unit.suffix}`
+}
+
+const pct = (value: number, total: number) =>
+  total > 0 ? Math.min(100, Math.round((value / total) * 1000) / 10) : 0
+
+export async function getFitmentIntelligenceDashboardData() {
+  const today = startOfToday()
+  const [
+    totalVehicles,
+    totalParts,
+    vinDecodesToday,
+    verifiedFitments,
+    supplierCoverage,
+    oeReferences,
+    crossReferences,
+    supplierParts,
+    mappedSupplierParts,
+    latestVin,
+    topVehicle,
+  ] = await Promise.all([
+    db.vehicleLookup.count(),
+    db.partMaster.count(),
+    db.vinLookupCache.count({ where: { updatedAt: { gte: today } } }),
+    db.masterFitment.count(),
+    db.user.count({
+      where: {
+        OR: [{ roles: { has: UserRole.Supplier } }, { activeRole: UserRole.Supplier }],
+        supplierApprovalStatus: SupplierApprovalStatus.Approved,
+      },
+    }),
+    db.partNumberIndex.count({ where: { numberType: PartNumberType.oem } }),
+    db.partNumberIndex.count({ where: { numberType: { not: PartNumberType.oem } } }),
+    db.supplierPart.count(),
+    db.supplierPart.count({ where: { mappingStatus: SupplierPartMappingStatus.mapped } }),
+    db.vinLookupCache.findFirst({ orderBy: { updatedAt: "desc" } }),
+    db.vehicleLookup.findFirst({ orderBy: [{ make: "asc" }, { model: "asc" }] }),
+  ])
+
+  const confidence = pct(mappedSupplierParts, supplierParts)
+  const vehicleMake = latestVin?.make ?? topVehicle?.make ?? "Not available"
+  const vehicleModel = latestVin?.model ?? topVehicle?.model ?? "Not available"
+
+  return {
+    kpis: [
+      { title: "Total Vehicles", value: compactNumber(totalVehicles), note: "Vehicle database", icon: Car },
+      { title: "Total Parts", value: compactNumber(totalParts), note: "Product masters", icon: Package },
+      { title: "VIN Decodes Today", value: compactNumber(vinDecodesToday), note: "Live decode activity", icon: ScanLine },
+      { title: "Verified Fitments", value: `${pct(mappedSupplierParts, supplierParts)}%`, note: "Mapped supplier inventory", icon: ShieldCheck },
+      { title: "Supplier Coverage", value: compactNumber(supplierCoverage), note: "Approved suppliers", icon: Users },
+      { title: "OE References", value: compactNumber(oeReferences), note: "OEM indexed numbers", icon: Hash },
+      { title: "Cross References", value: compactNumber(crossReferences), note: "Interchange signals", icon: GitBranch },
+      { title: "AI Confidence Score", value: `${confidence}%`, note: "Mapping confidence", icon: Bot },
+    ],
+    vin: {
+      sample: latestVin?.vin ?? "JTDBR32E720123456",
+      decoded: latestVin
+        ? [latestVin.year, latestVin.make, latestVin.model].filter(Boolean).join(" ")
+        : "Ready for live VIN decode",
+    },
+    vehicle: {
+      make: vehicleMake,
+      model: vehicleModel,
+      engine: latestVin?.engine ?? latestVin?.engineCapacity ?? "Not available",
+      fitments: compactNumber(verifiedFitments),
+    },
+  }
+}
 
 export const DASHBOARD_MAIN_STATS: readonly DashboardStat[] = [
   {
