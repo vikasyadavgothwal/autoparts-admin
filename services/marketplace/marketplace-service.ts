@@ -10,6 +10,7 @@ import {
   SupplierApprovalStatus,
   SupplierPartMappingStatus,
 } from "@/lib/generated/prisma/client"
+import { isFeaturedCategoryActive } from "@/services/featured-vendor/featured-vendor-category-service"
 import {
   getPartReviewSummary,
   getSupplierReviewSummaries,
@@ -75,18 +76,37 @@ const supplierPartInclude = {
       ownedBusinessAccounts: {
         where: { type: BusinessAccountType.Supplier, isActive: true },
         select: {
+          id: true,
           plan: {
             select: {
               featuredVendor: true,
+              featuredVendorCategoryLimit: true,
+              featuredVendorValidityDays: true,
               searchBoostLevel: true,
             },
           },
         },
         take: 1,
       },
+      supplierFeaturedCategories: {
+        select: {
+          source: true,
+          validFrom: true,
+          validUntil: true,
+          category: { select: { name: true } },
+          addOnRequest: {
+            select: {
+              status: true,
+              validFrom: true,
+              validUntil: true,
+            },
+          },
+        },
+      },
     },
   },
   pricing: true,
+  part: { select: { category: true } },
   stockRows: {
     select: {
       warehouseId: true,
@@ -118,6 +138,23 @@ type SupplierPerformanceSummary = {
 
 const supplierPlanForOffer = (offer: MarketplaceSupplierPart) =>
   offer.supplier.ownedBusinessAccounts[0]?.plan ?? null
+
+const normalizeCategoryName = (value: string | null | undefined) =>
+  value?.trim().replace(/\s+/g, " ").toLowerCase() ?? ""
+
+const offerCategoryName = (offer: MarketplaceSupplierPart) =>
+  normalizeCategoryName(offer.part?.category ?? offer.category)
+
+const isOfferFeaturedVendor = (offer: MarketplaceSupplierPart) => {
+  const planFeatured = supplierPlanForOffer(offer)?.featuredVendor === true
+  const categoryName = offerCategoryName(offer)
+  if (!categoryName) return false
+
+  return offer.supplier.supplierFeaturedCategories.some((row) =>
+    normalizeCategoryName(row.category.name) === categoryName &&
+    isFeaturedCategoryActive(row, planFeatured),
+  )
+}
 
 type MarketplaceSearchInput = {
   partNumber?: string | null
@@ -316,7 +353,7 @@ const rankedOfferModels = async (
       ? clampScore(price, cheapestPrice)
       : 0
 
-    const subscriptionBoostRaw = clampRange(plan?.searchBoostLevel ?? 0, 0, 5)
+    const subscriptionBoostRaw = clampRange((plan?.searchBoostLevel ?? 0) + (isOfferFeaturedVendor(model.offer) ? 1 : 0), 0, 5)
     const subscriptionBoost = clampScore(subscriptionBoostRaw, 5)
 
     const productCompletenessFields = [
@@ -790,9 +827,7 @@ const buildOffer = async (
     recommended,
     verifiedSupplier:
       offer.supplier.supplierApprovalStatus === SupplierApprovalStatus.Approved,
-    featuredVendor:
-      offer.supplier.featuredSupplier ||
-      supplierPlanForOffer(offer)?.featuredVendor === true,
+    featuredVendor: isOfferFeaturedVendor(offer),
     searchBoostLevel: supplierPlanForOffer(offer)?.searchBoostLevel ?? 0,
     ...(ranking ? { ranking } : {}),
     images,

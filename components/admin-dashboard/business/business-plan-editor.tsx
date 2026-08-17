@@ -1,11 +1,13 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { Copy, Eye, Save } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 
 type AccountType = "Fleet" | "Garage" | "Supplier"
@@ -40,10 +42,17 @@ type BusinessPlan = {
     services: number | null
     integrations: number | null
   }
+  marketplace?: { featuredVendor: boolean; featuredVendorCategoryLimit: number | null; allowedCategoryIds: string[]; searchBoostLevel: number }
   enabledFeatures: string[]
   enabledMenus: string[]
   isActive: boolean
   businessAccountCount: number
+}
+type FeaturedCategoryOption = {
+  categoryId: string
+  categoryName: string
+  parentName?: string | null
+  productCount?: number
 }
 
 const accountOrder: AccountType[] = ["Fleet", "Garage", "Supplier"]
@@ -112,6 +121,7 @@ const reportCopy: Record<ReportLevel, string> = {
 }
 const invalidNumberKeys = new Set(["e", "E", "+", "-"])
 const RequiredMark = () => <span aria-hidden="true" className="text-[#DC2626]"> *</span>
+const categoryPageSize = 10
 
 const readLimit = (formData: FormData, key: keyof typeof fieldLabels) => {
   const raw = String(formData.get(key) ?? "").trim()
@@ -131,14 +141,29 @@ const readMoney = (formData: FormData, key: string, label: string) => {
   return { ok: true as const, value }
 }
 
+const readOptionalWholeNumber = (formData: FormData, key: string, label: string, max = 100000) => {
+  const raw = String(formData.get(key) ?? "").trim()
+  if (!raw) return { ok: true as const, value: null }
+  if (!/^\d+$/.test(raw)) return { ok: false as const, message: `${label} must be a whole number.` }
+  const value = Number(raw)
+  if (value > max) return { ok: false as const, message: `${label} is too high.` }
+  return { ok: true as const, value }
+}
+
 const money = (plan: BusinessPlan) =>
   plan.code === "Free" ? "Basic" : plan.price.billingPeriod === "custom" ? "Custom" : `${plan.price.currency} ${(plan.price.amount / 100).toLocaleString("en-US")}`
 
 export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
   const router = useRouter()
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [pendingPlanSave, setPendingPlanSave] = useState<{ plan: BusinessPlan; formData: FormData } | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<AccountType>("Fleet")
   const [selectedPlanCode, setSelectedPlanCode] = useState<PlanCode>("Free")
+  const [featuredCategoryOptions, setFeaturedCategoryOptions] = useState<FeaturedCategoryOption[]>([])
+  const [categoryQuery, setCategoryQuery] = useState("")
+  const [productCountFilter, setProductCountFilter] = useState("all")
+  const [categoryPage, setCategoryPage] = useState(1)
+  const [selectedCategoryIdsByPlan, setSelectedCategoryIdsByPlan] = useState<Record<string, string[]>>({})
   const [isPending, startTransition] = useTransition()
   const groupedPlans = useMemo(
     () =>
@@ -153,9 +178,22 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
   const selectedPlans = groupedPlans.find((group) => group.accountType === selectedAccount)?.plans ?? []
   const visiblePlans = selectedPlans.filter((plan) => plan.code === selectedPlanCode)
 
-  const savePlan = (plan: BusinessPlan, formData: FormData) => {
-    if (plan.businessAccountCount > 0 && !window.confirm(`${plan.name} has ${plan.businessAccountCount} active subscriber${plan.businessAccountCount === 1 ? "" : "s"}. Publish changes to this plan?`)) return
+  useEffect(() => {
+    void fetch("/api/v1/admin/business/add-on-prices", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: { featuredCategoryPrices?: FeaturedCategoryOption[] }) => setFeaturedCategoryOptions(payload.featuredCategoryPrices ?? []))
+      .catch(() => setFeaturedCategoryOptions([]))
+  }, [])
 
+  const savePlan = (plan: BusinessPlan, formData: FormData) => {
+    if (plan.businessAccountCount > 0) {
+      setPendingPlanSave({ plan, formData })
+      return
+    }
+    submitPlan(plan, formData)
+  }
+
+  const submitPlan = (plan: BusinessPlan, formData: FormData) => {
     const price = readMoney(formData, "price", "Monthly price")
     if (!price.ok) return toast.error(price.message)
     const yearlyPrice = readMoney(formData, "yearlyPrice", "Annual autopay monthly rate")
@@ -172,7 +210,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
     const loginSecurityMode = String(formData.get("loginSecurityMode") ?? tierDefaults[plan.code].loginSecurityMode) as LoginSecurityMode
     const reportLevel = String(formData.get("reportLevel") ?? tierDefaults[plan.code].reportLevel) as ReportLevel
 
-    const payload: Record<string, string | number | boolean | null> = {
+    const payload: Record<string, string | number | boolean | null | string[]> = {
       name: String(formData.get("name") ?? "").trim(),
       description: String(formData.get("description") ?? "").trim(),
       priceAmount: Math.round(price.value * 100),
@@ -199,6 +237,15 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
       apiAccessLevel: plan.code === "Enterprise" ? "enterprise" : plan.code === "Pro" ? "standard" : "none",
       isActive: true,
     }
+    if (plan.accountType === "Supplier") {
+      const featuredCategoryLimit = readOptionalWholeNumber(formData, "featuredVendorCategoryLimit", "Featured category limit", 100000)
+      if (!featuredCategoryLimit.ok) return toast.error(featuredCategoryLimit.message)
+      const allowedFeaturedVendorCategoryIds = formData.getAll("allowedFeaturedVendorCategoryIds").filter((value): value is string => typeof value === "string")
+      payload.featuredVendor = formData.get("featuredVendor") === "on"
+      payload.featuredVendorCategoryLimit = payload.featuredVendor ? featuredCategoryLimit.value : null
+      payload.allowedFeaturedVendorCategoryIds = payload.featuredVendor ? allowedFeaturedVendorCategoryIds : []
+      if (payload.featuredVendor && !allowedFeaturedVendorCategoryIds.length) return toast.error("Select at least one allowed Featured Vendor category.")
+    }
 
     if (!payload.name) return toast.error("Plan name is required.")
     if (!/^[A-Z]{2,4}$/.test(String(payload.priceCurrency))) return toast.error("Currency must be 2 to 4 uppercase letters.")
@@ -220,6 +267,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
       const result = (await response.json().catch(() => null)) as { ok?: boolean; message?: string; plan?: BusinessPlan } | null
       setSavingId(null)
       if (response.ok && result?.ok) {
+        setPendingPlanSave(null)
         toast.success("Plan updated successfully.")
         router.refresh()
       } else {
@@ -354,6 +402,134 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
               </section>
             </div>
 
+            {plan.accountType === "Supplier" ? (
+              <section className="mt-4 rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Marketplace</p>
+                <div className="grid gap-3 md:grid-cols-[1fr_160px]">
+                  <label className="flex items-center gap-2 text-sm font-medium text-[#D1D5DB]">
+                    <Checkbox name="featuredVendor" defaultChecked={plan.marketplace?.featuredVendor === true} />
+                    Featured Vendor included
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-[#9CA3AF]">
+                    Category limit
+                    <Input
+                      name="featuredVendorCategoryLimit"
+                      type="number"
+                      min={0}
+                      max={100000}
+                      step={1}
+                      inputMode="numeric"
+                      defaultValue={plan.marketplace?.featuredVendorCategoryLimit ?? ""}
+                      placeholder="Unlimited"
+                      onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }}
+                      className="bg-[#050505]"
+                    />
+                  </label>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {(() => {
+                    const selectedIds = selectedCategoryIdsByPlan[plan.id] ?? plan.marketplace?.allowedCategoryIds ?? []
+                    const filteredCategories = featuredCategoryOptions.filter((category) => {
+                      const query = categoryQuery.trim().toLowerCase()
+                      const productCount = category.productCount ?? 0
+                      const matchesQuery = !query || `${category.categoryName} ${category.parentName ?? ""}`.toLowerCase().includes(query)
+                      const matchesProductFilter =
+                        productCountFilter === "all" ||
+                        (productCountFilter === "has-products" && productCount > 0) ||
+                        (productCountFilter === "no-products" && productCount === 0) ||
+                        (productCountFilter === "5-plus" && productCount >= 5) ||
+                        (productCountFilter === "10-plus" && productCount >= 10)
+                      return matchesQuery && matchesProductFilter
+                    })
+                    const totalPages = Math.max(1, Math.ceil(filteredCategories.length / categoryPageSize))
+                    const safePage = Math.min(categoryPage, totalPages)
+                    const pageCategories = filteredCategories.slice((safePage - 1) * categoryPageSize, safePage * categoryPageSize)
+                    const toggleCategory = (categoryId: string, checked: boolean) => {
+                      setSelectedCategoryIdsByPlan((current) => {
+                        const currentIds = current[plan.id] ?? plan.marketplace?.allowedCategoryIds ?? []
+                        const nextIds = checked
+                          ? Array.from(new Set([...currentIds, categoryId]))
+                          : currentIds.filter((id) => id !== categoryId)
+                        return { ...current, [plan.id]: nextIds }
+                      })
+                    }
+
+                    return (
+                      <>
+                        {selectedIds.map((categoryId) => (
+                          <input key={categoryId} type="hidden" name="allowedFeaturedVendorCategoryIds" value={categoryId} />
+                        ))}
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                          <div>
+                            <p className="text-xs font-medium text-[#9CA3AF]">Allowed plan categories</p>
+                            <p className="mt-1 text-xs text-[#6B7280]">{selectedIds.length} selected</p>
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_180px]">
+                            <Input
+                              value={categoryQuery}
+                              maxLength={100}
+                              onChange={(event) => {
+                                setCategoryQuery(event.target.value.slice(0, 100))
+                                setCategoryPage(1)
+                              }}
+                              placeholder="Search category or parent"
+                              className="bg-[#050505]"
+                            />
+                            <select
+                              value={productCountFilter}
+                              onChange={(event) => {
+                                setProductCountFilter(event.target.value)
+                                setCategoryPage(1)
+                              }}
+                              className="h-9 rounded-md border border-[#2A2A2A] bg-[#050505] px-2.5 text-sm text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626]"
+                            >
+                              <option value="all">All product counts</option>
+                              <option value="has-products">Has products</option>
+                              <option value="no-products">No products</option>
+                              <option value="5-plus">5+ products</option>
+                              <option value="10-plus">10+ products</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="overflow-hidden rounded-md border border-[#2A2A2A]">
+                          <div className="grid grid-cols-[42px_minmax(180px,1fr)_minmax(140px,220px)_90px] border-b border-[#2A2A2A] bg-[#080808] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">
+                            <span />
+                            <span>Category</span>
+                            <span>Parent</span>
+                            <span className="text-right">Products</span>
+                          </div>
+                          {pageCategories.length ? pageCategories.map((category) => (
+                            <label key={category.categoryId} className="grid cursor-pointer grid-cols-[42px_minmax(180px,1fr)_minmax(140px,220px)_90px] items-center border-b border-[#2A2A2A] px-3 py-2 text-sm last:border-b-0">
+                              <Checkbox
+                                checked={selectedIds.includes(category.categoryId)}
+                                onCheckedChange={(checked) => toggleCategory(category.categoryId, checked === true)}
+                              />
+                              <span className="font-medium text-[#D1D5DB]">{category.categoryName}</span>
+                              <span className="text-xs text-[#9CA3AF]">{category.parentName ?? "Root category"}</span>
+                              <span className="text-right text-xs text-[#9CA3AF]">{category.productCount ?? 0}</span>
+                            </label>
+                          )) : (
+                            <p className="p-3 text-sm text-[#9CA3AF]">No categories match this search or filter.</p>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-2 text-xs text-[#9CA3AF] sm:flex-row sm:items-center sm:justify-between">
+                          <p>
+                            Showing {filteredCategories.length ? (safePage - 1) * categoryPageSize + 1 : 0}
+                            -{Math.min(safePage * categoryPageSize, filteredCategories.length)} of {filteredCategories.length}
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <Button type="button" variant="outline" size="sm" disabled={safePage <= 1} onClick={() => setCategoryPage((page) => Math.max(1, page - 1))}>Previous</Button>
+                            <span>Page {safePage} of {totalPages}</span>
+                            <Button type="button" variant="outline" size="sm" disabled={safePage >= totalPages} onClick={() => setCategoryPage((page) => Math.min(totalPages, page + 1))}>Next</Button>
+                          </div>
+                        </div>
+                      </>
+                    )
+                  })()}
+                </div>
+              </section>
+            ) : null}
+
             <div className="mt-4 rounded-lg border border-dashed border-[#374151] p-3 text-xs text-[#9CA3AF]">
               <div className="mb-2 flex items-center gap-2 font-semibold text-white"><Eye className="h-4 w-4" /> Preview</div>
               <p>{plan.name} appears for {plan.accountType} accounts at {money(plan)}.</p>
@@ -369,6 +545,31 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
           </form>
         )
       })}
+      <Dialog open={Boolean(pendingPlanSave)} onOpenChange={(open) => { if (!open) setPendingPlanSave(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Publish plan changes</DialogTitle>
+            <DialogDescription>
+              {pendingPlanSave?.plan.name} has {pendingPlanSave?.plan.businessAccountCount} active subscriber{pendingPlanSave?.plan.businessAccountCount === 1 ? "" : "s"}. Publish changes to this plan?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="outline" disabled={Boolean(savingId)}>Cancel</Button>
+            </DialogClose>
+            <Button
+              type="button"
+              disabled={Boolean(savingId)}
+              onClick={() => {
+                if (!pendingPlanSave) return
+                submitPlan(pendingPlanSave.plan, pendingPlanSave.formData)
+              }}
+            >
+              {savingId ? "Publishing..." : "Publish changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

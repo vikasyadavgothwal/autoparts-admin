@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { CircleDollarSign, CirclePlus, Clock3, Eye, LifeBuoy, MoreHorizontal, Search, Zap } from "lucide-react"
+import { CirclePlus, Clock3, Eye, LifeBuoy, MoreHorizontal, Search, Zap } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -27,7 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 type Account = { id: string; publicId: string; name: string; type: string; plan: { name: string; supportTier?: string } }
-type AccountOption = { id: string; publicId: string; name: string; type: string; planName: string; owner: { name: string; email: string | null; phone: string | null } }
+type AccountOption = { id: string; publicId: string; name: string; type: string; planName: string; owner: { id: string; name: string; email: string | null; phone: string | null } }
 type Person = { id: string; name: string; email: string | null } | null
 type AddOnRequest = {
   id: string
@@ -55,9 +56,21 @@ type AddOnPrice = {
   priceCurrency: string
   validityDays: number
 }
+type FeaturedCategoryPrice = {
+  categoryId: string
+  categoryName: string
+  parentName?: string | null
+  priceAmount: number
+  priceCurrency: string
+  validityDays: number
+  productCount?: number
+}
+type ManualFeaturedCategory = { categoryId: string; categoryName: string; parentName?: string | null }
 type SupportTicket = { id: string; subject: string; message: string; status: string; priority: string; category?: string | null; createdBy: Person; businessAccount: Account; createdAt: string }
 type PageData<T> = { items: T[]; total: number; page: number; pageSize: number; totalPages: number }
 type Queue = "tickets" | "add-ons"
+type WorkflowView = "requests" | "pricing"
+type RequestMode = "combined" | "single"
 type SelectedItem = { kind: Queue; item: SupportTicket | AddOnRequest }
 type AddOnValidityForm = { validFrom: string; validUntil: string; renewalAt: string }
 type PendingAction =
@@ -142,17 +155,21 @@ const featureKeyPattern = /^[a-z0-9][a-z0-9._-]*(\.\d+)?$/
 const RequiredMark = () => <span aria-hidden="true" className="text-[#DC2626]"> *</span>
 
 export function BusinessWorkflowsManager({
+  view,
   queue,
   addOns,
   tickets,
   counts,
   filters,
+  requestMode = "combined",
 }: {
+  view: WorkflowView
   queue: Queue
   addOns: PageData<AddOnRequest>
   tickets: PageData<SupportTicket>
   counts: { pendingAddOns: number; requestedAddOns?: number; paidAddOns?: number; activeTickets: number; newTickets?: number }
   filters: { query: string; status: string; accountType: string }
+  requestMode?: RequestMode
 }) {
   const router = useRouter()
   const [query, setQuery] = useState(filters.query)
@@ -169,16 +186,34 @@ export function BusinessWorkflowsManager({
   const [accountOptions, setAccountOptions] = useState<AccountOption[]>([])
   const [selectedAccount, setSelectedAccount] = useState<AccountOption | null>(null)
   const [accountSearchLoading, setAccountSearchLoading] = useState(false)
-  const [pricesOpen, setPricesOpen] = useState(false)
+  const [manualFeaturedCategories, setManualFeaturedCategories] = useState<ManualFeaturedCategory[]>([])
+  const [manualFeaturedCategoryIds, setManualFeaturedCategoryIds] = useState<string[]>([])
   const [prices, setPrices] = useState<AddOnPrice[]>([])
-  const [pricesLoading, setPricesLoading] = useState(false)
+  const [featuredCategoryPrices, setFeaturedCategoryPrices] = useState<FeaturedCategoryPrice[]>([])
+  const [pricesLoading, setPricesLoading] = useState(view === "pricing")
   const [priceAccountType, setPriceAccountType] = useState("Garage")
+  const [categorySearch, setCategorySearch] = useState("")
+  const [categoryParentFilter, setCategoryParentFilter] = useState("all")
+  const [categoryPage, setCategoryPage] = useState(1)
   const pageData = queue === "tickets" ? tickets : addOns
   const statuses = queue === "tickets" ? ticketStatuses : addOnStatuses
   const manualFeatureKey = manualAddOnForm.preset === "custom"
     ? manualAddOnForm.customFeatureKey.trim()
     : manualAddOnForm.preset
+  const manualFeaturedAddOn = selectedAccount?.type === "Supplier" && manualFeatureKey === "marketplace.featured-vendor"
   const visiblePrices = prices.filter((price) => price.accountType === priceAccountType)
+  const categoryParentOptions = Array.from(new Set(featuredCategoryPrices.map((price) => price.parentName ?? "Root category"))).sort()
+  const filteredCategoryPrices = featuredCategoryPrices.filter((price) => {
+    const query = categorySearch.trim().toLowerCase()
+    const parentName = price.parentName ?? "Root category"
+    const matchesQuery = !query || `${price.categoryName} ${parentName} ${price.categoryId}`.toLowerCase().includes(query)
+    const matchesParent = categoryParentFilter === "all" || parentName === categoryParentFilter
+    return matchesQuery && matchesParent
+  })
+  const categoryPageSize = 10
+  const totalCategoryPages = Math.max(1, Math.ceil(filteredCategoryPrices.length / categoryPageSize))
+  const safeCategoryPage = Math.min(categoryPage, totalCategoryPages)
+  const paginatedCategoryPrices = filteredCategoryPrices.slice((safeCategoryPage - 1) * categoryPageSize, safeCategoryPage * categoryPageSize)
 
   useEffect(() => {
     if (!manualAddOnOpen) return
@@ -207,16 +242,30 @@ export function BusinessWorkflowsManager({
   }, [accountSearch, manualAddOnOpen])
 
   useEffect(() => {
-    if (!pricesOpen) return
+    if (!manualAddOnOpen || !manualFeaturedAddOn || !selectedAccount?.owner.id) {
+      return
+    }
+    void fetch(`/api/v1/admin/suppliers/${selectedAccount.owner.id}/featured-categories`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: { categories?: ManualFeaturedCategory[] }) => setManualFeaturedCategories(payload.categories ?? []))
+      .catch(() => setManualFeaturedCategories([]))
+  }, [manualAddOnOpen, manualFeaturedAddOn, selectedAccount?.owner.id])
+
+  useEffect(() => {
+    if (view !== "pricing") return
     void fetch("/api/v1/admin/business/add-on-prices", { cache: "no-store" })
       .then((response) => response.json())
-      .then((payload: { prices?: AddOnPrice[] }) => setPrices(payload.prices ?? []))
+      .then((payload: { prices?: AddOnPrice[]; featuredCategoryPrices?: FeaturedCategoryPrice[] }) => {
+        setPrices(payload.prices ?? [])
+        setFeaturedCategoryPrices(payload.featuredCategoryPrices ?? [])
+      })
       .catch(() => {
         setPrices([])
+        setFeaturedCategoryPrices([])
         toast.error("Unable to load add-on prices.")
       })
       .finally(() => setPricesLoading(false))
-  }, [pricesOpen])
+  }, [view])
 
   function navigate(next: { queue?: Queue; page?: number; query?: string; status?: string; accountType?: string }) {
     const params = new URLSearchParams()
@@ -229,7 +278,7 @@ export function BusinessWorkflowsManager({
     if (nextQuery.trim()) params.set("query", nextQuery.trim())
     if (nextStatusValue !== "all") params.set("status", nextStatusValue)
     if (nextAccountType !== "all") params.set("accountType", nextAccountType)
-    router.push(`/business-platform/add-ons-support?${params.toString()}`)
+    router.push(`/business-platform/${nextQueue === "tickets" ? "support-requests" : "add-on-requests"}?${params.toString()}`)
   }
 
   function openDetails(kind: Queue, item: SupportTicket | AddOnRequest) {
@@ -286,6 +335,7 @@ export function BusinessWorkflowsManager({
     if (!businessAccountId) return toast.error("Select a business account.")
     if (!manualFeatureKey) return toast.error("Select or enter an add-on key.")
     if (manualFeatureKey.length > 80 || !featureKeyPattern.test(manualFeatureKey)) return toast.error("Enter a valid add-on key.")
+    if (manualFeaturedAddOn && !manualFeaturedCategoryIds.length) return toast.error("Select at least one Featured Vendor category.")
     if (manualAddOnForm.validFrom && manualAddOnForm.validUntil && manualAddOnForm.validUntil <= manualAddOnForm.validFrom) {
       toast.error("Add-on expiry date must be after the valid-from date.")
       return
@@ -303,6 +353,7 @@ export function BusinessWorkflowsManager({
           validFrom: manualAddOnForm.validFrom,
           validUntil: manualAddOnForm.validUntil,
           renewalAt: renewalDateFromExpiry(manualAddOnForm.validUntil),
+          categoryIds: manualFeaturedAddOn ? manualFeaturedCategoryIds : [],
         }),
       })
       const result = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
@@ -313,9 +364,10 @@ export function BusinessWorkflowsManager({
       toast.success("Add-on added successfully.")
       setManualAddOnOpen(false)
       setManualAddOnForm(initialManualAddOnForm)
+      setManualFeaturedCategoryIds([])
       setAccountSearch("")
       setSelectedAccount(null)
-      router.push(`/business-platform/add-ons-support?queue=add-ons&query=${encodeURIComponent(businessAccountId)}`)
+      router.push(`/business-platform/add-on-requests?queue=add-ons&query=${encodeURIComponent(businessAccountId)}`)
       router.refresh()
     } catch {
       toast.error("Unable to add business add-on.")
@@ -325,7 +377,7 @@ export function BusinessWorkflowsManager({
   }
 
   async function savePrices() {
-    const invalidPrice = prices.find((price) =>
+    const invalidPrice = [...prices, ...featuredCategoryPrices].find((price) =>
       !Number.isSafeInteger(price.priceAmount) ||
       price.priceAmount < 0 ||
       price.priceAmount > 100000000 ||
@@ -335,7 +387,7 @@ export function BusinessWorkflowsManager({
       price.validityDays > 3660,
     )
     if (invalidPrice) {
-      toast.error(`Enter valid price, currency, and validity for ${invalidPrice.label}.`)
+      toast.error("Enter valid price, currency, and validity.")
       return
     }
     setSaving(true)
@@ -343,14 +395,15 @@ export function BusinessWorkflowsManager({
       const response = await fetch("/api/v1/admin/business/add-on-prices", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prices }),
+        body: JSON.stringify({ prices, featuredCategoryPrices }),
       })
-      const result = (await response.json().catch(() => null)) as { ok?: boolean; message?: string; prices?: AddOnPrice[] } | null
+      const result = (await response.json().catch(() => null)) as { ok?: boolean; message?: string; prices?: AddOnPrice[]; featuredCategoryPrices?: FeaturedCategoryPrice[] } | null
       if (!response.ok || result?.ok === false) {
         toast.error(result?.message ?? "Unable to update add-on prices.")
         return
       }
       setPrices(result?.prices ?? prices)
+      setFeaturedCategoryPrices(result?.featuredCategoryPrices ?? featuredCategoryPrices)
       toast.success("Add-on prices updated.")
     } catch {
       toast.error("Unable to update add-on prices.")
@@ -365,16 +418,29 @@ export function BusinessWorkflowsManager({
     ))
   }
 
+  function updateFeaturedCategoryPrice(categoryId: string, patch: Partial<Pick<FeaturedCategoryPrice, "priceAmount" | "priceCurrency" | "validityDays">>) {
+    setFeaturedCategoryPrices((current) => current.map((price) =>
+      price.categoryId === categoryId ? { ...price, ...patch } : price,
+    ))
+  }
+
+  const updateCategorySearch = (value: string) => {
+    setCategorySearch(value.slice(0, 100))
+    setCategoryPage(1)
+  }
+
+  const updateCategoryParentFilter = (value: string) => {
+    setCategoryParentFilter(value)
+    setCategoryPage(1)
+  }
+
   const openManualAddOn = () => {
     setManualAddOnOpen(true)
     setAccountSearch("")
     setSelectedAccount(null)
+    setManualFeaturedCategories([])
+    setManualFeaturedCategoryIds([])
     setManualAddOnForm((current) => ({ ...current, businessAccountId: "" }))
-  }
-
-  const openPrices = () => {
-    setPricesLoading(true)
-    setPricesOpen(true)
   }
 
   async function confirmAction() {
@@ -444,9 +510,11 @@ export function BusinessWorkflowsManager({
     <section className="space-y-5 rounded-xl border border-[#2A2A2A] bg-[#101010] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
       <div className="flex flex-col gap-4 border-b border-[#2A2A2A] pb-5 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#DC2626]">Operations queue</p>
-          <h1 className="mt-2 text-2xl font-semibold text-white">Add-ons & Support</h1>
-          <p className="mt-1 text-sm text-[#9CA3AF]">Search, filter, review, and update business requests from one queue.</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#DC2626]">Business platform</p>
+          <h1 className="mt-2 text-2xl font-semibold text-white">{view === "pricing" ? "Set Pricing" : queue === "tickets" ? "Support Requests" : "Add-on Requests"}</h1>
+          <p className="mt-1 text-sm text-[#9CA3AF]">
+            {view === "pricing" ? "Update add-on and Featured Vendor category pricing." : "Search, filter, review, and update business requests."}
+          </p>
         </div>
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-lg border border-[#DC2626]/30 bg-[#DC2626]/10 px-4 py-3">
@@ -464,27 +532,28 @@ export function BusinessWorkflowsManager({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-2">
-          <Button variant={queue === "tickets" ? "default" : "outline"} onClick={() => navigate({ queue: "tickets", page: 1, status: "all" })}>
-            <LifeBuoy /> Support tickets
-          </Button>
-          <Button variant={queue === "add-ons" ? "default" : "outline"} onClick={() => navigate({ queue: "add-ons", page: 1, status: "all" })}>
-            <CirclePlus /> Add-on requests
-          </Button>
-        </div>
-        {queue === "add-ons" ? (
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={openPrices}>
-              <CircleDollarSign /> Manage prices
-            </Button>
+      {view === "requests" ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {requestMode === "combined" ? (
+            <div className="flex flex-wrap gap-2">
+              <Button variant={queue === "tickets" ? "default" : "outline"} onClick={() => navigate({ queue: "tickets", page: 1, status: "all" })}>
+                <LifeBuoy /> Support tickets
+              </Button>
+              <Button variant={queue === "add-ons" ? "default" : "outline"} onClick={() => navigate({ queue: "add-ons", page: 1, status: "all" })}>
+                <CirclePlus /> Add-on requests
+              </Button>
+            </div>
+          ) : <span />}
+          {queue === "add-ons" ? (
             <Button onClick={openManualAddOn}>
               <CirclePlus /> Add add-on
             </Button>
-          </div>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
+      ) : null}
 
+      {view === "requests" ? (
+        <>
       <form
         className="grid gap-3 rounded-lg border border-[#2A2A2A] bg-[#080808] p-4 lg:grid-cols-[minmax(240px,1fr)_180px_180px_auto]"
         onSubmit={(event) => {
@@ -604,6 +673,211 @@ export function BusinessWorkflowsManager({
           <Button variant="outline" size="sm" disabled={pageData.page >= pageData.totalPages} onClick={() => navigate({ page: pageData.page + 1 })}>Next</Button>
         </div>
       </div>
+        </>
+      ) : (
+        <div className="space-y-5">
+          <div className="flex flex-col gap-3 rounded-lg border border-[#2A2A2A] bg-[#080808] p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Set add-on pricing</h2>
+              <p className="text-sm text-[#9CA3AF]">Update dashboard add-on prices, currency, and validity days.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-lg border border-[#2A2A2A] bg-[#050505] p-1">
+                {accountTypes.map((type) => (
+                  <Button
+                    key={type}
+                    type="button"
+                    variant={priceAccountType === type ? "default" : "ghost"}
+                    size="sm"
+                    className={priceAccountType === type ? "" : "text-[#9CA3AF] hover:text-white"}
+                    onClick={() => setPriceAccountType(type)}
+                  >
+                    {type}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-[#2A2A2A]">
+            <Table>
+              <TableHeader className="bg-[#080808]">
+                <TableRow>
+                  <TableHead>Add-on</TableHead>
+                  <TableHead>Model</TableHead>
+                  <TableHead>Price</TableHead>
+                  <TableHead>Currency</TableHead>
+                  <TableHead>Validity days</TableHead>
+                  <TableHead>Preview</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pricesLoading ? (
+                  <TableRow><TableCell colSpan={6} className="h-24 text-center text-[#9CA3AF]">Loading prices...</TableCell></TableRow>
+                ) : visiblePrices.length ? visiblePrices.map((price) => (
+                  <TableRow key={`${price.accountType}:${price.featureKey}`}>
+                    <TableCell>
+                      <p className="font-medium text-white">{price.label}</p>
+                      <p className="text-xs text-[#9CA3AF]">{price.featureKey}</p>
+                    </TableCell>
+                    <TableCell>{price.pricingModel === "per_unit" ? "Per extra unit" : "Fixed"}</TableCell>
+                    <TableCell>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        max={1000000}
+                        value={String(price.priceAmount / 100)}
+                        onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }}
+                        onChange={(event) => updatePrice(price.featureKey, { priceAmount: Math.round((Number(event.target.value) || 0) * 100) })}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Select value={price.priceCurrency} onValueChange={(value) => updatePrice(price.featureKey, { priceCurrency: value })}>
+                        <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {supportedCurrencies.map((currency) => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={3660}
+                        step={1}
+                        value={String(price.validityDays ?? 30)}
+                        onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }}
+                        onChange={(event) => updatePrice(price.featureKey, { validityDays: Math.max(1, Math.round(Number(event.target.value) || 1)) })}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <p className="text-sm text-white">{formatMoney(price.priceAmount, price.priceCurrency)}</p>
+                      <p className="text-xs text-[#9CA3AF]">{formatValidity(price.validityDays)}</p>
+                    </TableCell>
+                  </TableRow>
+                )) : (
+                  <TableRow><TableCell colSpan={6} className="h-24 text-center text-[#9CA3AF]">No add-ons found for this dashboard type.</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex justify-end">
+            <Button disabled={saving || pricesLoading} onClick={() => void savePrices()}>{saving ? "Saving..." : "Save prices"}</Button>
+          </div>
+
+          {priceAccountType === "Supplier" ? (
+            <div className="space-y-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Featured Vendor category pricing</h2>
+                  <p className="text-sm text-[#9CA3AF]">Set per-category Featured Vendor price for Supplier products.</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_220px]">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-[#6B7280]" />
+                    <Input
+                      value={categorySearch}
+                      maxLength={100}
+                      onChange={(event) => updateCategorySearch(event.target.value)}
+                      className="pl-9"
+                      placeholder="Search category or ID"
+                    />
+                  </div>
+                  <Select value={categoryParentFilter} onValueChange={updateCategoryParentFilter}>
+                    <SelectTrigger><SelectValue placeholder="Parent category" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All parent categories</SelectItem>
+                      {categoryParentOptions.map((parent) => <SelectItem key={parent} value={parent}>{parent}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="overflow-hidden rounded-lg border border-[#2A2A2A]">
+                <Table>
+                  <TableHeader className="bg-[#080808]">
+                    <TableRow>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Parent category</TableHead>
+                      <TableHead>Products</TableHead>
+                      <TableHead>Price</TableHead>
+                      <TableHead>Currency</TableHead>
+                      <TableHead>Validity days</TableHead>
+                      <TableHead>Preview</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pricesLoading ? (
+                      <TableRow><TableCell colSpan={7} className="h-24 text-center text-[#9CA3AF]">Loading category prices...</TableCell></TableRow>
+                    ) : paginatedCategoryPrices.length ? paginatedCategoryPrices.map((price) => (
+                      <TableRow key={price.categoryId}>
+                        <TableCell>
+                          <p className="font-medium text-white">{price.categoryName}</p>
+                          <p className="text-xs text-[#9CA3AF]">{price.categoryId}</p>
+                        </TableCell>
+                        <TableCell>{price.parentName ?? "Root category"}</TableCell>
+                        <TableCell>{price.productCount ?? 0}</TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min={0}
+                            max={1000000}
+                            value={String(price.priceAmount / 100)}
+                            onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }}
+                            onChange={(event) => updateFeaturedCategoryPrice(price.categoryId, { priceAmount: Math.round((Number(event.target.value) || 0) * 100) })}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Select value={price.priceCurrency} onValueChange={(value) => updateFeaturedCategoryPrice(price.categoryId, { priceCurrency: value })}>
+                            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {supportedCurrencies.map((currency) => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={3660}
+                            step={1}
+                            value={String(price.validityDays ?? 30)}
+                            onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }}
+                            onChange={(event) => updateFeaturedCategoryPrice(price.categoryId, { validityDays: Math.max(1, Math.round(Number(event.target.value) || 1)) })}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <p className="text-sm text-white">{formatMoney(price.priceAmount, price.priceCurrency)}</p>
+                          <p className="text-xs text-[#9CA3AF]">{formatValidity(price.validityDays)}</p>
+                        </TableCell>
+                      </TableRow>
+                    )) : (
+                      <TableRow><TableCell colSpan={7} className="h-24 text-center text-[#9CA3AF]">No product categories match these filters.</TableCell></TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="flex flex-col gap-3 text-sm text-[#9CA3AF] sm:flex-row sm:items-center sm:justify-between">
+                <p>
+                  Showing {filteredCategoryPrices.length ? (safeCategoryPage - 1) * categoryPageSize + 1 : 0}
+                  -{Math.min(safeCategoryPage * categoryPageSize, filteredCategoryPrices.length)} of {filteredCategoryPrices.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" disabled={safeCategoryPage <= 1} onClick={() => setCategoryPage((page) => Math.max(1, page - 1))}>Previous</Button>
+                  <span>Page {safeCategoryPage} of {totalCategoryPages}</span>
+                  <Button variant="outline" size="sm" disabled={safeCategoryPage >= totalCategoryPages} onClick={() => setCategoryPage((page) => Math.min(totalCategoryPages, page + 1))}>Next</Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {priceAccountType !== "Supplier" ? null : (
+            <div className="flex justify-end">
+              <Button disabled={saving || pricesLoading} onClick={() => void savePrices()}>{saving ? "Saving..." : "Save prices"}</Button>
+            </div>
+          )}
+        </div>
+      )}
 
       <Dialog open={manualAddOnOpen} onOpenChange={setManualAddOnOpen}>
         <DialogContent
@@ -624,6 +898,8 @@ export function BusinessWorkflowsManager({
                 onChange={(event) => {
                   setAccountSearch(event.target.value.slice(0, 120))
                   setSelectedAccount(null)
+                  setManualFeaturedCategories([])
+                  setManualFeaturedCategoryIds([])
                   setManualAddOnForm((current) => ({ ...current, businessAccountId: "" }))
                 }}
                 placeholder="Search by business name, owner, email, phone, or public ID"
@@ -650,6 +926,8 @@ export function BusinessWorkflowsManager({
                       type="button"
                       onClick={() => {
                         setSelectedAccount(account)
+                        setManualFeaturedCategories([])
+                        setManualFeaturedCategoryIds([])
                         setAccountSearch(`${account.name} (${account.publicId})`)
                         setManualAddOnForm((current) => ({ ...current, businessAccountId: account.publicId }))
                       }}
@@ -674,7 +952,11 @@ export function BusinessWorkflowsManager({
                 <p className="text-sm font-medium">Add-on<RequiredMark /></p>
                 <Select
                   value={manualAddOnForm.preset}
-                  onValueChange={(value) => setManualAddOnForm((current) => ({ ...current, preset: value }))}
+                  onValueChange={(value) => {
+                    setManualFeaturedCategories([])
+                    setManualFeaturedCategoryIds([])
+                    setManualAddOnForm((current) => ({ ...current, preset: value }))
+                  }}
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -713,6 +995,29 @@ export function BusinessWorkflowsManager({
                 />
               </div>
             </div>
+            {manualFeaturedAddOn ? (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Featured Vendor categories<RequiredMark /></p>
+                <div className="max-h-56 overflow-y-auto rounded-lg border border-border bg-background">
+                  {manualFeaturedCategories.length ? manualFeaturedCategories.map((category) => (
+                    <label key={category.categoryId} className="flex items-start gap-2 border-b border-border/70 p-3 text-sm last:border-b-0">
+                      <Checkbox
+                        checked={manualFeaturedCategoryIds.includes(category.categoryId)}
+                        onCheckedChange={(checked: boolean) => setManualFeaturedCategoryIds((current) =>
+                          checked ? [...current, category.categoryId] : current.filter((id) => id !== category.categoryId),
+                        )}
+                      />
+                      <span>
+                        <span className="font-medium">{category.categoryName}</span>
+                        {category.parentName ? <span className="block text-xs text-muted-foreground">{category.parentName}</span> : null}
+                      </span>
+                    </label>
+                  )) : (
+                    <p className="p-3 text-sm text-muted-foreground">No active mapped product categories found for this supplier.</p>
+                  )}
+                </div>
+              </div>
+            ) : null}
             <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
               Renewal date is calculated automatically from the expiry date
               {manualAddOnForm.validUntil ? `: ${formatOptionalDate(renewalDateFromExpiry(manualAddOnForm.validUntil))}` : "."}
@@ -733,87 +1038,6 @@ export function BusinessWorkflowsManager({
           <DialogFooter>
             <Button variant="outline" onClick={() => setManualAddOnOpen(false)}>Cancel</Button>
             <Button disabled={saving} onClick={() => void createManualAddOn()}>{saving ? "Adding..." : "Add add-on"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={pricesOpen} onOpenChange={setPricesOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto" style={{ width: "min(94vw, 980px)", maxWidth: "min(94vw, 980px)" }}>
-          <DialogHeader>
-            <DialogTitle>Manage add-on prices</DialogTitle>
-	            <DialogDescription>Set the price, currency, and validity shown in Garage, Fleet, and Supplier dashboards. Limit add-ons are priced per extra unit.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Select value={priceAccountType} onValueChange={setPriceAccountType}>
-              <SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {accountTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <div className="overflow-hidden rounded-lg border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Add-on</TableHead>
-	                    <TableHead>Pricing</TableHead>
-	                    <TableHead>Price</TableHead>
-	                    <TableHead>Currency</TableHead>
-	                    <TableHead>Validity</TableHead>
-	                  </TableRow>
-	                </TableHeader>
-	                <TableBody>
-	                  {pricesLoading ? (
-	                    <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">Loading prices...</TableCell></TableRow>
-	                  ) : visiblePrices.length ? visiblePrices.map((price) => (
-                    <TableRow key={`${price.accountType}:${price.featureKey}`}>
-                      <TableCell>
-                        <p className="font-medium">{price.label}</p>
-                        <p className="text-xs text-muted-foreground">{price.featureKey}</p>
-                      </TableCell>
-                      <TableCell>{price.pricingModel === "per_unit" ? "Per extra unit" : "Fixed"}</TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          max={1000000}
-                          value={String(price.priceAmount / 100)}
-                          onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }}
-                          onChange={(event) => updatePrice(price.featureKey, { priceAmount: Math.round((Number(event.target.value) || 0) * 100) })}
-                        />
-                        <p className="mt-1 text-xs text-muted-foreground">{formatMoney(price.priceAmount, price.priceCurrency)}</p>
-	                      </TableCell>
-	                      <TableCell>
-	                        <Select value={price.priceCurrency} onValueChange={(value) => updatePrice(price.featureKey, { priceCurrency: value })}>
-	                          <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-	                          <SelectContent>
-	                            {supportedCurrencies.map((currency) => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}
-	                          </SelectContent>
-	                        </Select>
-	                      </TableCell>
-	                      <TableCell>
-	                        <Input
-	                          type="number"
-	                          min={1}
-                            max={3660}
-	                          step={1}
-	                          value={String(price.validityDays ?? 30)}
-                            onKeyDown={(event) => { if (invalidNumberKeys.has(event.key)) event.preventDefault() }}
-	                          onChange={(event) => updatePrice(price.featureKey, { validityDays: Math.max(1, Math.round(Number(event.target.value) || 1)) })}
-	                        />
-	                        <p className="mt-1 text-xs text-muted-foreground">{formatValidity(price.validityDays)}</p>
-	                      </TableCell>
-	                    </TableRow>
-	                  )) : (
-	                    <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">No add-ons found for this dashboard type.</TableCell></TableRow>
-	                  )}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPricesOpen(false)}>Close</Button>
-            <Button disabled={saving || pricesLoading} onClick={() => void savePrices()}>{saving ? "Saving..." : "Save prices"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

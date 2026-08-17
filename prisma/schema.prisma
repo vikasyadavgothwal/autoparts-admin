@@ -171,6 +171,9 @@ model ProductCategory {
   parent     ProductCategory?      @relation("ProductCategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
   children   ProductCategory[]     @relation("ProductCategoryHierarchy")
   brandLinks BrandLookupCategory[]
+  featuredVendorPrice FeaturedVendorCategoryPrice?
+  featuredVendorPlanCategories PlanFeaturedVendorCategory[]
+  supplierFeaturedCategories SupplierFeaturedCategory[]
 
   @@index([parentId])
   @@index([name])
@@ -317,6 +320,7 @@ model User {
   createdBusinessAddOnRequests    BusinessAddOnRequest[]      @relation("BusinessAddOnRequester")
   createdBusinessSavedSearches    BusinessSavedSearch[]       @relation("BusinessSavedSearchCreator")
   createdBusinessWishlistItems    BusinessWishlistItem[]      @relation("BusinessWishlistItemCreator")
+  supplierFeaturedCategories      SupplierFeaturedCategory[]
   supplierParts                   SupplierPart[]
   supplierPartStocks              SupplierPartStock[]
   supplierPartPricings            SupplierPartPricing[]
@@ -730,6 +734,8 @@ model BusinessPlan {
   usageReports            Boolean             @default(false)
   activityReports         Boolean             @default(false)
   featuredVendor          Boolean             @default(false)
+  featuredVendorCategoryLimit Int?
+  featuredVendorValidityDays  Int?
   searchBoostLevel        Int                 @default(0)
   apiAccessLevel          String              @default("none")
   approvalWorkflowEnabled Boolean             @default(false)
@@ -748,9 +754,25 @@ model BusinessPlan {
   updatedAt               DateTime            @updatedAt
 
   businessAccounts BusinessAccount[]
+  featuredVendorAllowedCategories PlanFeaturedVendorCategory[]
 
   @@unique([accountType, code])
   @@map("business_plans")
+}
+
+model PlanFeaturedVendorCategory {
+  id         String   @id @default(cuid())
+  planId     String
+  categoryId String
+  createdAt  DateTime @default(now())
+
+  plan     BusinessPlan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+  category ProductCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, categoryId])
+  @@index([planId])
+  @@index([categoryId])
+  @@map("plan_featured_vendor_categories")
 }
 
 model BusinessAccount {
@@ -772,6 +794,7 @@ model BusinessAccount {
   invitations   BusinessInvitation[]
   activityLogs  BusinessActivityLog[]
   addOnRequests BusinessAddOnRequest[]
+  supplierFeaturedCategories SupplierFeaturedCategory[]
   apiKeys       BusinessApiKey[]
   supportTickets BusinessSupportTicket[]
   paymentTransactions BusinessPaymentTransaction[]
@@ -943,12 +966,55 @@ model BusinessAddOnRequest {
   businessAccount BusinessAccount @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
   requestedBy     User?           @relation("BusinessAddOnRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
   decidedBy       admin?          @relation("BusinessAddOnDecider", fields: [decidedByAdminId], references: [id], onDelete: SetNull)
+  supplierFeaturedCategories SupplierFeaturedCategory[]
 
   @@unique([businessAccountId, featureKey])
   @@index([businessAccountId, status])
   @@index([status, createdAt])
   @@index([validUntil])
   @@map("business_add_on_requests")
+}
+
+model FeaturedVendorCategoryPrice {
+  id            String          @id @default(cuid())
+  categoryId    String          @unique
+  priceAmount   Int             @default(0)
+  priceCurrency String          @default("AED")
+  validityDays  Int             @default(30)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  category ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([categoryId])
+  @@map("featured_vendor_category_prices")
+}
+
+model SupplierFeaturedCategory {
+  id                String   @id @default(cuid())
+  supplierId        String
+  categoryId        String
+  source            String
+  businessAccountId String?
+  addOnRequestId    String?
+  assignedByAdminId String?
+  validFrom         DateTime?
+  validUntil        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  supplier        User                  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  category        ProductCategory       @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  businessAccount BusinessAccount?      @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+  addOnRequest    BusinessAddOnRequest? @relation(fields: [addOnRequestId], references: [id], onDelete: Cascade)
+  assignedBy      admin?                @relation(fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+
+  @@unique([supplierId, categoryId, source])
+  @@index([supplierId])
+  @@index([categoryId])
+  @@index([businessAccountId])
+  @@index([addOnRequestId])
+  @@map("supplier_featured_categories")
 }
 
 model BusinessAddOnPrice {
@@ -1208,6 +1274,7 @@ model admin {
   sentNotifications   Notification[]       @relation("AdminNotificationActor")
   notificationDevices NotificationDevice[] @relation("AdminNotificationDevice")
   decidedBusinessAddOnRequests BusinessAddOnRequest[] @relation("BusinessAddOnDecider")
+  assignedSupplierFeaturedCategories SupplierFeaturedCategory[]
   assignedBusinessSupportTickets BusinessSupportTicket[] @relation("BusinessSupportTicketAssignee")
 }
 

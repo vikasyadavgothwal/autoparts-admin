@@ -8,6 +8,13 @@ import { logError } from "@/lib/logger"
 import { createSignedS3ObjectUrl, deleteObjectFromS3, getS3ObjectKeyFromUrl } from "@/lib/storage/s3"
 import { createNotificationsSafely } from "@/services/notifications/notification-service"
 import {
+  calculateFeaturedVendorCategoryQuote,
+  featuredCategorySource,
+  featuredVendorFeatureKey,
+  isFeaturedCategoryActive,
+  setSupplierFeaturedCategories,
+} from "@/services/featured-vendor/featured-vendor-category-service"
+import {
   BusinessAccountType,
   BusinessAddOnRequestStatus,
   BusinessMemberStatus,
@@ -326,6 +333,8 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     accountAssistance: true,
     whatsappNotifications: true,
     featuredVendor: true,
+    featuredVendorCategoryLimit: 4,
+    featuredVendorValidityDays: 365,
     searchBoostLevel: 1,
     approvalWorkflowEnabled: true,
     customRolesEnabled: true,
@@ -364,6 +373,8 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     prioritySupport: true,
     whatsappNotifications: true,
     featuredVendor: true,
+    featuredVendorCategoryLimit: null,
+    featuredVendorValidityDays: 365,
     searchBoostLevel: 2,
     approvalWorkflowEnabled: true,
     customRolesEnabled: true,
@@ -769,7 +780,7 @@ const assertBusinessAccountOwnership = async (input: {
   return account
 }
 
-const mapPlan = (plan: BusinessPlanWithCount) => ({
+const mapPlan = (plan: BusinessPlanWithCount, allowedCategoryIds: string[] = []) => ({
   id: plan.id,
   code: plan.code,
   accountType: plan.accountType,
@@ -818,6 +829,8 @@ const mapPlan = (plan: BusinessPlanWithCount) => ({
   },
   marketplace: {
     featuredVendor: plan.featuredVendor,
+    featuredVendorCategoryLimit: plan.featuredVendorCategoryLimit,
+    allowedCategoryIds,
     searchBoostLevel: plan.searchBoostLevel,
   },
   apiAccessLevel: apiAccessLevelForPlanCode(plan.code),
@@ -888,18 +901,27 @@ const mapBusinessPaymentTransaction = (row: {
   amount: number
   currency: string
   status: string
+  metadata?: Prisma.JsonValue | null
   createdAt: Date
-}) => ({
-  id: row.id,
-  type: row.type,
-  sourceId: row.sourceId,
-  sourceKey: row.sourceKey,
-  description: row.description,
-  amount: row.amount,
-  currency: row.currency,
-  status: row.status,
-  createdAt: row.createdAt.toISOString(),
-})
+}) => {
+  const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+    ? row.metadata as Record<string, unknown>
+    : {}
+
+  return {
+    id: row.id,
+    type: row.type,
+    sourceId: row.sourceId,
+    sourceKey: row.sourceKey,
+    description: row.description,
+    amount: row.amount,
+    currency: row.currency,
+    status: row.status,
+    validityDays: typeof metadata.validityDays === "number" ? metadata.validityDays : null,
+    validUntil: typeof metadata.validUntil === "string" ? metadata.validUntil : null,
+    createdAt: row.createdAt.toISOString(),
+  }
+}
 
 async function recordBusinessPaymentTransaction(input: {
   businessAccountId: string
@@ -1115,7 +1137,14 @@ export async function listBusinessPlans() {
     include: planInclude,
     orderBy: [{ accountType: "asc" }, { code: "asc" }],
   })
-  return plans.map(mapPlan)
+  const rows = await db.$queryRaw<Array<{ planId: string; categoryId: string }>>`
+    SELECT "planId", "categoryId" FROM "plan_featured_vendor_categories"
+  `
+  const allowedByPlan = rows.reduce<Map<string, string[]>>((result, row) => {
+    result.set(row.planId, [...(result.get(row.planId) ?? []), row.categoryId])
+    return result
+  }, new Map())
+  return plans.map((plan) => mapPlan(plan, allowedByPlan.get(plan.id) ?? []))
 }
 
 export async function updateBusinessPlan(
@@ -1174,6 +1203,13 @@ export async function updateBusinessPlan(
   if (Number.isInteger(input.searchBoostLevel) && Number(input.searchBoostLevel) >= 0) {
     data.searchBoostLevel = Number(input.searchBoostLevel)
   }
+  if (input.featuredVendorCategoryLimit === null) data.featuredVendorCategoryLimit = null
+  if (Number.isInteger(input.featuredVendorCategoryLimit) && Number(input.featuredVendorCategoryLimit) >= 0 && Number(input.featuredVendorCategoryLimit) <= 100000) {
+    data.featuredVendorCategoryLimit = Number(input.featuredVendorCategoryLimit)
+  }
+  const allowedFeaturedVendorCategoryIds = Array.isArray(input.allowedFeaturedVendorCategoryIds)
+    ? Array.from(new Set(input.allowedFeaturedVendorCategoryIds.filter((id): id is string => typeof id === "string").map((id) => id.trim()).filter(Boolean))).slice(0, 500)
+    : undefined
 
   for (const key of [
     "dashboardReports",
@@ -1199,10 +1235,26 @@ export async function updateBusinessPlan(
   if (input.enabledFeatures !== undefined) data.enabledFeatures = cleanTextArray(input.enabledFeatures)
   if (input.enabledMenus !== undefined) data.enabledMenus = cleanTextArray(input.enabledMenus)
 
-  const plan = await db.businessPlan.update({
-    where,
-    data,
-    include: planInclude,
+  const plan = await db.$transaction(async (tx) => {
+    const updated = await tx.businessPlan.update({
+      where,
+      data,
+      include: planInclude,
+    })
+    if (allowedFeaturedVendorCategoryIds !== undefined) {
+      const categoryCount = await tx.productCategory.count({ where: { id: { in: allowedFeaturedVendorCategoryIds } } })
+      if (categoryCount !== allowedFeaturedVendorCategoryIds.length) throw new Error("One or more Featured Vendor categories were not found")
+      await tx.$executeRaw`DELETE FROM "plan_featured_vendor_categories" WHERE "planId" = ${updated.id}`
+      for (const categoryId of allowedFeaturedVendorCategoryIds) {
+        await tx.$executeRaw`
+          INSERT INTO "plan_featured_vendor_categories" ("id", "planId", "categoryId")
+          VALUES (${createHash("sha1").update(`${updated.id}:${categoryId}`).digest("hex")}, ${updated.id}, ${categoryId})
+          ON CONFLICT ("planId", "categoryId") DO NOTHING
+        `
+      }
+      return tx.businessPlan.findUniqueOrThrow({ where: { id: updated.id }, include: planInclude })
+    }
+    return updated
   })
   await logBusinessActivity({
     action: "business_plan.updated",
@@ -1210,7 +1262,7 @@ export async function updateBusinessPlan(
     entityId: plan.id,
     metadata: { plan: plan.name, code: plan.code, accountType: plan.accountType },
   })
-  return mapPlan(plan)
+  return mapPlan(plan, allowedFeaturedVendorCategoryIds ?? [])
 }
 
 const usageForAccount = async (account: {
@@ -1883,9 +1935,28 @@ const buildEntitlementPayload = async (
       }
     })
   const isEnterprisePlan = account.plan.code === BusinessPlanCode.Enterprise
+  const featuredVendorPriceItem = addOnCatalogItemFor(account.type, featuredVendorFeatureKey)
+  const featuredVendorPrice = featuredVendorPriceItem ? priceForCatalogItem(featuredVendorPriceItem, addOnPrices) : null
+  const featuredVendorRequestable = {
+    key: featuredVendorFeatureKey,
+    label: requestableLabels[featuredVendorFeatureKey] ?? featuredVendorFeatureKey,
+    pricingModel: featuredVendorPrice?.pricingModel ?? "fixed",
+    priceAmount: featuredVendorPrice?.priceAmount ?? 0,
+    priceCurrency: featuredVendorPrice?.priceCurrency ?? defaultAddOnPriceCurrency,
+    validityDays: featuredVendorPrice?.validityDays ?? defaultAddOnValidityDays,
+  }
   const requestableFeatures = isEnterprisePlan
-    ? []
-    : lockedFeatures.filter((feature) => Boolean(requestableLabels[feature.key]))
+    ? account.type === BusinessAccountType.Supplier
+      ? [featuredVendorRequestable]
+      : []
+    : account.type === BusinessAccountType.Supplier
+      ? Array.from(
+          new Map(
+            [...lockedFeatures.filter((feature) => Boolean(requestableLabels[feature.key])), featuredVendorRequestable]
+              .map((feature) => [feature.key, feature]),
+          ).values(),
+        )
+      : lockedFeatures.filter((feature) => Boolean(requestableLabels[feature.key]))
   const actions = Object.fromEntries(
     Object.keys(businessEntitlementActionRules[account.type]).map((action) => [
       action,
@@ -2481,7 +2552,7 @@ const businessAddOnDetailsForAccount = (
   },
   featureKey: string,
 ) => {
-  if (account.plan.code === BusinessPlanCode.Enterprise) {
+  if (account.plan.code === BusinessPlanCode.Enterprise && featureKey !== featuredVendorFeatureKey) {
     throw new Error("Paid add-ons are not available for Enterprise plans")
   }
   const limitAddOn = parseLimitAddOnKey(featureKey)
@@ -2503,7 +2574,7 @@ const businessAddOnDetailsForAccount = (
   if (!featureLabel || !businessEntitlementFeatures[account.type].includes(featureKey)) {
     throw new Error("This feature is not available as an add-on")
   }
-  if (featureSetForPlan(account.plan).has(featureKey)) {
+  if (featureKey !== featuredVendorFeatureKey && featureSetForPlan(account.plan).has(featureKey)) {
     throw new Error("This feature is already included in the current plan")
   }
   return {
@@ -2538,17 +2609,30 @@ export async function requestBusinessAddOn(input: {
   businessAccountId: unknown
   featureKey: unknown
   note?: unknown
+  categoryIds?: unknown
+  validityDays?: unknown
 }) {
   const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
   const featureKey = cleanText(input.featureKey, 120)
   if (!featureKey) throw new Error("Feature key is required")
   const addOnDetails = businessAddOnDetailsForAccount(account, featureKey)
-  const { label } = addOnDetails
-  const priceQuote = await priceQuoteForAddOnDetails(account.type, addOnDetails)
+  const categoryQuote = account.type === BusinessAccountType.Supplier && featureKey === featuredVendorFeatureKey
+    ? await calculateFeaturedVendorCategoryQuote(input.categoryIds, input.validityDays)
+    : null
+  const label = categoryQuote?.label ?? addOnDetails.label
+  const priceQuote = categoryQuote
+    ? {
+        priceAmount: categoryQuote.priceAmount,
+        priceCurrency: categoryQuote.priceCurrency,
+        priceQuantity: categoryQuote.categoryIds.length,
+        unitPriceAmount: null,
+        validityDays: categoryQuote.validityDays,
+      }
+    : await priceQuoteForAddOnDetails(account.type, addOnDetails)
   const currentRequest = await db.businessAddOnRequest.findUnique({
     where: { businessAccountId_featureKey: { businessAccountId: account.id, featureKey } },
   })
-  if (currentRequest && isActiveAddOnRequest(currentRequest)) {
+  if (currentRequest && isActiveAddOnRequest(currentRequest) && !categoryQuote) {
     throw new Error("This add-on is already added")
   }
   const note = cleanText(input.note, 500)
@@ -2594,6 +2678,19 @@ export async function requestBusinessAddOn(input: {
       renewalAt: validUntil,
     },
   })
+
+  if (categoryQuote) {
+    await setSupplierFeaturedCategories({
+      supplierId: account.ownerUserId,
+      categoryIds: categoryQuote.categoryIds,
+      source: featuredCategorySource.addOn,
+      businessAccountId: account.id,
+      addOnRequestId: row.id,
+      validFrom: enabledAt,
+      validUntil,
+      replaceExisting: false,
+    })
+  }
 
   await recordBusinessPaymentTransaction({
     businessAccountId: account.id,
@@ -2757,6 +2854,80 @@ export async function listMyBusinessAddOnRequests(input: {
   return rows.map(mapAddOnRequest)
 }
 
+export async function listMyFeaturedVendorAddOnPlacements(input: {
+  userId: string
+  businessAccountId: unknown
+}) {
+  const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
+  if (account.type !== BusinessAccountType.Supplier) return []
+
+  const rows = await db.supplierFeaturedCategory.findMany({
+    where: {
+      supplierId: account.ownerUserId,
+      businessAccountId: account.id,
+      source: featuredCategorySource.addOn,
+    },
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          parent: { select: { name: true } },
+        },
+      },
+      addOnRequest: {
+        select: {
+          status: true,
+          validFrom: true,
+          validUntil: true,
+        },
+      },
+    },
+    orderBy: [{ validUntil: "asc" }, { createdAt: "desc" }],
+  })
+
+  const groups = new Map<string, {
+    validFrom: Date | null
+    validUntil: Date | null
+    categoryNames: string[]
+    parentNames: string[]
+  }>()
+
+  for (const row of rows) {
+    const validFrom = row.validFrom ?? row.createdAt
+    const validUntil = row.validUntil ?? addDaysUtc(validFrom, defaultAddOnValidityDays)
+    if (!isFeaturedCategoryActive({ ...row, validFrom, validUntil }, false)) continue
+    const key = `${validFrom.toISOString()}:${validUntil.toISOString()}`
+    const group = groups.get(key) ?? {
+      validFrom,
+      validUntil,
+      categoryNames: [],
+      parentNames: [],
+    }
+    group.categoryNames.push(row.category.name)
+    if (row.category.parent?.name) group.parentNames.push(row.category.parent.name)
+    groups.set(key, group)
+  }
+
+  return Array.from(groups.entries()).map(([id, group]) => {
+    const validityDays = group.validFrom && group.validUntil
+      ? Math.max(1, Math.ceil((group.validUntil.getTime() - group.validFrom.getTime()) / 86400000))
+      : null
+
+    return {
+      id,
+      source: featuredCategorySource.addOn,
+      status: "Active",
+      categoryCount: group.categoryNames.length,
+      categoryNames: Array.from(new Set(group.categoryNames)).sort((first, second) => first.localeCompare(second)),
+      parentNames: Array.from(new Set(group.parentNames)).sort((first, second) => first.localeCompare(second)),
+      validFrom: toIso(group.validFrom),
+      validUntil: toIso(group.validUntil),
+      validityDays,
+    }
+  })
+}
+
 export async function listAdminBusinessAddOnRequests(status?: unknown) {
   const statusText = cleanText(status, 40)
   const statuses = Object.values(BusinessAddOnRequestStatus)
@@ -2876,6 +3047,7 @@ export async function createAdminBusinessAddOnRequest(input: {
   validFrom?: unknown
   validUntil?: unknown
   renewalAt?: unknown
+  categoryIds?: unknown
 }) {
   const businessAccountId = cleanText(input.businessAccountId, 80)
   if (!businessAccountId) throw new Error("Business account ID or public ID is required")
@@ -2901,6 +3073,12 @@ export async function createAdminBusinessAddOnRequest(input: {
   if (!account) throw new Error("Business account was not found")
 
   const addOnDetails = businessAddOnDetailsForAccount(account, featureKey)
+  const categoryIds = Array.isArray(input.categoryIds)
+    ? Array.from(new Set(input.categoryIds.filter((id): id is string => typeof id === "string").map((id) => id.trim()).filter(Boolean))).slice(0, 50)
+    : []
+  if (account.type === BusinessAccountType.Supplier && featureKey === featuredVendorFeatureKey && activeAddOnStatuses.includes(status) && !categoryIds.length) {
+    throw new Error("Select at least one Featured Vendor category")
+  }
   const { label } = addOnDetails
   const priceQuote = await priceQuoteForAddOnDetails(account.type, addOnDetails)
   const current = await db.businessAddOnRequest.findUnique({
@@ -2982,6 +3160,17 @@ export async function createAdminBusinessAddOnRequest(input: {
         productLimit: limits.products,
         vehicleLimit: limits.vehicles,
       },
+    })
+  }
+  if (account.type === BusinessAccountType.Supplier && row.featureKey === featuredVendorFeatureKey && activeAddOnStatuses.includes(status)) {
+    await setSupplierFeaturedCategories({
+      supplierId: account.ownerUserId,
+      categoryIds,
+      source: featuredCategorySource.addOn,
+      businessAccountId: account.id,
+      addOnRequestId: row.id,
+      validFrom: validity.validFrom,
+      validUntil: validity.validUntil,
     })
   }
 
@@ -3994,6 +4183,7 @@ export async function searchBusinessAccountOptions(input: {
       type: true,
       owner: {
         select: {
+          id: true,
           email: true,
           phone: true,
           firstName: true,
@@ -4011,6 +4201,7 @@ export async function searchBusinessAccountOptions(input: {
     type: account.type,
     planName: account.plan.name,
     owner: {
+      id: account.owner.id,
       name: fullName(account.owner),
       email: account.owner.email,
       phone: account.owner.phone,

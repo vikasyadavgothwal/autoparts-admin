@@ -8,6 +8,8 @@ import { toast } from "sonner"
 import { StatusBadge } from "@/components/admin-dashboard/shared/status-badge"
 import { SectionTable } from "@/components/admin-dashboard/shared/section-table"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
 import {
   Dialog,
   DialogContent,
@@ -42,6 +44,11 @@ type DetailRow = readonly [label: string, value: string | number | null]
 type DetailSection = {
   title: string
   rows: DetailRow[]
+}
+type FeaturedCategory = {
+  categoryId: string
+  categoryName: string
+  parentName?: string | null
 }
 
 const identityDocumentLabel = (supplier: SupplierRecord) =>
@@ -298,6 +305,10 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
     null,
   )
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null)
+  const [featuredTarget, setFeaturedTarget] = useState<SupplierRecord | null>(null)
+  const [featuredCategories, setFeaturedCategories] = useState<FeaturedCategory[]>([])
+  const [featuredCategoryIds, setFeaturedCategoryIds] = useState<string[]>([])
+  const [featuredValidUntil, setFeaturedValidUntil] = useState("")
   const [rejectionReason, setRejectionReason] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -386,30 +397,47 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
     })
   }
 
-  function toggleFeaturedSupplier(supplier: SupplierRecord) {
+  function openFeaturedDialog(supplier: SupplierRecord) {
+    setFeaturedTarget(supplier)
+    setFeaturedCategories([])
+    setFeaturedCategoryIds([])
+    setFeaturedValidUntil("")
     startTransition(async () => {
       const response = await fetch(
-        `/api/v1/admin/suppliers/${supplier.internalId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ featuredSupplier: !supplier.featuredSupplier }),
-        },
+        `/api/v1/admin/suppliers/${supplier.internalId}/featured-categories`,
+        { cache: "no-store" },
       )
       const payload = (await response.json().catch(() => null)) as {
+        categories?: FeaturedCategory[]
+        selectedBySource?: Record<string, string[]>
+        validUntilBySource?: Record<string, string | null>
         message?: string
       } | null
-
       if (!response.ok) {
-        toast.error(payload?.message ?? "Unable to update supplier badge")
+        toast.error(payload?.message ?? "Unable to load featured categories")
         return
       }
+      setFeaturedCategories(payload?.categories ?? [])
+      setFeaturedCategoryIds(payload?.selectedBySource?.admin ?? [])
+      setFeaturedValidUntil(payload?.validUntilBySource?.admin ?? "")
+    })
+  }
 
-      toast.success(
-        supplier.featuredSupplier
-          ? `${supplier.id} is no longer a featured supplier.`
-          : `${supplier.id} is now a featured supplier.`,
-      )
+  function saveFeaturedCategories() {
+    if (!featuredTarget) return
+    startTransition(async () => {
+      const response = await fetch(`/api/v1/admin/suppliers/${featuredTarget.internalId}/featured-categories`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoryIds: featuredCategoryIds, validUntil: featuredValidUntil || null }),
+      })
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null
+      if (!response.ok) {
+        toast.error(payload?.message ?? "Unable to update featured categories")
+        return
+      }
+      toast.success("Featured Vendor categories updated.")
+      setFeaturedTarget(null)
       router.refresh()
     })
   }
@@ -480,7 +508,7 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
                   aria-label={`${supplier.featuredSupplier ? "Remove featured badge from" : "Give featured badge to"} ${supplier.name}`}
                   disabled={isPending}
                   className={supplier.featuredSupplier ? "border-amber-400/50 text-amber-500 hover:bg-amber-400/10" : "border-dashboard-panel-border hover:bg-amber-400/10 hover:text-amber-500"}
-                  onClick={() => toggleFeaturedSupplier(supplier)}
+                  onClick={() => openFeaturedDialog(supplier)}
                 >
                   <Star className="h-4 w-4" fill={supplier.featuredSupplier ? "currentColor" : "none"} />
                 </Button>
@@ -600,6 +628,59 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
             ) : null}
             <Button type="button" onClick={() => setViewingSupplier(null)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(featuredTarget)}
+        onOpenChange={(open) => {
+          if (!open && !isPending) setFeaturedTarget(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Featured Vendor categories</DialogTitle>
+            <DialogDescription>
+              Select categories from {featuredTarget?.name ?? "this supplier"}&apos;s active mapped products.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="space-y-1 text-xs font-medium text-dashboard-muted">
+            Valid until
+            <Input
+              type="date"
+              value={featuredValidUntil}
+              onChange={(event) => setFeaturedValidUntil(event.target.value)}
+              className="border-dashboard-panel-border bg-dashboard-panel text-dashboard-text"
+            />
+          </label>
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto">
+            {featuredCategories.length ? featuredCategories.map((category) => (
+              <label key={category.categoryId} className="flex items-start gap-2 rounded-sm border border-dashboard-panel-border p-3 text-sm text-dashboard-text">
+                <Checkbox
+                  checked={featuredCategoryIds.includes(category.categoryId)}
+                  onCheckedChange={(checked) => setFeaturedCategoryIds((current) =>
+                    checked ? [...current, category.categoryId] : current.filter((id) => id !== category.categoryId),
+                  )}
+                />
+                <span>
+                  <span className="font-medium">{category.categoryName}</span>
+                  {category.parentName ? <span className="block text-xs text-dashboard-muted">{category.parentName}</span> : null}
+                </span>
+              </label>
+            )) : (
+              <p className="rounded-sm border border-dashboard-panel-border p-4 text-sm text-dashboard-muted">
+                No active mapped product categories found for this supplier.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={isPending} onClick={() => setFeaturedTarget(null)}>
+              Cancel
+            </Button>
+            <Button type="button" disabled={isPending} onClick={saveFeaturedCategories}>
+              {isPending ? "Saving..." : "Save categories"}
             </Button>
           </DialogFooter>
         </DialogContent>

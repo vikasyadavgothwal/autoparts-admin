@@ -19,6 +19,7 @@ import {
   Building2,
   ChartColumn,
   BadgeCheck,
+  CircleDollarSign,
   PackageSearch,
   Plug,
   ScanLine,
@@ -57,7 +58,9 @@ const items: readonly AppSidebarNavItem[] = [
 const businessPlatformLinks = [
   { title: "Plans", url: "/business-platform", icon: BadgeCheck },
   { title: "Users & Plans", url: "/business-platform/users-with-plans", icon: Users },
-  { title: "Add-ons & Support", url: "/business-platform/add-ons-support", icon: Plug },
+  { title: "Add-on Requests", url: "/business-platform/add-on-requests", icon: Plug },
+  { title: "Support Requests", url: "/business-platform/support-requests", icon: LifeBuoy },
+  { title: "Set Pricing", url: "/business-platform/add-on-pricing", icon: CircleDollarSign },
   { title: "FAQ & Videos", url: "/business-platform/faq-videos", icon: LifeBuoy },
 ] as const
 

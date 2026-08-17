@@ -17,6 +17,8 @@ export async function POST(request: NextRequest) {
       businessAccountId?: unknown
       featureKey?: unknown
       note?: unknown
+      categoryIds?: unknown
+      validityDays?: unknown
     }>(request)
     if (!body.ok) return apiError(body.message)
 
@@ -26,6 +28,8 @@ export async function POST(request: NextRequest) {
         businessAccountId: body.body.businessAccountId,
         featureKey: body.body.featureKey,
         note: body.body.note,
+        categoryIds: body.body.categoryIds,
+        validityDays: body.body.validityDays,
       })
       return apiCreated({ addOnRequest })
     } catch (error) {

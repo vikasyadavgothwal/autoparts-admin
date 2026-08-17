@@ -30,6 +30,7 @@ export async function POST(request: NextRequest) {
     validFrom?: unknown
     validUntil?: unknown
     renewalAt?: unknown
+    categoryIds?: unknown
   }>(request)
   if (!body.ok) return apiError(body.message)
 
@@ -43,6 +44,7 @@ export async function POST(request: NextRequest) {
       validFrom: body.body.validFrom,
       validUntil: body.body.validUntil,
       renewalAt: body.body.renewalAt,
+      categoryIds: body.body.categoryIds,
     })
     return NextResponse.json({ ok: true, addOnRequest }, { status: 201 })
   } catch (error) {

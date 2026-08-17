@@ -349,7 +349,7 @@ export function BusinessAccountPlanAssignment({
 
   const openAddOnQueue = (account: BusinessAccount) => {
     const params = new URLSearchParams({ queue: "add-ons", query: account.publicId })
-    router.push(`/business-platform/add-ons-support?${params.toString()}`)
+    router.push(`/business-platform/add-on-requests?${params.toString()}`)
   }
 
   const assignPlan = (account: BusinessAccount) => {
