@@ -1,7 +1,9 @@
 import { Building, FileText, ShoppingCart, Users as UsersIcon } from "lucide-react"
 
 import { db } from "@/lib/database/prisma"
+import { getFirebaseAuth } from "@/lib/firebase/admin"
 import { UserRole, type Prisma } from "@/lib/generated/prisma/client"
+import { logError } from "@/lib/logger"
 import type {
   UserActivity,
   UserRecord,
@@ -101,6 +103,85 @@ export async function updateAdminUserStatus(
   }
 
   return mapUser(user)
+}
+
+export async function deleteAdminUserAccount(id: string) {
+  const deletedUser = await db.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        publicId: true,
+        firebaseUid: true,
+      },
+    })
+    if (!user) throw new Error("User was not found")
+
+    await tx.$executeRaw`
+      DELETE FROM "business_invitations"
+      WHERE "invitedByUserId" = ${id}
+    `
+    await tx.$executeRaw`
+      DELETE FROM "orders"
+      WHERE "buyerId" = ${id}
+         OR "supplierId" = ${id}
+    `
+    await tx.$executeRaw`
+      DELETE FROM "rfqs"
+      WHERE "requesterId" = ${id}
+         OR "fleetVehicleId" IN (
+           SELECT "id" FROM "fleet_vehicles" WHERE "fleetId" = ${id}
+         )
+    `
+    await tx.$executeRaw`
+      DELETE FROM "rfq_bids"
+      WHERE "supplierId" = ${id}
+    `
+    await tx.$executeRaw`
+      DELETE FROM "garage_bookings"
+      WHERE "garageId" = ${id}
+         OR "customerId" = ${id}
+    `
+    await tx.$executeRaw`
+      DELETE FROM "garage_services"
+      WHERE "garageId" = ${id}
+    `
+    await tx.$executeRaw`
+      DELETE FROM "supplier_parts"
+      WHERE "supplierId" = ${id}
+    `
+    await tx.$executeRaw`
+      DELETE FROM "business_accounts"
+      WHERE "ownerUserId" = ${id}
+    `
+    await tx.user.delete({ where: { id } })
+
+    return user
+  })
+
+  let firebaseDeleted = !deletedUser.firebaseUid
+  if (deletedUser.firebaseUid) {
+    try {
+      await getFirebaseAuth().deleteUser(deletedUser.firebaseUid)
+      firebaseDeleted = true
+    } catch (error) {
+      const code =
+        typeof error === "object" && error !== null && "code" in error
+          ? String(error.code)
+          : ""
+      if (code === "auth/user-not-found") {
+        firebaseDeleted = true
+      } else {
+        logError("Unable to delete Firebase user from Admin User Management", error)
+      }
+    }
+  }
+
+  return {
+    deleted: true,
+    userId: deletedUser.publicId,
+    firebaseDeleted,
+  }
 }
 
 export function buildUserKpis(users: readonly UserRecord[]): UsersKpi[] {

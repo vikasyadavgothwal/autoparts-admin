@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { Eye, UserCheck, UserX } from "lucide-react"
+import { Eye, Trash2, UserCheck, UserX } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
@@ -50,6 +50,7 @@ export function UsersTable({ rows, columns }: UsersTableProps) {
   const router = useRouter()
   const [viewingUser, setViewingUser] = useState<UserRecord | null>(null)
   const [statusTarget, setStatusTarget] = useState<UserRecord | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<UserRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
@@ -82,6 +83,36 @@ export function UsersTable({ rows, columns }: UsersTableProps) {
         `${statusTarget.id} ${isActive ? "activated" : "suspended"}.`,
       )
       setStatusTarget(null)
+      router.refresh()
+    })
+  }
+
+  function handleDeleteUser() {
+    if (!deleteTarget) return
+    setError(null)
+
+    startTransition(async () => {
+      const response = await fetch(
+        `/api/v1/admin/users/${deleteTarget.internalId}`,
+        { method: "DELETE" },
+      )
+      const payload = (await response.json().catch(() => null)) as
+        | { message?: string; firebaseDeleted?: boolean }
+        | null
+
+      if (!response.ok) {
+        const message = payload?.message ?? "Unable to delete user"
+        setError(message)
+        toast.error(message)
+        return
+      }
+
+      toast.success(
+        payload?.firebaseDeleted === false
+          ? `${deleteTarget.id} deleted from database. Firebase deletion needs manual follow-up.`
+          : `${deleteTarget.id} deleted.`,
+      )
+      setDeleteTarget(null)
       router.refresh()
     })
   }
@@ -160,6 +191,16 @@ export function UsersTable({ rows, columns }: UsersTableProps) {
                   ) : (
                     <UserCheck className="h-4 w-4" />
                   )}
+                </Button>
+                <Button
+                  size="icon-sm"
+                  variant="destructive"
+                  title="Delete user"
+                  aria-label={`Delete ${user.name}`}
+                  disabled={isPending}
+                  onClick={() => setDeleteTarget(user)}
+                >
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
             </td>
@@ -254,6 +295,63 @@ export function UsersTable({ rows, columns }: UsersTableProps) {
                 : statusTarget?.status === "Active"
                   ? "Suspend"
                   : "Activate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open && !isPending) {
+            setDeleteTarget(null)
+            setError(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete user permanently?</DialogTitle>
+            <DialogDescription>
+              This deletes {deleteTarget?.name ?? "this account"} from Admin,
+              Firebase Auth, and all connected platform data including role
+              profiles, supplier products, orders, RFQs, quotes, vehicles,
+              bookings, settings, sessions, notifications, and business account
+              data.
+            </DialogDescription>
+          </DialogHeader>
+
+          {deleteTarget ? (
+            <div className="rounded-md border border-dashboard-danger/30 bg-dashboard-danger/10 p-3 text-sm text-dashboard-text">
+              <p className="font-medium text-dashboard-danger">
+                {deleteTarget.id} · {deleteTarget.role}
+              </p>
+              <p className="mt-1 text-dashboard-muted">
+                This action cannot be undone.
+              </p>
+            </div>
+          ) : null}
+
+          {error ? (
+            <p className="text-sm font-medium text-dashboard-danger">{error}</p>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isPending}
+              onClick={() => setDeleteTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isPending}
+              onClick={handleDeleteUser}
+            >
+              {isPending ? "Deleting..." : "Delete permanently"}
             </Button>
           </DialogFooter>
         </DialogContent>
