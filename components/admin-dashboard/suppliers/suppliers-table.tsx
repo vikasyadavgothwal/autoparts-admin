@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { Check, CircleX, Eye, Star } from "lucide-react"
+import { Check, CircleX, MoreHorizontal } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
@@ -18,6 +18,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import type { StatusTone } from "@/types/admin-dashboard/shared/status-badge"
 import type { SectionTableColumn } from "@/types/admin-dashboard/shared/section-table"
 import type { SupplierTableProps } from "@/types/admin-dashboard/suppliers/suppliers-table"
@@ -492,54 +499,46 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
               />
             </td>
             <td className="dashboard-table-cell">
-              <div className="flex items-center gap-2">
-                <Button
-                  size="icon-sm"
-                  variant="outline"
-                  title="View supplier"
-                  aria-label={`View ${supplier.name}`}
-                  onClick={() => setViewingSupplier(supplier)}
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="outline"
-                  title={supplier.featuredSupplier ? "Remove featured badge" : "Give featured badge"}
-                  aria-label={`${supplier.featuredSupplier ? "Remove featured badge from" : "Give featured badge to"} ${supplier.name}`}
-                  disabled={isPending}
-                  className={supplier.featuredSupplier ? "border-amber-400/50 text-amber-500 hover:bg-amber-400/10" : "border-dashboard-panel-border hover:bg-amber-400/10 hover:text-amber-500"}
-                  onClick={() => openFeaturedDialog(supplier)}
-                >
-                  <Star className="h-4 w-4" fill={supplier.featuredSupplier ? "currentColor" : "none"} />
-                </Button>
-                {supplier.status !== "Approved" ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                   <Button
                     size="icon-sm"
-                    variant="outline"
-                    title="Approve supplier"
-                    aria-label={`Approve ${supplier.name}`}
-                    disabled={isPending}
-                    className="border-dashboard-success/30 hover:bg-dashboard-success/10 hover:text-dashboard-success"
-                    onClick={() => openReviewDialog(supplier, "Approved")}
+                    variant="ghost"
+                    aria-label={`Actions for ${supplier.name}`}
                   >
-                    <Check className="h-4 w-4" />
+                    <MoreHorizontal className="h-4 w-4" />
                   </Button>
-                ) : null}
-                {supplier.status !== "Rejected" ? (
-                  <Button
-                    size="icon-sm"
-                    variant="outline"
-                    title="Reject supplier"
-                    aria-label={`Reject ${supplier.name}`}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                  <DropdownMenuItem onSelect={() => setViewingSupplier(supplier)}>
+                    View details
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
                     disabled={isPending}
-                    className="border-dashboard-danger/30 hover:bg-dashboard-danger/10 hover:text-dashboard-danger"
-                    onClick={() => openReviewDialog(supplier, "Rejected")}
+                    onSelect={() => openFeaturedDialog(supplier)}
                   >
-                    <CircleX className="h-4 w-4" />
-                  </Button>
-                ) : null}
-              </div>
+                    {supplier.featuredSupplier ? "Manage featured categories" : "Add featured categories"}
+                  </DropdownMenuItem>
+                  {supplier.status !== "Approved" ? (
+                    <DropdownMenuItem
+                      disabled={isPending}
+                      onSelect={() => openReviewDialog(supplier, "Approved")}
+                    >
+                      Approve supplier
+                    </DropdownMenuItem>
+                  ) : null}
+                  {supplier.status !== "Rejected" ? (
+                    <DropdownMenuItem
+                      disabled={isPending}
+                      className="text-dashboard-danger focus:text-dashboard-danger"
+                      onSelect={() => openReviewDialog(supplier, "Rejected")}
+                    >
+                      Reject supplier
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </td>
           </tr>
         ))}

@@ -39,6 +39,7 @@ export const appRoutes = {
   supplierValidation: "/supplier-validation",
   inventoryMapping: "/inventory-mapping",
   marketplaceAnalytics: "/marketplace-analytics",
+  partSearches: "/part-searches",
   aiIntelligence: "/ai-intelligence",
   suppliers: "/pages/suppliers-page",
   supplier: "/suppliers",

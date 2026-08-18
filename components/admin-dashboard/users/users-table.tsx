@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { Eye, Trash2, UserCheck, UserX } from "lucide-react"
+import { MoreHorizontal } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
@@ -16,6 +16,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import type { StatusTone } from "@/types/admin-dashboard/shared/status-badge"
 import type { SectionTableColumn } from "@/types/admin-dashboard/shared/section-table"
 import type { UsersTableProps } from "@/types/admin-dashboard/users/users-table"
@@ -163,46 +171,37 @@ export function UsersTable({ rows, columns }: UsersTableProps) {
               />
             </td>
             <td className="dashboard-table-cell">
-              <div className="flex items-center gap-2">
-                <Button
-                  size="icon-sm"
-                  variant="outline"
-                  title="View user"
-                  aria-label={`View ${user.name}`}
-                  onClick={() => setViewingUser(user)}
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="outline"
-                  title={user.status === "Active" ? "Suspend user" : "Activate user"}
-                  aria-label={`${user.status === "Active" ? "Suspend" : "Activate"} ${user.name}`}
-                  disabled={isPending}
-                  className={
-                    user.status === "Active"
-                      ? "border-dashboard-danger/30 hover:bg-dashboard-danger/10 hover:text-dashboard-danger"
-                      : "border-dashboard-success/30 hover:bg-dashboard-success/10 hover:text-dashboard-success"
-                  }
-                  onClick={() => setStatusTarget(user)}
-                >
-                  {user.status === "Active" ? (
-                    <UserX className="h-4 w-4" />
-                  ) : (
-                    <UserCheck className="h-4 w-4" />
-                  )}
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="destructive"
-                  title="Delete user"
-                  aria-label={`Delete ${user.name}`}
-                  disabled={isPending}
-                  onClick={() => setDeleteTarget(user)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={`Actions for ${user.name}`}
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                  <DropdownMenuItem onSelect={() => setViewingUser(user)}>
+                    View details
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={isPending}
+                    onSelect={() => setStatusTarget(user)}
+                  >
+                    {user.status === "Active" ? "Suspend user" : "Activate user"}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={isPending}
+                    className="text-dashboard-danger focus:text-dashboard-danger"
+                    onSelect={() => setDeleteTarget(user)}
+                  >
+                    Delete user
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </td>
           </tr>
         ))}

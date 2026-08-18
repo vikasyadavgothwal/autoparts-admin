@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     return auth.response
   }
 
-  const [categories, brands] = await Promise.all([
+  const [categories, brands, vehicles] = await Promise.all([
     db.productCategory.findMany({
       include: { parent: { select: { id: true, name: true } } },
       orderBy: [{ name: "asc" }],
@@ -24,6 +24,11 @@ export async function GET(request: NextRequest) {
         tier: { select: { id: true, customerFacingLabel: true } },
       },
       orderBy: [{ brandName: "asc" }],
+    }),
+    db.vehicleLookup.findMany({
+      include: { tier: { select: { customerFacingLabel: true } } },
+      orderBy: [{ make: "asc" }, { model: "asc" }],
+      take: 1000,
     }),
   ])
 
@@ -43,6 +48,12 @@ export async function GET(request: NextRequest) {
         id: link.category.id,
         name: link.category.name,
       })),
+    })),
+    vehicles: vehicles.map((vehicle) => ({
+      id: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      tier: vehicle.tier?.customerFacingLabel ?? null,
     })),
   })
 }

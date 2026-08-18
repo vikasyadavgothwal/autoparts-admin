@@ -1,6 +1,11 @@
 import { db } from "@/lib/database/prisma"
 import { normalizePartNumber } from "@/lib/vin-17-api-client"
 import {
+  fetchVinSearchResult,
+  getVinSearchApiBaseUrl,
+  normalizeVinSearchResult,
+} from "@/lib/vin-search"
+import {
   createSignedS3ObjectUrl,
   getS3ObjectKeyFromUrl,
 } from "@/lib/storage/s3"
@@ -24,6 +29,7 @@ const DEFAULT_PRODUCT_IMAGE =
 const DEFAULT_RANKING_SCORE_MAX = 100
 const PDP_OFFER_LIMIT = 6
 const MARKETPLACE_OFFER_LIMIT = 6
+const VIN_PATTERN = /^[A-HJ-NPR-Z0-9]{17}$/
 
 const DEFAULT_SCORE_WEIGHTS = {
   relevance: 25,
@@ -170,6 +176,8 @@ type MarketplaceSearchInput = {
   year?: string | null
   make?: string | null
   model?: string | null
+  vehicleName?: string | null
+  queryType?: string | null
   q?: string | null
   deliveryCity?: string | null
   deliveryState?: string | null
@@ -189,6 +197,9 @@ const normalizeText = (value: unknown): string =>
 
 const normalizeToken = (value: string): string =>
   value.toUpperCase().replace(/[^A-Z0-9]+/g, "")
+
+const normalizeVinToken = (value: string): string =>
+  value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]+/g, "")
 
 const normalizeLocation = (value: string | null | undefined): string =>
   normalizeText(value).toLowerCase()
@@ -1197,7 +1208,10 @@ const findPartUidsByVehicle = async (input: MarketplaceSearchInput) => {
 
   const year = parseYear(input.year)
   const textWhere = fitmentTextWhere(
-    [input.make, input.model].map(normalizeText).filter(Boolean).join(" "),
+    [input.vehicleName, input.make, input.model]
+      .map(normalizeText)
+      .filter(Boolean)
+      .join(" "),
   )
   const yearWhere = year ? fitmentYearWhere(year) : null
   const searchAttempts: Prisma.MasterFitmentWhereInput[] = []
@@ -1205,7 +1219,7 @@ const findPartUidsByVehicle = async (input: MarketplaceSearchInput) => {
   if (yearWhere && textWhere) {
     searchAttempts.push({ AND: [yearWhere, textWhere] })
   }
-  if (yearWhere) {
+  if (yearWhere && !normalizeText(input.vin)) {
     searchAttempts.push(yearWhere)
   }
   if (textWhere) {
@@ -1225,6 +1239,110 @@ const findPartUidsByVehicle = async (input: MarketplaceSearchInput) => {
   }
 
   return []
+}
+
+const resolveVehicleFromVin = async (
+  vin: string,
+): Promise<Partial<MarketplaceSearchInput>> => {
+  const normalizedVin = normalizeVinToken(vin)
+  const username = process.env.VIN_API_USER?.trim()
+  const password = process.env.VIN_API_PASS?.trim()
+
+  if (!VIN_PATTERN.test(normalizedVin) || !username || !password) {
+    return {}
+  }
+
+  try {
+    const upstreamResult = await fetchVinSearchResult(
+      normalizedVin,
+      undefined,
+      { username, password },
+      getVinSearchApiBaseUrl(),
+    )
+
+    if (!upstreamResult.ok) {
+      return {}
+    }
+
+    const normalizedResult = normalizeVinSearchResult(upstreamResult.data)
+    if (!normalizedResult.ok) {
+      return {}
+    }
+
+    return {
+      modelId: normalizedResult.data["Model id"] ?? null,
+      year: normalizedResult.data["Model year"],
+      make: normalizedResult.data["Make name"],
+      model: normalizedResult.data["Make name"],
+    }
+  } catch {
+    return {}
+  }
+}
+
+const getMarketplaceSearchLogContext = (
+  input: MarketplaceSearchInput,
+  productsCount: number,
+): {
+  searchedNumber: string
+  normalizedNumber: string
+  resultStatus: string
+} | null => {
+  const partNumber = normalizeText(input.partNumber)
+  const vin = normalizeVinToken(normalizeText(input.vin))
+  const textQuery = normalizeText(input.q)
+  const vehicleText = [input.vehicleName, input.year, input.make, input.model]
+    .map(normalizeText)
+    .filter(Boolean)
+    .join(" ")
+  const availableStatus = productsCount > 0 ? "available" : "unavailable"
+
+  if (partNumber) {
+    return {
+      searchedNumber: vehicleText
+        ? `${partNumber} | ${vehicleText}`
+        : partNumber,
+      normalizedNumber: `PART:${normalizePartNumber(partNumber) || normalizeToken(partNumber)}`,
+      resultStatus: `part_number_${availableStatus}`,
+    }
+  }
+
+  if (vin) {
+    return {
+      searchedNumber: vehicleText ? `${vin} | ${vehicleText}` : vin,
+      normalizedNumber: `VIN:${vin}`,
+      resultStatus: `vin_${availableStatus}`,
+    }
+  }
+
+  if (textQuery) {
+    return {
+      searchedNumber: vehicleText
+        ? `${textQuery} | ${vehicleText}`
+        : textQuery,
+      normalizedNumber: `NAME:${textQuery.toLowerCase()}`,
+      resultStatus: `part_name_${availableStatus}`,
+    }
+  }
+
+  return null
+}
+
+const logMarketplaceSearch = async (
+  input: MarketplaceSearchInput,
+  productsCount: number,
+) => {
+  const context = getMarketplaceSearchLogContext(input, productsCount)
+  if (!context) return
+
+  await db.unmatchedPartSearchLog.create({
+    data: {
+      searchedNumber: context.searchedNumber.slice(0, 500),
+      normalizedNumber: context.normalizedNumber.slice(0, 255),
+      resultStatus: context.resultStatus,
+      userId: null,
+    },
+  }).catch(() => undefined)
 }
 
 const searchPartsByText = async (query: string, limit: number) => {
@@ -1281,8 +1399,9 @@ const searchPartsByText = async (query: string, limit: number) => {
 export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
   const limit = Math.min(Math.max(input.limit ?? 24, 1), 60)
   const partNumber = normalizeText(input.partNumber)
-  const vin = normalizeText(input.vin)
+  const vin = normalizeVinToken(normalizeText(input.vin))
   const textQuery = normalizeText(input.q)
+  const queryType = normalizeText(input.queryType).toLowerCase()
   const deliveryLocation = {
     city: normalizeText(input.deliveryCity) || null,
     state: normalizeText(input.deliveryState) || null,
@@ -1292,6 +1411,17 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
   let parts: MarketplacePart[] = []
   let searchType: "partNumber" | "vin" | "text" = "text"
   const searchContext = partNumber || textQuery || null
+  let vehicleInput: MarketplaceSearchInput = { ...input, vin }
+
+  if (
+    vin &&
+    !normalizeText(input.modelId) &&
+    !normalizeText(input.year) &&
+    !normalizeText(input.make) &&
+    !normalizeText(input.model)
+  ) {
+    vehicleInput = { ...vehicleInput, ...(await resolveVehicleFromVin(vin)) }
+  }
 
   if (partNumber) {
     searchType = "partNumber"
@@ -1299,9 +1429,27 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
       await findPartUidsByPartSearch(partNumber),
       limit,
     )
-  } else if (vin || input.year || input.make || input.model) {
+  } else if (
+    queryType === "part_name" &&
+    textQuery &&
+    (vehicleInput.modelId ||
+      vehicleInput.year ||
+      vehicleInput.make ||
+      vehicleInput.model ||
+      vehicleInput.vehicleName)
+  ) {
+    const [partUids, vehicleUids] = await Promise.all([
+      findPartUidsByPartSearch(textQuery),
+      findPartUidsByVehicle(vehicleInput),
+    ])
+    const vehicleUidSet = new Set(vehicleUids)
+    parts = await loadPartsByUids(
+      partUids.filter((partUid) => vehicleUidSet.has(partUid)),
+      limit,
+    )
+  } else if (vin || vehicleInput.year || vehicleInput.make || vehicleInput.model) {
     searchType = "vin"
-    parts = await loadPartsByUids(await findPartUidsByVehicle(input), limit)
+    parts = await loadPartsByUids(await findPartUidsByVehicle(vehicleInput), limit)
   } else {
     parts = await searchPartsByText(textQuery, limit)
     if (textQuery) {
@@ -1323,6 +1471,15 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
       ),
     ),
   )
+  await logMarketplaceSearch(
+    {
+      ...vehicleInput,
+      partNumber,
+      q: textQuery,
+      queryType,
+    },
+    products.length,
+  )
 
   return {
     ok: true,
@@ -1330,10 +1487,12 @@ export async function searchMarketplaceProducts(input: MarketplaceSearchInput) {
     query: {
       partNumber: partNumber || null,
       vin: vin || null,
-      modelId: normalizeText(input.modelId) || null,
-      year: normalizeText(input.year) || null,
-      make: normalizeText(input.make) || null,
-      model: normalizeText(input.model) || null,
+      modelId: normalizeText(vehicleInput.modelId) || null,
+      year: normalizeText(vehicleInput.year) || null,
+      make: normalizeText(vehicleInput.make) || null,
+      model: normalizeText(vehicleInput.model) || null,
+      vehicleName: normalizeText(vehicleInput.vehicleName) || null,
+      queryType: queryType || null,
       q: textQuery || null,
       deliveryCity: deliveryLocation.city,
       deliveryState: deliveryLocation.state,

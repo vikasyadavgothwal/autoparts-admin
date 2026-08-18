@@ -378,6 +378,15 @@ export async function importSupplierPartsBulk(
           reason,
         }
       }
+      const reason = supplierFacingUnmappedReason(
+        error instanceof Error ? error.message : "Unable to confirm this OEM",
+      )
+      await upsertPendingSupplierProductInfo(
+        supplierId,
+        rowForPersistence,
+        vendorSku,
+        reason,
+      )
       return {
         ok: false as const,
         rowNumber: row.rowNumber,
@@ -386,10 +395,7 @@ export async function importSupplierPartsBulk(
         oemNumber: oemNumber ?? "",
         competitorPartNumber: competitorOem,
         competitorBrandName: competitorBrand,
-        reason:
-          supplierFacingUnmappedReason(
-            error instanceof Error ? error.message : "Unable to confirm this OEM",
-          ),
+        reason,
       }
     }
   })

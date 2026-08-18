@@ -19,6 +19,8 @@ export async function GET(request: NextRequest) {
       year: searchParams.get("year"),
       make: searchParams.get("make"),
       model: searchParams.get("model"),
+      vehicleName: searchParams.get("vehicleName"),
+      queryType: searchParams.get("queryType"),
       q: searchParams.get("q"),
       deliveryCity: searchParams.get("deliveryCity"),
       deliveryState: searchParams.get("deliveryState"),

@@ -587,7 +587,9 @@ export async function loginUserWithFirebase(
     })
   }
 
-  const challenge = await createBusinessLoginChallenge({ user, role: requestedRole ?? user.activeRole })
+  const challenge = phoneSignIn
+    ? null
+    : await createBusinessLoginChallenge({ user, role: requestedRole ?? user.activeRole })
   if (challenge) return { user: mapUserProfile(user), challenge }
 
   const issued = await createUserSession(user, context)

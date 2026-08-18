@@ -23,8 +23,8 @@ const toUpperTrimmedString = (value: unknown): string | null =>
 const normalizeUpstreamTextField = (
   value: unknown,
 ): string | null => {
-  if (typeof value === "string") {
-    const normalized = value.trim()
+  if (typeof value === "string" || typeof value === "number") {
+    const normalized = String(value).trim()
     return normalized.length > 0 ? normalized : null
   }
 
@@ -33,6 +33,13 @@ const normalizeUpstreamTextField = (
 
 const isVinSearchObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null
+
+const firstModelListItem = (value: unknown): Record<string, unknown> | null => {
+  if (!Array.isArray(value)) return null
+  const firstItem = value.find(isVinSearchObject)
+
+  return firstItem ?? null
+}
 
 export const normalizeVinSearchResult = (
   upstreamResult: unknown,
@@ -68,17 +75,27 @@ export const normalizeVinSearchResult = (
   }
 
   const data = upstreamResult.data as Record<string, unknown>
+  const modelListItem = firstModelListItem(data.model_list)
   const modelId =
     normalizeUpstreamTextField(data.model_id) ||
     normalizeUpstreamTextField(data.modelId) ||
     normalizeUpstreamTextField(data.Id) ||
     normalizeUpstreamTextField(data.id) ||
     normalizeUpstreamTextField(data.vehicle_id) ||
+    normalizeUpstreamTextField(modelListItem?.Id) ||
+    normalizeUpstreamTextField(modelListItem?.id) ||
+    normalizeUpstreamTextField(data.my_model_std_id) ||
+    normalizeUpstreamTextField(data.epc_id) ||
     null
+  const makeName =
+    normalizeUpstreamTextField(modelListItem?.Series_en) ||
+    normalizeUpstreamTextField(modelListItem?.Brand_en) ||
+    normalizeUpstreamTextField(data.epc) ||
+    ""
   const normalizedData: VinSearchNormalizedResultPayload = {
     VIN: normalizeUpstreamTextField(data.full_vin) || "",
     "Model year": normalizeUpstreamTextField(data.model_year_from_vin) || "",
-    "Make name": normalizeUpstreamTextField(data.epc) || "",
+    "Make name": makeName,
     ...(modelId ? { "Model id": modelId } : {}),
   }
 

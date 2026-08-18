@@ -57,6 +57,7 @@ const items: readonly AppSidebarNavItem[] = [
   { title: "Supplier Validation", url: appRoutes.supplierValidation, icon: ShieldCheck },
   { title: "Inventory Mapping", url: appRoutes.inventoryMapping, icon: PackageSearch },
   { title: "Analytics", url: appRoutes.marketplaceAnalytics, icon: ChartColumn },
+  { title: "Part Searches", url: appRoutes.partSearches, icon: PackageSearch },
   { title: "AI Intelligence", url: appRoutes.aiIntelligence, icon: Bot },
   { title: "Reports", url: "/reports", icon: ChartColumn },
   { title: "Users", url: "/users", icon: Users },
