@@ -4,6 +4,18 @@ import { isApiOriginAllowed, setApiCorsHeaders } from "@/lib/api-cors"
 const accessCookie = process.env.ADMIN_ACCESS_COOKIE_NAME ?? "admin_access_token"
 const refreshCookie = process.env.ADMIN_REFRESH_COOKIE_NAME ?? "admin_refresh_token"
 
+const requestOrigin = (request: NextRequest) => {
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim()
+  if (!forwardedHost) return request.nextUrl.origin
+
+  const forwardedProto =
+    request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ||
+    request.nextUrl.protocol.replace(":", "") ||
+    "https"
+
+  return `${forwardedProto}://${forwardedHost}`
+}
+
 const expiresSoon = (token: string) => {
   try {
     const payload = token.split(".")[1]
@@ -68,9 +80,7 @@ export function proxy(request: NextRequest) {
   const access = request.cookies.get(accessCookie)?.value
   if (!refresh || (access && !expiresSoon(access))) return NextResponse.next()
 
-  const destination = request.nextUrl.clone()
-  destination.pathname = "/api/v1/admin/auth/refresh"
-  destination.search = ""
+  const destination = new URL("/api/v1/admin/auth/refresh", requestOrigin(request))
   destination.searchParams.set(
     "returnTo",
     `${pathname}${request.nextUrl.search}`,

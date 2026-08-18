@@ -12,12 +12,25 @@ const safeReturnTo = (value: string | null) =>
     ? value
     : "/"
 
+const requestOrigin = (request: NextRequest) => {
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim()
+  if (!forwardedHost) return request.nextUrl.origin
+
+  const forwardedProto =
+    request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ||
+    request.nextUrl.protocol.replace(":", "") ||
+    "https"
+
+  return `${forwardedProto}://${forwardedHost}`
+}
+
 export async function GET(request: NextRequest) {
   const returnTo = safeReturnTo(request.nextUrl.searchParams.get("returnTo"))
   const refreshToken = request.cookies.get(ADMIN_AUTH.refreshCookieName)?.value
+  const origin = requestOrigin(request)
 
   if (!refreshToken) {
-    return NextResponse.redirect(new URL("/login?error=missing_refresh_token", request.url))
+    return NextResponse.redirect(new URL("/login?error=missing_refresh_token", origin))
   }
 
   const refreshed = await refreshAdminSession(refreshToken, {
@@ -29,14 +42,14 @@ export async function GET(request: NextRequest) {
 
   if (!refreshed.ok) {
     const response = NextResponse.redirect(
-      new URL(`/login?error=${encodeURIComponent(refreshed.message)}`, request.url),
+      new URL(`/login?error=${encodeURIComponent(refreshed.message)}`, origin),
     )
     response.cookies.delete(ADMIN_AUTH.accessCookieName)
     response.cookies.delete(ADMIN_AUTH.refreshCookieName)
     return response
   }
 
-  const response = NextResponse.redirect(new URL(returnTo, request.url))
+  const response = NextResponse.redirect(new URL(returnTo, origin))
   const cookieOptions = getAdminCookieOptions()
   response.cookies.set({
     name: ADMIN_AUTH.accessCookieName,

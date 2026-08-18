@@ -17,6 +17,11 @@ import {
   getS3ObjectKeyFromUrl,
   uploadObjectToS3,
 } from "@/lib/storage/s3"
+import {
+  activeAdminRecipientIds,
+  createNotificationsSafely,
+  type CreateNotificationInput,
+} from "@/services/notifications/notification-service"
 import type {
   SupplierProfileInput,
   SupplierProfileRecord,
@@ -582,11 +587,28 @@ async function notifyAdminsSupplierDocumentsSubmitted(input: {
   supplierName: string;
   supplierEmail: string | null;
 }) {
-  const admins = await db.admin.findMany({
-    where: { isActive: true },
-    select: { email: true },
-  });
+  const [admins, adminIds] = await Promise.all([
+    db.admin.findMany({
+      where: { isActive: true },
+      select: { email: true },
+    }),
+    activeAdminRecipientIds(),
+  ]);
   const recipients = admins.map((admin) => admin.email).filter(Boolean);
+  const body = `${input.supplierName} submitted verification documents for admin review.`;
+
+  const notifications: CreateNotificationInput[] = adminIds.map((adminId) => ({
+    recipientAdminId: adminId,
+    actorUserId: input.supplierId,
+    type: "supplier.documents.submitted",
+    title: "New supplier documents submitted",
+    body,
+    linkUrl: "/suppliers",
+    entityType: "supplier",
+    entityId: input.supplierId,
+  }));
+
+  await createNotificationsSafely(notifications);
   if (recipients.length === 0) return;
 
   await Promise.all(

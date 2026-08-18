@@ -392,6 +392,7 @@ export function SuppliersTable({ rows, columns }: SupplierTableProps) {
       }
 
       setReviewTarget(null)
+      setViewingSupplier(null)
       setRejectionReason("")
       router.refresh()
     })
