@@ -432,6 +432,9 @@ export async function updateGarageProfile(
 
   const emailChanged = (existing.contactEmail ?? "") !== (contactEmail ?? "")
   const mobileChanged = (existing.mobile ?? "") !== (mobile ?? "")
+  if (mobileChanged && mobile !== user?.phone) {
+    throw new Error("Verify the mobile number with OTP before saving")
+  }
   const hoursByDay = workingHoursByDay(input.workingHoursByDay)
   const days = Object.entries(hoursByDay)
     .filter(([, hours]) => hours.enabled)
