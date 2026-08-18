@@ -471,7 +471,7 @@ export async function loginUserWithFirebase(
 
   const identityFilters: Prisma.UserWhereInput[] = [{ firebaseUid }]
   if (email) identityFilters.push({ email })
-  if (phone) identityFilters.push({ phone })
+  if (phone) identityFilters.push({ phone }, { supplierContactPhone: phone })
 
   const matchingUsers = await db.user.findMany({
     where: { OR: identityFilters },
@@ -480,7 +480,9 @@ export async function loginUserWithFirebase(
   const phoneSignIn = identity.signInProvider === "phone"
   const phoneMatchedUser =
     phoneSignIn && phone
-      ? matchingUsers.find((user) => user.phone === phone)
+      ? matchingUsers.find(
+          (user) => user.phone === phone || user.supplierContactPhone === phone,
+        )
       : undefined
   const uidMatchedUser = matchingUsers.find(
     (user) => user.firebaseUid === firebaseUid,
@@ -500,7 +502,10 @@ export async function loginUserWithFirebase(
   if (
     existingUser?.firebaseUid &&
     existingUser.firebaseUid !== firebaseUid &&
-    !(phoneSignIn && existingUser.phone === phone)
+    !(
+      phoneSignIn &&
+      (existingUser.phone === phone || existingUser.supplierContactPhone === phone)
+    )
   ) {
     throw new Error("Firebase identity conflicts with an existing user account")
   }
