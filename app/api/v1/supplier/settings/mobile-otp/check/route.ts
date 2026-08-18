@@ -8,8 +8,9 @@ import {
   withSupplierApiRoute,
 } from "@/lib/auth/api-guards"
 import { assertMobileNumberAvailable } from "@/services/user-auth/mobile-availability-service"
+import { assertSupplierContactPhoneAvailable } from "@/services/supplier/supplier-settings-service";
 
-type CheckBody = { phone?: unknown }
+type CheckBody = { phone?: unknown; target?: unknown }
 
 export const dynamic = "force-dynamic"
 
@@ -19,10 +20,12 @@ export async function POST(request: NextRequest) {
     if (!parsed.ok) return apiError(parsed.message)
 
     try {
-      await assertMobileNumberAvailable(
-        user.id,
-        typeof parsed.body.phone === "string" ? parsed.body.phone : "",
-      )
+      const phone = typeof parsed.body.phone === "string" ? parsed.body.phone : "";
+      if (parsed.body.target === "supplierContactPhone") {
+        await assertSupplierContactPhoneAvailable(user.id, phone);
+      } else {
+        await assertMobileNumberAvailable(user.id, phone);
+      }
       return apiOk({ message: "Mobile number is available" })
     } catch (error) {
       return apiError(apiErrorMessage(error, "Unable to check mobile number"))

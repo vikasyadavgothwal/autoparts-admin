@@ -761,14 +761,13 @@ export async function verifySupplierMobileWithFirebase(
   return getSupplierProfile(supplierId);
 }
 
-export async function verifySupplierContactPhoneWithFirebase(
+export async function assertSupplierContactPhoneAvailable(
   supplierId: string,
-  firebaseIdToken: string,
+  value: unknown,
 ) {
-  const decodedToken = await verifyFirebaseIdToken(firebaseIdToken);
-  const phone = phoneText(decodedToken.phone_number);
-  if (!phone) {
-    throw new Error("Firebase token does not include a verified mobile number");
+  const phone = phoneText(value);
+  if (!phone || !MOBILE_PATTERN.test(phone)) {
+    throw new Error("Enter a valid supplier contact number");
   }
 
   const existingAccountPhone = await db.user.findFirst({
@@ -786,6 +785,21 @@ export async function verifySupplierContactPhoneWithFirebase(
   if (existingSupplierContactPhone) {
     throw new Error("This supplier contact number is already used by another supplier");
   }
+
+  return phone;
+}
+
+export async function verifySupplierContactPhoneWithFirebase(
+  supplierId: string,
+  firebaseIdToken: string,
+) {
+  const decodedToken = await verifyFirebaseIdToken(firebaseIdToken);
+  const phone = phoneText(decodedToken.phone_number);
+  if (!phone) {
+    throw new Error("Firebase token does not include a verified mobile number");
+  }
+
+  await assertSupplierContactPhoneAvailable(supplierId, phone);
 
   await db.user.update({
     where: { id: supplierId },
