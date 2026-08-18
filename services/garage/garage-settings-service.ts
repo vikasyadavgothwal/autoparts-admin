@@ -2,6 +2,7 @@ import { randomBytes, randomInt, randomUUID, createHash } from "node:crypto"
 
 import { db } from "@/lib/database/prisma"
 import { verifyFirebaseIdToken } from "@/lib/firebase/admin"
+import { assertMobileNumberAvailable } from "@/services/user-auth/mobile-availability-service"
 import type {
   GarageDayHours,
   GarageProfileInput,
@@ -700,17 +701,7 @@ export async function verifyGarageMobileWithFirebase(
     throw new Error("Firebase token does not include a verified mobile number")
   }
 
-  const existing = await db.user.findFirst({
-    where: {
-      phone,
-      NOT: { id: garageId },
-    },
-    select: { id: true },
-  })
-
-  if (existing) {
-    throw new Error("This mobile number is already used by another account")
-  }
+  await assertMobileNumberAvailable(garageId, phone)
 
   await db.user.update({
     where: { id: garageId },

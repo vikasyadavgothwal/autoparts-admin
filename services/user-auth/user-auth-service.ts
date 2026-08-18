@@ -4,6 +4,7 @@ import { BusinessAccountType, BusinessMemberStatus, Prisma, UserRole } from "@/l
 import { hashPassword, verifyPassword } from "@/lib/auth/password"
 import { ensureBusinessAccountForOwner } from "@/services/business/business-platform-service"
 import { createUserSession } from "@/services/user-auth/user-session-service"
+import { assertMobileNumberAvailable } from "@/services/user-auth/mobile-availability-service"
 import {
   createBusinessLoginChallenge,
   ensureBusinessStaffLoginMethodAllowed,
@@ -510,6 +511,9 @@ export async function loginUserWithFirebase(
   if (existingUser) {
     await ensureBusinessStaffCanLogin(existingUser, firebaseProvider(identity.signInProvider))
   }
+  if (phone) {
+    await assertMobileNumberAvailable(existingUser?.id ?? "", phone)
+  }
 
   if (!existingUser && !requestedRole) {
     throw new Error(VERIFIED_ACCOUNT_ROLE_REQUIRED_MESSAGE)
@@ -524,6 +528,7 @@ export async function loginUserWithFirebase(
     if (!supplierPhone) {
       throw new Error("Enter a valid supplier phone number with country code")
     }
+    await assertMobileNumberAvailable("", supplierPhone)
   }
 
   const loggedInAt = new Date()

@@ -22,6 +22,7 @@ import {
   createNotificationsSafely,
   type CreateNotificationInput,
 } from "@/services/notifications/notification-service"
+import { assertMobileNumberAvailable } from "@/services/user-auth/mobile-availability-service"
 import type {
   SupplierProfileInput,
   SupplierProfileRecord,
@@ -746,13 +747,7 @@ export async function verifySupplierMobileWithFirebase(
     throw new Error("Firebase token does not include a verified mobile number");
   }
 
-  const existing = await db.user.findFirst({
-    where: { phone, NOT: { id: supplierId } },
-    select: { id: true },
-  });
-  if (existing) {
-    throw new Error("This mobile number is already used by another account");
-  }
+  await assertMobileNumberAvailable(supplierId, phone);
 
   await db.user.update({
     where: { id: supplierId },
@@ -792,21 +787,7 @@ export async function assertSupplierContactPhoneAvailable(
     throw new Error("Enter a valid supplier contact number");
   }
 
-  const existingAccountPhone = await db.user.findFirst({
-    where: { phone, NOT: { id: supplierId } },
-    select: { id: true },
-  });
-  if (existingAccountPhone) {
-    throw new Error("This supplier contact number is already used by another account");
-  }
-
-  const existingSupplierContactPhone = await db.user.findFirst({
-    where: { supplierContactPhone: phone, NOT: { id: supplierId } },
-    select: { id: true },
-  });
-  if (existingSupplierContactPhone) {
-    throw new Error("This supplier contact number is already used by another supplier");
-  }
+  await assertMobileNumberAvailable(supplierId, phone);
 
   return phone;
 }

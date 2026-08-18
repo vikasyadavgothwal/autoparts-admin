@@ -3,6 +3,7 @@ import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { db } from "@/lib/database/prisma";
 import { verifyFirebaseIdToken } from "@/lib/firebase/admin";
 import { Prisma } from "@/lib/generated/prisma/client";
+import { assertMobileNumberAvailable } from "@/services/user-auth/mobile-availability-service";
 import type {
   UserProfileInput,
   UserProfileRecord,
@@ -297,12 +298,7 @@ export async function verifyUserMobileWithFirebase(
     throw new Error("Firebase token does not include a verified mobile number");
   }
 
-  const existing = await db.user.findFirst({
-    where: { phone, NOT: { id: userId } },
-    select: { id: true },
-  });
-  if (existing)
-    throw new Error("This mobile number is already used by another account");
+  await assertMobileNumberAvailable(userId, phone);
 
   await db.user.update({
     where: { id: userId },

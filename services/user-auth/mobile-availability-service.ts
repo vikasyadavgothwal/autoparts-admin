@@ -18,8 +18,11 @@ export async function assertMobileNumberAvailable(
 
   const existing = await db.user.findFirst({
     where: {
-      phone,
       NOT: { id: userId },
+      OR: [
+        { phone },
+        { supplierContactPhone: phone },
+      ],
     },
     select: { id: true },
   })
