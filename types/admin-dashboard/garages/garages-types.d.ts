@@ -39,7 +39,6 @@ export type GarageRecord = {
   city?: string
   state?: string
   country?: string
-  pincode?: string
   rating: string
   reviewsCount?: number
   reviews?: GarageServiceReviewRecord[]

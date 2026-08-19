@@ -43,6 +43,7 @@ type BusinessPlan = {
     integrations: number | null
   }
   marketplace?: { featuredVendor: boolean; featuredVendorCategoryLimit: number | null; allowedCategoryIds: string[]; searchBoostLevel: number }
+  notifications?: { email: boolean; mobile: boolean; whatsapp: boolean }
   enabledFeatures: string[]
   enabledMenus: string[]
   isActive: boolean
@@ -236,8 +237,9 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
       accountAssistance: supportTier !== "Basic",
       onboarding: supportTier === "Premium",
       training: supportTier === "Premium",
-      emailNotifications: true,
-      whatsappNotifications: supportTier !== "Basic",
+      emailNotifications: formData.get("emailNotifications") === "on",
+      mobileNotifications: formData.get("mobileNotifications") === "on",
+      whatsappNotifications: formData.get("whatsappNotifications") === "on",
       customRolesEnabled: securityTier !== "Basic",
       approvalWorkflowEnabled: securityTier === "Premium",
       apiAccessLevel: plan.code === "Enterprise" ? "enterprise" : plan.code === "Pro" ? "standard" : "none",
@@ -410,6 +412,33 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
                 <p className="mt-2 text-xs leading-5 text-[#9CA3AF]">{securityCopy[securityTier]}</p>
               </section>
             </div>
+
+            <section className="mt-4 rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Notifications</p>
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="flex items-start gap-2 text-sm font-medium text-[#D1D5DB]">
+                  <Checkbox name="emailNotifications" defaultChecked={plan.notifications?.email ?? true} />
+                  <span>
+                    Email
+                    <span className="block text-xs font-normal text-[#9CA3AF]">Send plan-allowed operational emails.</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm font-medium text-[#D1D5DB]">
+                  <Checkbox name="mobileNotifications" defaultChecked={plan.notifications?.mobile ?? true} />
+                  <span>
+                    Mobile push
+                    <span className="block text-xs font-normal text-[#9CA3AF]">Use Firebase Cloud Messaging where devices are registered.</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm font-medium text-[#D1D5DB]">
+                  <Checkbox name="whatsappNotifications" defaultChecked={plan.notifications?.whatsapp ?? supportTier !== "Basic"} />
+                  <span>
+                    WhatsApp
+                    <span className="block text-xs font-normal text-[#9CA3AF]">Saved for plan control. Sending is not enabled yet.</span>
+                  </span>
+                </label>
+              </div>
+            </section>
 
             {plan.accountType === "Supplier" ? (
               <section className="mt-4 rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">

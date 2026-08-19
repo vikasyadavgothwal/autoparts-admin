@@ -60,7 +60,6 @@ const mapUser = (user: UserAccount): UserRecord => {
       "Not added",
     city: user.city ?? "Not added",
     state: user.state ?? "Not added",
-    postalCode: user.postalCode ?? "Not added",
     country: user.country ?? "Not added",
     roles,
     role: roles.join(", ") || roleLabels[user.activeRole],

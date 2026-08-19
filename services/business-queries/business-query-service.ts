@@ -175,6 +175,18 @@ export async function deleteBusinessQuery(id: string) {
   return existing
 }
 
+export async function markBusinessQueryReviewed(id: string) {
+  const queryId = text(id)
+  if (!queryId) throw new Error("Query id is required")
+
+  const query = await db.businessQuery.update({
+    where: { id: queryId },
+    data: { status: BusinessQueryStatus.Reviewed },
+  })
+
+  return mapQuery(query)
+}
+
 export async function listBusinessQueries(params: BusinessQueryListParams) {
   const page = normalizePage(params.page)
   const pageSize = normalizePageSize(params.pageSize)

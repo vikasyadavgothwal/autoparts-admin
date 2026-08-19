@@ -15,7 +15,6 @@ type UserProfileRecord = {
   addressLine2: string | null
   city: string | null
   state: string | null
-  postalCode: string | null
   country: string | null
   roles: UserRole[]
   activeRole: UserRole
@@ -41,7 +40,6 @@ export function mapUserProfile(user: UserProfileRecord): UserProfile {
     addressLine2: user.addressLine2,
     city: user.city,
     state: user.state,
-    postalCode: user.postalCode,
     country: user.country,
     roles: user.roles,
     activeRole: user.activeRole,

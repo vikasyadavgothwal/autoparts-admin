@@ -102,7 +102,6 @@ const mapSupplier = async (supplier: SupplierAccount): Promise<SupplierRecord> =
     "Not added",
   city: supplier.city ?? "Not added",
   state: supplier.state ?? "Not added",
-  postalCode: supplier.postalCode ?? "Not added",
   country: supplier.country ?? "Not added",
   products: supplier._count.supplierParts,
   rating: "N/A",

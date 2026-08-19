@@ -777,7 +777,6 @@ export async function createDirectOrders(
             deliveryLandmark: deliveryAddress.landmark,
             deliveryCity: deliveryAddress.city,
             deliveryState: deliveryAddress.state,
-            deliveryPostalCode: deliveryAddress.postalCode,
             deliveryCountry: deliveryAddress.country,
             totalAmount: group.totalAmount,
             status: OrderStatus.pending,

@@ -9,7 +9,7 @@ import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, RfqSource, RfqStatus } from "@/lib/generated/prisma/client"
 import { deleteObjectFromS3, uploadObjectToS3 } from "@/lib/storage/s3"
 import { assertBusinessAction, assertBusinessPlanLimit, getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
-import { createRfq, listFleetRfqs, listSupplierRfqs, listUserRfqs } from "@/services/fleet/fleet-service"
+import { createRfq, listFleetRfqs, listSupplierRfqs, listUserRfqs, sendDueRfqQuoteSummaryEmails } from "@/services/fleet/fleet-service"
 import type { CreateRfqInput, RfqAttachment } from "@/types/rfq/rfq"
 
 export const dynamic = "force-dynamic"
@@ -22,6 +22,7 @@ const allowedAttachmentTypes = new Set([
 ])
 
 export async function GET(request: NextRequest) {
+  void sendDueRfqQuoteSummaryEmails()
   const auth = await getOptionalUserFromRequest(request)
   if (!auth) return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 })
   const page = Number.parseInt(request.nextUrl.searchParams.get("page") ?? "1", 10)
@@ -107,6 +108,7 @@ export async function POST(request: NextRequest) {
     }
 
     const rfq = await createRfq(input, fleetId, attachment)
+    void sendDueRfqQuoteSummaryEmails()
     return NextResponse.json({ ok: true, rfq }, { status: 201 })
   } catch (error) {
     if (uploadedKey) {

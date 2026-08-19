@@ -8,7 +8,6 @@ export type UserProfileInput = {
   addressLine2?: unknown;
   city?: unknown;
   state?: unknown;
-  postalCode?: unknown;
   country?: unknown;
 };
 
@@ -26,7 +25,6 @@ export type UserProfileRecord = {
   addressLine2: string | null;
   city: string | null;
   state: string | null;
-  postalCode: string | null;
   country: string | null;
   createdAt: string;
   updatedAt: string;

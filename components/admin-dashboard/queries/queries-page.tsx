@@ -66,13 +66,6 @@ const PAGE_SIZE_OPTIONS = ["50", "100", "250", "500", "1000"] as const
 const typeLabel = (type: string) =>
   TYPE_OPTIONS.find((item) => item.value === type)?.label ?? type
 
-const statusClass = (status: string) =>
-  status === "Reviewed"
-    ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
-    : status === "Archived"
-      ? "border-zinc-500/30 bg-zinc-500/10 text-zinc-300"
-      : "border-green-500/30 bg-green-500/10 text-green-400"
-
 const dateLabel = (value: string) =>
   new Date(value).toLocaleString("en-AE", {
     day: "2-digit",
@@ -125,6 +118,23 @@ async function fetchQueries(params: {
   }
 
   return payload
+}
+
+async function markQueryReviewed(id: string) {
+  const response = await fetch(`/api/v1/admin/queries/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    cache: "no-store",
+    credentials: "include",
+  })
+  const payload = (await response.json().catch(() => null)) as
+    | { ok?: boolean; query?: BusinessQueryRecord; message?: string }
+    | null
+
+  if (!response.ok || !payload?.ok || !payload.query) {
+    throw new Error(payload?.message || "Unable to update query")
+  }
+
+  return payload.query
 }
 
 export function QueriesPage({
@@ -182,6 +192,26 @@ export function QueriesPage({
   const handlePageSizeChange = (value: string) => {
     setPageSize(value)
     void load(1, { pageSize: value })
+  }
+
+  const handleViewQuery = async (query: BusinessQueryRecord) => {
+    setSelected(query)
+    if (query.status !== "New") return
+
+    try {
+      const reviewedQuery = await markQueryReviewed(query.id)
+      setSelected((current) => current?.id === reviewedQuery.id ? reviewedQuery : current)
+      setQueries((current) =>
+        current.map((item) => item.id === reviewedQuery.id ? reviewedQuery : item),
+      )
+      setSummary((current) => ({
+        ...current,
+        newCount: Math.max(0, current.newCount - 1),
+        reviewedCount: current.reviewedCount + 1,
+      }))
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : "Unable to mark query as reviewed")
+    }
   }
 
   const handleDelete = async () => {
@@ -342,7 +372,7 @@ export function QueriesPage({
 
       <Card className="overflow-hidden border-[#2A2A2A] bg-[#1A1A1A] p-0">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1120px] text-sm">
+          <table className="w-full min-w-[1040px] text-sm">
             <thead className="bg-[#0A0A0A] text-[#9CA3AF]">
               <tr>
                 <th className="p-4 text-left">Query ID</th>
@@ -352,14 +382,22 @@ export function QueriesPage({
                 <th className="p-4 text-left">Contact</th>
                 <th className="p-4 text-left">Source</th>
                 <th className="p-4 text-left">Date</th>
-                <th className="p-4 text-left">Status</th>
                 <th className="p-4 text-left">Action</th>
               </tr>
             </thead>
             <tbody>
               {queries.map((query) => (
                 <tr key={query.id} className="border-t border-[#2A2A2A] text-white hover:bg-[#242424]">
-                  <td className="p-4 font-semibold text-[#DC2626]">{query.publicId}</td>
+                  <td className="p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-[#DC2626]">{query.publicId}</span>
+                      {query.status === "New" ? (
+                        <Badge className="bg-green-500/15 text-green-300 hover:bg-green-500/15">
+                          New
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </td>
                   <td className="p-4">{typeLabel(query.type)}</td>
                   <td className="max-w-[180px] p-4 whitespace-normal break-words [overflow-wrap:anywhere]">{query.name}</td>
                   <td className="max-w-[220px] p-4 whitespace-normal break-words [overflow-wrap:anywhere]">{query.company}</td>
@@ -369,11 +407,6 @@ export function QueriesPage({
                   </td>
                   <td className="max-w-[180px] p-4 whitespace-normal break-words text-[#9CA3AF] [overflow-wrap:anywhere]">{query.source}</td>
                   <td className="p-4 text-[#9CA3AF]">{dateLabel(query.createdAt)}</td>
-                  <td className="p-4">
-                    <Badge variant="outline" className={statusClass(query.status)}>
-                      {query.status}
-                    </Badge>
-                  </td>
                   <td className="p-4">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -390,7 +423,7 @@ export function QueriesPage({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-36">
                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                        <DropdownMenuItem onSelect={() => setSelected(query)}>
+                        <DropdownMenuItem onSelect={() => void handleViewQuery(query)}>
                           <Eye className="h-4 w-4" />
                           View
                         </DropdownMenuItem>

@@ -1,4 +1,5 @@
 import { db } from "@/lib/database/prisma"
+import { sendSmtpMail } from "@/lib/email/smtp"
 import {
   FleetVehicleStatus,
   OrderStatus,
@@ -24,6 +25,13 @@ import type {
 
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
 const maxRfqBidNotesLength = 500
 const maxMoneyCents = 2147483647
 const rfqRankedBidLimit = 6
@@ -218,6 +226,78 @@ async function notifyRfqQuotesReady(input: {
       entityId: input.rfqId,
     },
   ])
+}
+
+export async function sendDueRfqQuoteSummaryEmails() {
+  const now = new Date()
+  const dueRfqs = await db.rfq.findMany({
+    where: {
+      createdAt: { lte: addMinutes(now, -30) },
+      status: RfqStatus.open,
+      order: null,
+      bids: {
+        some: { status: RfqBidStatus.submitted },
+        none: { status: RfqBidStatus.accepted },
+      },
+      OR: [
+        { quoteSummaryEmailSentAt: null },
+        { quoteSummaryEmailSentAt: { lte: addMinutes(now, -30) } },
+      ],
+    },
+    select: {
+      id: true,
+      publicId: true,
+      projectName: true,
+      email: true,
+      quoteSummaryEmailSentAt: true,
+      bids: {
+        where: { status: RfqBidStatus.submitted },
+        select: { id: true },
+      },
+    },
+    take: 25,
+    orderBy: { createdAt: "asc" },
+  })
+
+  let sent = 0
+  let failed = 0
+  for (const rfq of dueRfqs) {
+    const quoteCount = rfq.bids.length
+    if (quoteCount < 1) continue
+
+    const claimed = await db.rfq.updateMany({
+      where: {
+        id: rfq.id,
+        quoteSummaryEmailSentAt: rfq.quoteSummaryEmailSentAt,
+      },
+      data: { quoteSummaryEmailSentAt: now },
+    })
+    if (claimed.count !== 1) continue
+
+    await sendSmtpMail({
+      to: rfq.email,
+      subject: `Supplier quotes received for ${rfq.publicId}`,
+      text: [
+        `You received ${quoteCount} supplier quote${quoteCount === 1 ? "" : "s"} for RFQ ${rfq.publicId}.`,
+        "Please sign in to AutoParts Pro and review the quote details.",
+      ].join("\n"),
+      html: [
+        `<p>You received <strong>${quoteCount}</strong> supplier quote${quoteCount === 1 ? "" : "s"} for RFQ <strong>${escapeHtml(rfq.publicId)}</strong>.</p>`,
+        `<p><strong>RFQ:</strong> ${escapeHtml(rfq.projectName)}</p>`,
+        `<p>Please sign in to AutoParts Pro and review the quote details.</p>`,
+      ].join(""),
+    }).then(() => {
+      sent += 1
+    }).catch(async () => {
+      failed += 1
+      await db.rfq.update({
+        where: { id: rfq.id },
+        data: { quoteSummaryEmailSentAt: rfq.quoteSummaryEmailSentAt },
+      }).catch(() => undefined)
+    })
+  }
+
+  return { checked: dueRfqs.length, sent, failed }
 }
 
 async function notifyRfqBidAccepted(input: {
@@ -1175,6 +1255,7 @@ export async function submitRfqBid(
     source: rfq.source,
     isUpdate: false,
   })
+  await sendDueRfqQuoteSummaryEmails()
 
   return {
     ...bid,
@@ -1281,7 +1362,6 @@ export async function acceptRfqBid(
         deliveryLandmark: deliveryAddress?.landmark,
         deliveryCity: deliveryAddress?.city,
         deliveryState: deliveryAddress?.state,
-        deliveryPostalCode: deliveryAddress?.postalCode,
         deliveryCountry: deliveryAddress?.country,
         totalAmount: bid.totalAmount,
         status: OrderStatus.pending,

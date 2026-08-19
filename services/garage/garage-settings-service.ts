@@ -35,7 +35,6 @@ type VerificationRow = {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const MOBILE_PATTERN = /^\+\d{8,18}$/
-const PINCODE_PATTERN = /^\d{0,12}$/
 const PLACE_PATTERN = /^[A-Za-z][A-Za-z\s'.-]*$/
 const DAYS = [
   "Monday",
@@ -284,7 +283,6 @@ export async function getGarageProfile(garageId: string) {
       addressLine2: true,
       city: true,
       state: true,
-      postalCode: true,
       country: true,
     },
   })
@@ -304,7 +302,6 @@ export async function getGarageProfile(garageId: string) {
       "country",
       "state",
       "city",
-      "pincode",
       "updatedAt"
     )
     VALUES (
@@ -318,7 +315,6 @@ export async function getGarageProfile(garageId: string) {
       ${user?.country ?? null},
       ${user?.state ?? null},
       ${user?.city ?? null},
-      ${user?.postalCode ?? null},
       CURRENT_TIMESTAMP
     )
     ON CONFLICT ("garageId") DO UPDATE SET
@@ -339,7 +335,6 @@ export async function getGarageProfile(garageId: string) {
       "country",
       "state",
       "city",
-      "pincode",
       "jobCompletedNumber",
       "yearsExperience",
       "responseTime",
@@ -366,7 +361,7 @@ export async function getGarageProfile(garageId: string) {
         "id", "garageId", "contactEmail", "contactEmailVerifiedAt", "mobile",
         "mobileVerifiedAt", "workingDays", "workingHours", "workingHoursByDay",
         "garageImageUrl", "garageImageKey", "address", "country", "state",
-        "city", "pincode", "jobCompletedNumber", "yearsExperience",
+        "city", "jobCompletedNumber", "yearsExperience",
         "responseTime", "certifications", "about", "galleryImageUrls",
         "galleryImageKeys", "createdAt", "updatedAt"
     `
@@ -386,7 +381,7 @@ export async function getGarageProfile(garageId: string) {
         "id", "garageId", "contactEmail", "contactEmailVerifiedAt", "mobile",
         "mobileVerifiedAt", "workingDays", "workingHours", "workingHoursByDay",
         "garageImageUrl", "garageImageKey", "address", "country", "state",
-        "city", "pincode", "jobCompletedNumber", "yearsExperience",
+        "city", "jobCompletedNumber", "yearsExperience",
         "responseTime", "certifications", "about", "galleryImageUrls",
         "galleryImageKeys", "createdAt", "updatedAt"
     `
@@ -413,10 +408,6 @@ export async function updateGarageProfile(
   const mobile = nullableText(input.mobile, 40)
   if (mobile && !MOBILE_PATTERN.test(mobile)) {
     throw new Error("Enter a valid mobile number")
-  }
-  const pincode = nullableText(input.pincode, 40)
-  if (pincode && !PINCODE_PATTERN.test(pincode)) {
-    throw new Error("Pincode must contain up to 12 numbers only")
   }
   const country = nullableText(input.country, 80)
   const state = nullableText(input.state, 80)
@@ -447,7 +438,13 @@ export async function updateGarageProfile(
     hoursByDay,
     legacyDays,
   )
-  const certifications = stringList(input.certifications, 30, 160)
+  const certifications = stringList(input.certifications, 30, 80)
+  const invalidCertification = certifications.find(
+    (name) => !/^[A-Za-z0-9][A-Za-z0-9\s&().,+/-]*$/.test(name),
+  )
+  if (invalidCertification) {
+    throw new Error("Certification can only include letters, numbers, spaces, and common punctuation")
+  }
   const galleryImageUrls = stringList(input.galleryImageUrls, 20, 2048)
   const galleryImageKeys = stringList(input.galleryImageKeys, 20, 2048)
   const emailVerifiedAt =
@@ -488,7 +485,6 @@ export async function updateGarageProfile(
       "country" = ${country},
       "state" = ${state},
       "city" = ${city},
-      "pincode" = ${pincode},
       "jobCompletedNumber" = ${integer(input.jobCompletedNumber ?? 0, "Job completed number", 0, 999999)},
       "yearsExperience" = ${integer(input.yearsExperience ?? 0, "Years of experience", 0, 150)},
       "responseTime" = ${nullableText(input.responseTime, 80)},
@@ -514,7 +510,6 @@ export async function updateGarageProfile(
       "country",
       "state",
       "city",
-      "pincode",
       "jobCompletedNumber",
       "yearsExperience",
       "responseTime",

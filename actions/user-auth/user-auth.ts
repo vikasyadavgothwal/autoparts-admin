@@ -132,7 +132,6 @@ export async function createUserViaApi(
   const addressLine2 = readOptionalString(body.addressLine2)
   const city = readOptionalString(body.city)
   const state = readOptionalString(body.state)
-  const postalCode = readOptionalString(body.postalCode)
   const country = readOptionalString(body.country)
   const supplierContactPerson = readOptionalString(body.supplierContactPerson)
   const supplierDesignation = readOptionalString(body.supplierDesignation)
@@ -160,7 +159,6 @@ export async function createUserViaApi(
         companyName,
         city,
         state,
-        postalCode,
         country,
         supplierContactPerson,
         supplierDesignation,
@@ -225,7 +223,6 @@ export async function createUserViaApi(
     addressLine2,
     city,
     state,
-    postalCode,
     country,
     supplierContactPerson,
     supplierDesignation,

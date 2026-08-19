@@ -7,6 +7,7 @@ import { db } from "@/lib/database/prisma"
 import { logError } from "@/lib/logger"
 import { createSignedS3ObjectUrl, deleteObjectFromS3, getS3ObjectKeyFromUrl } from "@/lib/storage/s3"
 import { createNotificationsSafely } from "@/services/notifications/notification-service"
+import { getAdminSupportNotificationEmails } from "@/services/platform-settings/platform-settings-service"
 import {
   calculateFeaturedVendorCategoryQuote,
   featuredCategorySource,
@@ -152,6 +153,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     activityReports: true,
     onboarding: true,
     accountAssistance: true,
+    mobileNotifications: true,
     whatsappNotifications: true,
     approvalWorkflowEnabled: true,
     customRolesEnabled: true,
@@ -186,6 +188,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     training: true,
     accountAssistance: true,
     prioritySupport: true,
+    mobileNotifications: true,
     whatsappNotifications: true,
     approvalWorkflowEnabled: true,
     customRolesEnabled: true,
@@ -239,6 +242,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     activityReports: true,
     onboarding: true,
     accountAssistance: true,
+    mobileNotifications: true,
     whatsappNotifications: true,
     approvalWorkflowEnabled: true,
     customRolesEnabled: true,
@@ -272,6 +276,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     training: true,
     accountAssistance: true,
     prioritySupport: true,
+    mobileNotifications: true,
     whatsappNotifications: true,
     approvalWorkflowEnabled: true,
     customRolesEnabled: true,
@@ -331,6 +336,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     activityReports: true,
     onboarding: true,
     accountAssistance: true,
+    mobileNotifications: true,
     whatsappNotifications: true,
     featuredVendor: true,
     featuredVendorCategoryLimit: 4,
@@ -371,6 +377,7 @@ const defaultPlanSeeds: Array<Prisma.BusinessPlanUncheckedCreateInput> = [
     training: true,
     accountAssistance: true,
     prioritySupport: true,
+    mobileNotifications: true,
     whatsappNotifications: true,
     featuredVendor: true,
     featuredVendorCategoryLimit: null,
@@ -820,6 +827,7 @@ const mapPlan = (plan: BusinessPlanWithCount, allowedCategoryIds: string[] = [])
   },
   notifications: {
     email: plan.emailNotifications,
+    mobile: plan.mobileNotifications,
     whatsapp: plan.whatsappNotifications,
   },
   reports: {
@@ -1221,6 +1229,7 @@ export async function updateBusinessPlan(
     "accountAssistance",
     "prioritySupport",
     "emailNotifications",
+    "mobileNotifications",
     "whatsappNotifications",
     "featuredVendor",
     "approvalWorkflowEnabled",
@@ -3588,6 +3597,35 @@ export async function createBusinessSupportTicket(input: {
         `</div></div></div>`,
       ].join(""),
     }).catch((error) => logError("Unable to email support ticket creation", error))
+  }
+  const extraAdminEmails = await getAdminSupportNotificationEmails()
+  if (extraAdminEmails.length) {
+    const ticketCode = supportTicketCode(row.id)
+    await Promise.all(
+      extraAdminEmails.map((to) =>
+        sendSmtpMail({
+          to,
+          subject: `New AutoParts Pro support ticket - ${ticketCode}`,
+          text: [
+            "A new support ticket was created.",
+            "",
+            `Ticket ID: ${ticketCode}`,
+            `Issue: ${row.subject}`,
+            `Business: ${row.businessAccount.name}`,
+            `Priority: ${row.priority}`,
+            `Status: ${supportTicketStatusLabel(row.status)}`,
+          ].join("\n"),
+          html: [
+            `<p>A new support ticket was created.</p>`,
+            `<p><strong>Ticket ID:</strong> ${escapeHtml(ticketCode)}</p>`,
+            `<p><strong>Issue:</strong> ${escapeHtml(row.subject)}</p>`,
+            `<p><strong>Business:</strong> ${escapeHtml(row.businessAccount.name)}</p>`,
+            `<p><strong>Priority:</strong> ${escapeHtml(row.priority)}</p>`,
+            `<p><strong>Status:</strong> ${escapeHtml(supportTicketStatusLabel(row.status))}</p>`,
+          ].join(""),
+        }).catch((error) => logError("Unable to email admin support ticket notification", error)),
+      ),
+    )
   }
   return mapSupportTicket(row)
 }

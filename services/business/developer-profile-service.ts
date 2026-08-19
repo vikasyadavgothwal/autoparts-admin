@@ -15,17 +15,17 @@ import {
 const profileFields = {
   Garage: [
     "garageName", "workingDays", "workingHours", "workingHoursByDay",
-    "address", "country", "state", "city", "pincode",
+    "address", "country", "state", "city",
     "jobCompletedNumber", "yearsExperience", "responseTime",
     "certifications", "about",
   ],
   Fleet: [
     "companyName", "firstName", "lastName", "addressLine1", "addressLine2",
-    "city", "state", "postalCode", "country",
+    "city", "state", "country",
   ],
   Supplier: [
     "companyName", "firstName", "lastName", "contactPerson", "designation",
-    "addressLine1", "addressLine2", "city", "state", "postalCode", "country",
+    "addressLine1", "addressLine2", "city", "state", "country",
   ],
 } satisfies Record<BusinessAccountType, string[]>
 

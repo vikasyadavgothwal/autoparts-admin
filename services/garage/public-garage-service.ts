@@ -24,7 +24,6 @@ type PublicGarageRow = {
   addressLine1: string | null
   city: string | null
   state: string | null
-  postalCode: string | null
   country: string | null
   contactEmail: string | null
   mobile: string | null
@@ -37,7 +36,6 @@ type PublicGarageRow = {
   profileCountry: string | null
   profileState: string | null
   profileCity: string | null
-  pincode: string | null
   jobCompletedNumber: number | null
   yearsExperience: number | null
   responseTime: string | null
@@ -48,6 +46,7 @@ type PublicGarageRow = {
   services: PublicGarageService[] | null
   ratingAverage: number | string | null
   reviewCount: bigint | number | null
+  planPriority: number | null
   reviews: PublicGarageReview[] | null
 }
 
@@ -127,7 +126,6 @@ const mapSummary = async (
     country: garage.profileCountry ?? garage.country ?? null,
     state: garage.profileState ?? garage.state ?? null,
     city: garage.profileCity ?? garage.city ?? null,
-    pincode: garage.pincode ?? garage.postalCode ?? null,
     image: await publicImageUrl(garage.garageImageKey, garage.garageImageUrl),
     imageKey: garage.garageImageKey ?? null,
     jobCompletedNumber: garage.jobCompletedNumber ?? 0,
@@ -139,6 +137,7 @@ const mapSummary = async (
     currency: firstPricedService?.currency ?? DEFAULT_CURRENCY,
     ratingAverage: Number(garage.ratingAverage ?? 0),
     reviewCount: Number(garage.reviewCount ?? 0),
+    planPriority: garage.planPriority ?? 0,
     availableToday,
     availableThisWeek,
   }
@@ -181,12 +180,10 @@ const textSearchCondition = (value: string) => Prisma.sql`
     OR u."city" ILIKE ${`%${value}%`}
     OR u."state" ILIKE ${`%${value}%`}
     OR u."country" ILIKE ${`%${value}%`}
-    OR u."postalCode" ILIKE ${`%${value}%`}
     OR gp."address" ILIKE ${`%${value}%`}
     OR gp."city" ILIKE ${`%${value}%`}
     OR gp."state" ILIKE ${`%${value}%`}
     OR gp."country" ILIKE ${`%${value}%`}
-    OR gp."pincode" ILIKE ${`%${value}%`}
     OR EXISTS (
       SELECT 1 FROM "garage_services" gs
       WHERE gs."garageId" = u."id"
@@ -213,12 +210,10 @@ const locationSearchCondition = (value: string) => Prisma.sql`
     u."city" ILIKE ${`%${value}%`}
     OR u."state" ILIKE ${`%${value}%`}
     OR u."country" ILIKE ${`%${value}%`}
-    OR u."postalCode" ILIKE ${`%${value}%`}
     OR gp."address" ILIKE ${`%${value}%`}
     OR gp."city" ILIKE ${`%${value}%`}
     OR gp."state" ILIKE ${`%${value}%`}
     OR gp."country" ILIKE ${`%${value}%`}
-    OR gp."pincode" ILIKE ${`%${value}%`}
   )
 `
 
@@ -233,7 +228,6 @@ const garageSelect = Prisma.sql`
     u."addressLine1",
     u."city",
     u."state",
-    u."postalCode",
     u."country",
     gp."contactEmail",
     gp."mobile",
@@ -246,7 +240,6 @@ const garageSelect = Prisma.sql`
     gp."country" AS "profileCountry",
     gp."state" AS "profileState",
     gp."city" AS "profileCity",
-    gp."pincode",
     gp."jobCompletedNumber",
     gp."yearsExperience",
     gp."responseTime",
@@ -289,6 +282,22 @@ const garageSelect = Prisma.sql`
       ),
       0
     ) AS "reviewCount",
+    COALESCE(
+      (
+        SELECT CASE bp."code"
+          WHEN 'Enterprise'::"BusinessPlanCode" THEN 3
+          WHEN 'Pro'::"BusinessPlanCode" THEN 2
+          ELSE 1
+        END
+        FROM "business_accounts" ba
+        JOIN "business_plans" bp ON bp."id" = ba."planId"
+        WHERE ba."ownerUserId" = u."id"
+          AND ba."type" = 'Garage'::"BusinessAccountType"
+          AND ba."isActive" = true
+        LIMIT 1
+      ),
+      0
+    ) AS "planPriority",
     COALESCE(
       (
         SELECT jsonb_agg(review_row ORDER BY (review_row->>'rating')::int DESC, review_row->>'date' DESC)
@@ -382,6 +391,24 @@ export async function listPublicGarages(params: {
           ) * 2
         )
         + LEAST(10, COALESCE(gp."yearsExperience", 0))
+        + (
+          COALESCE(
+            (
+              SELECT CASE bp."code"
+                WHEN 'Enterprise'::"BusinessPlanCode" THEN 3
+                WHEN 'Pro'::"BusinessPlanCode" THEN 2
+                ELSE 1
+              END
+              FROM "business_accounts" ba
+              JOIN "business_plans" bp ON bp."id" = ba."planId"
+              WHERE ba."ownerUserId" = u."id"
+                AND ba."type" = 'Garage'::"BusinessAccountType"
+                AND ba."isActive" = true
+              LIMIT 1
+            ),
+            0
+          ) * 8
+        )
         + CASE
           WHEN gp."workingDays" IS NOT NULL
             AND array_length(gp."workingDays", 1) > 0

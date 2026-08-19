@@ -3,6 +3,7 @@ import {
   createBusinessQuery,
   deleteBusinessQuery,
   listBusinessQueries,
+  markBusinessQueryReviewed,
 } from "@/services/business-queries/business-query-service"
 import type {
   BusinessQueryInput,
@@ -23,4 +24,8 @@ export function listAdminBusinessQueries(params: BusinessQueryListParams) {
 
 export function deleteAdminBusinessQuery(id: string) {
   return deleteBusinessQuery(id)
+}
+
+export function markAdminBusinessQueryReviewed(id: string) {
+  return markBusinessQueryReviewed(id)
 }

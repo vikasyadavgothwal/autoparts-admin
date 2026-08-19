@@ -157,7 +157,6 @@ const detailSections = (supplier: SupplierRecord): DetailSection[] => [
       ["Address", supplier.address],
       ["City", supplier.city],
       ["State", supplier.state],
-      ["Postal code", supplier.postalCode],
       ["Country", supplier.country],
     ],
   },

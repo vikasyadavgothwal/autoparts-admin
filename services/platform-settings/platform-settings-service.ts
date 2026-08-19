@@ -1,6 +1,7 @@
 import { db } from "@/lib/database/prisma";
 
 const GARAGE_ADVANCE_KEY = "garage_booking_advance_percentage";
+const ADMIN_SUPPORT_EMAILS_KEY = "admin_support_notification_emails";
 const DEFAULT_GARAGE_ADVANCE_SETTING: GarageBookingAdvanceSetting = {
   mode: "percentage",
   value: 10,
@@ -82,4 +83,47 @@ export async function setGarageBookingAdvanceSetting(input: {
     update: { value: JSON.stringify(setting) },
   });
   return setting;
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export async function getAdminSupportNotificationEmails() {
+  const setting = await db.platformSetting.findUnique({
+    where: { key: ADMIN_SUPPORT_EMAILS_KEY },
+  });
+  if (!setting?.value) return [];
+  try {
+    const parsed = JSON.parse(setting.value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function setAdminSupportNotificationEmails(input: unknown) {
+  const values = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? input.split(/[,\n]/)
+      : [];
+  const emails = Array.from(
+    new Set(
+      values
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ).slice(0, 5);
+
+  const invalidEmail = emails.find((email) => !EMAIL_PATTERN.test(email));
+  if (invalidEmail) throw new Error(`Invalid support email: ${invalidEmail}`);
+
+  await db.platformSetting.upsert({
+    where: { key: ADMIN_SUPPORT_EMAILS_KEY },
+    create: { key: ADMIN_SUPPORT_EMAILS_KEY, value: JSON.stringify(emails) },
+    update: { value: JSON.stringify(emails) },
+  });
+  return emails;
 }

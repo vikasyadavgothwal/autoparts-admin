@@ -15,7 +15,6 @@ export type UserProfile = {
   addressLine2: string | null
   city: string | null
   state: string | null
-  postalCode: string | null
   country: string | null
   roles: UserRole[]
   activeRole: UserRole
@@ -38,7 +37,6 @@ export type CreateUserInput = {
   addressLine2?: string | null
   city?: string | null
   state?: string | null
-  postalCode?: string | null
   country?: string | null
   supplierContactPerson?: string | null
   supplierDesignation?: string | null

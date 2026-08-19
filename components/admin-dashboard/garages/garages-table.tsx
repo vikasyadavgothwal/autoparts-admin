@@ -42,7 +42,6 @@ const GARAGE_STATUS_TONES: Record<string, StatusTone> = {
 }
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PHONE_PATTERN = /^\+?\d{8,18}$/
-const POSTAL_CODE_PATTERN = /^[A-Za-z0-9 -]{3,20}$/
 const NAME_PATTERN = /^[A-Za-z0-9\s.'&()-]+$/
 const PLACE_PATTERN = /^[A-Za-z\s.'-]+$/
 const RequiredMark = () => <span aria-hidden="true" className="text-dashboard-danger"> *</span>
@@ -71,7 +70,6 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
       city: editingGarage?.city ?? "",
       state: editingGarage?.state ?? "",
       country: editingGarage?.country ?? "",
-      pincode: editingGarage?.pincode ?? "",
       status: editingGarage?.status ?? "Active",
     }),
     [editingGarage],
@@ -90,9 +88,8 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
     const city = textField(formData, "city")
     const state = textField(formData, "state")
     const country = textField(formData, "country")
-    const pincode = textField(formData, "pincode")
     const status = textField(formData, "status")
-    const body = { name, owner, email, phone, address, city, state, country, pincode, status }
+    const body = { name, owner, email, phone, address, city, state, country, status }
     setError(null)
     if (!name) return toast.error("Garage name is required.")
     if (name.length > 120 || !NAME_PATTERN.test(name)) return toast.error("Garage name contains invalid characters or is too long.")
@@ -103,7 +100,6 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
     if (city && (city.length > 80 || !PLACE_PATTERN.test(city))) return toast.error("City contains invalid characters or is too long.")
     if (state && (state.length > 80 || !PLACE_PATTERN.test(state))) return toast.error("State contains invalid characters or is too long.")
     if (country && (country.length > 80 || !PLACE_PATTERN.test(country))) return toast.error("Country contains invalid characters or is too long.")
-    if (pincode && !POSTAL_CODE_PATTERN.test(pincode)) return toast.error("Please enter a valid pincode.")
 
     startTransition(async () => {
       const response = await fetch(`/api/v1/admin/garages/${editingGarage.internalId}`, {
@@ -561,10 +557,6 @@ export function GaragesTable({ rows, columns }: GaragesTableProps) {
               <label className="grid gap-1 text-sm font-medium">
                 Country
                 <Input name="country" defaultValue={editDefaults.country} maxLength={80} />
-              </label>
-              <label className="grid gap-1 text-sm font-medium">
-                Pincode
-                <Input name="pincode" defaultValue={editDefaults.pincode} maxLength={20} />
               </label>
               <label className="grid gap-1 text-sm font-medium">
                 Status<RequiredMark />

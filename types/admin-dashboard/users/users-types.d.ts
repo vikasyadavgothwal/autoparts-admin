@@ -35,7 +35,6 @@ export type UserRecord = {
   address: string
   city: string
   state: string
-  postalCode: string
   country: string
   roles: UserRoleLabel[]
   role: string

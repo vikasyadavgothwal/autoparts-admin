@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ShieldCheck, UserRound, KeyRound, Settings2 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -18,6 +18,7 @@ type AdminProfile = {
 const PASSWORD_MIN_LENGTH = 8
 const PASSWORD_MAX_LENGTH = 128
 const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const RequiredMark = () => <span aria-hidden="true" className="text-[#DC2626]"> *</span>
 
@@ -26,7 +27,74 @@ export function AdminSettingsPage({ admin }: { admin: AdminProfile }) {
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [savingPassword, setSavingPassword] = useState(false)
+  const [supportEmails, setSupportEmails] = useState("")
+  const [loadingSupportEmails, setLoadingSupportEmails] = useState(true)
+  const [savingSupportEmails, setSavingSupportEmails] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    void fetch("/api/v1/admin/platform-settings", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = (await response.json()) as {
+          ok?: boolean
+          adminSupportNotificationEmails?: string[]
+          message?: string
+        }
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.message ?? "Unable to load support emails")
+        }
+        setSupportEmails((payload.adminSupportNotificationEmails ?? []).join("\n"))
+      })
+      .catch((error) =>
+        toast.error(error instanceof Error ? error.message : "Unable to load support emails"),
+      )
+      .finally(() => setLoadingSupportEmails(false))
+  }, [])
+
+  async function saveSupportEmails() {
+    const emails = Array.from(
+      new Set(
+        supportEmails
+          .split(/[,\n]/)
+          .map((email) => email.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    )
+
+    if (emails.length > 5) {
+      toast.error("Add up to 5 support notification emails.")
+      return
+    }
+
+    const invalidEmail = emails.find((email) => !EMAIL_PATTERN.test(email))
+    if (invalidEmail) {
+      toast.error(`Invalid email: ${invalidEmail}`)
+      return
+    }
+
+    setSavingSupportEmails(true)
+    try {
+      const response = await fetch("/api/v1/admin/platform-settings", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ adminSupportNotificationEmails: emails }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean
+        adminSupportNotificationEmails?: string[]
+        message?: string
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message ?? "Unable to save support emails")
+      }
+      setSupportEmails((payload.adminSupportNotificationEmails ?? emails).join("\n"))
+      toast.success("Support notification emails saved.")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save support emails")
+    } finally {
+      setSavingSupportEmails(false)
+    }
+  }
 
   async function changePassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -140,6 +208,36 @@ export function AdminSettingsPage({ admin }: { admin: AdminProfile }) {
                 <p className="font-medium text-white">Public content</p>
                 <p className="mt-1">Homepage, business, supplier, RFQ, services, and legal pages are managed from Pages.</p>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-lg border border-[#2A2A2A] bg-[#1A1A1A] shadow-none">
+            <CardHeader>
+              <CardTitle className="text-white">Support Notifications</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="support-emails">Extra admin emails for tickets and complaints</Label>
+                <textarea
+                  id="support-emails"
+                  value={supportEmails}
+                  disabled={loadingSupportEmails || savingSupportEmails}
+                  maxLength={1000}
+                  rows={4}
+                  placeholder={"support@example.com\nmanager@example.com"}
+                  onChange={(event) => setSupportEmails(event.target.value.slice(0, 1000))}
+                  className="min-h-24 w-full rounded-md border border-[#2A2A2A] bg-[#0A0A0A] px-3 py-2 text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626]"
+                />
+              </div>
+              <p className="text-xs text-[#9CA3AF]">Add up to 5 email addresses. Use one email per line or comma separated.</p>
+              <Button
+                type="button"
+                disabled={loadingSupportEmails || savingSupportEmails}
+                onClick={() => void saveSupportEmails()}
+                className="bg-[#DC2626] text-white hover:bg-[#B91C1C]"
+              >
+                {savingSupportEmails ? "Saving..." : "Save support emails"}
+              </Button>
             </CardContent>
           </Card>
         </div>

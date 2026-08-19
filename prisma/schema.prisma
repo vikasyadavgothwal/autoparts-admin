@@ -296,7 +296,6 @@ model User {
   addressLine2                    String?
   city                            String?
   state                           String?
-  postalCode                      String?
   country                         String?
   roles                           UserRole[]                  @default([User])
   activeRole                      UserRole                    @default(User)
@@ -367,7 +366,6 @@ model UserAddress {
   landmark      String?
   city          String
   state         String
-  postalCode    String
   country       String
   isDefault     Boolean  @default(false)
   createdAt     DateTime @default(now())
@@ -457,6 +455,7 @@ model Rfq {
   rankingWindowMinutes    Int?
   rankingWindowStartedAt  DateTime?
   rankingLastCalculatedAt DateTime?
+  quoteSummaryEmailSentAt DateTime?
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
@@ -539,7 +538,6 @@ model Order {
   deliveryLandmark      String?
   deliveryCity          String?
   deliveryState         String?
-  deliveryPostalCode    String?
   deliveryCountry       String?
   totalAmount           Int
   status                OrderStatus   @default(pending)
@@ -673,6 +671,7 @@ model GarageBooking {
   advancePaymentStatus String?
   advancePaidAt        DateTime?
   status               GarageBookingStatus @default(confirmed)
+  cancellationReason   String?
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
   linkedOrderId        String?
@@ -746,6 +745,7 @@ model BusinessPlan {
   accountAssistance       Boolean             @default(false)
   prioritySupport         Boolean             @default(false)
   emailNotifications      Boolean             @default(true)
+  mobileNotifications     Boolean             @default(true)
   whatsappNotifications   Boolean             @default(false)
   enabledFeatures         String[]            @default([])
   enabledMenus            String[]            @default([])
@@ -1173,7 +1173,6 @@ model GarageProfile {
   country                String?
   state                  String?
   city                   String?
-  pincode                String?
   jobCompletedNumber     Int       @default(0)
   yearsExperience        Int       @default(0)
   responseTime           String?

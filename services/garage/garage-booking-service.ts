@@ -41,6 +41,7 @@ type GarageBookingRow = {
   vehicleModel: string | null
   vehicleVin: string | null
   notes: string | null
+  cancellationReason: string | null
   bookingDate: Date | string | null
   bookingTime: string | null
   durationMinutes: number
@@ -79,8 +80,19 @@ type BookingCustomer = {
   phone: string | null
 }
 
+const GARAGE_NOT_ACCEPTING_BOOKINGS_MESSAGE =
+  "This garage is not accepting new bookings right now."
+
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
 
 const requiredText = (value: unknown, label: string, maxLength = 160) => {
   const normalized = text(value)
@@ -198,6 +210,54 @@ async function assertGarageSlotAvailable(
   if (overlaps) throw new Error("This appointment slot is no longer available")
 }
 
+const monthBoundsFor = (date: string) => {
+  const monthDate = new Date(`${date}T00:00:00.000Z`)
+  const start = new Date(Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth(), 1))
+  const end = new Date(Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth() + 1, 1))
+  return { start, end }
+}
+
+async function garageMonthlyBookingLimitState(
+  client: Prisma.TransactionClient | typeof db,
+  garageId: string,
+  date: string,
+) {
+  const [plan] = await client.$queryRaw<Array<{ appointmentLimit: number | null }>>`
+    SELECT bp."appointmentLimit"
+    FROM "business_accounts" ba
+    JOIN "business_plans" bp ON bp."id" = ba."planId"
+    WHERE ba."ownerUserId" = ${garageId}
+      AND ba."type" = 'Garage'::"BusinessAccountType"
+      AND ba."isActive" = true
+    LIMIT 1
+  `
+  const limit = plan?.appointmentLimit ?? null
+  if (limit === null) return { limit, used: 0, reached: false }
+
+  const { start, end } = monthBoundsFor(date)
+  const [usage] = await client.$queryRaw<Array<{ count: bigint | number }>>`
+    SELECT COUNT(*) AS "count"
+    FROM "garage_bookings"
+    WHERE "garageId" = ${garageId}
+      AND "bookingDate" >= ${start}::date
+      AND "bookingDate" < ${end}::date
+      AND "status" <> 'cancelled'::"GarageBookingStatus"
+  `
+  const used = Number(usage?.count ?? 0)
+  return { limit, used, reached: used >= limit }
+}
+
+async function assertGarageMonthlyBookingLimitAvailable(
+  tx: Prisma.TransactionClient,
+  garageId: string,
+  date: string,
+) {
+  const { start } = monthBoundsFor(date)
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${garageId}:${start.toISOString().slice(0, 7)}:monthly-bookings`}))`
+  const state = await garageMonthlyBookingLimitState(tx, garageId, date)
+  if (state.reached) throw new Error(GARAGE_NOT_ACCEPTING_BOOKINGS_MESSAGE)
+}
+
 export async function getPublicGarageBookingAvailability(input: {
   garageId: string
   serviceId: string
@@ -215,6 +275,7 @@ export async function getPublicGarageBookingAvailability(input: {
     where: { garageId, bookingDate: new Date(`${date}T00:00:00.000Z`), status: { not: "cancelled" } },
     select: { bookingTime: true, durationMinutes: true },
   })
+  const monthlyLimit = await garageMonthlyBookingLimitState(db, garageId, date)
   const unavailableTimes: string[] = []
   for (let start = 9 * 60; start <= 17 * 60 + 30; start += 15) {
     const end = start + 15
@@ -224,8 +285,12 @@ export async function getPublicGarageBookingAvailability(input: {
     })) unavailableTimes.push(minutesToTime(start))
   }
   return {
-    unavailableTimes,
+    unavailableTimes: monthlyLimit.reached ? [] : unavailableTimes,
     slotIntervalMinutes: 15,
+    bookingUnavailable: monthlyLimit.reached,
+    bookingUnavailableMessage: monthlyLimit.reached
+      ? GARAGE_NOT_ACCEPTING_BOOKINGS_MESSAGE
+      : null,
     advance: await getGarageBookingAdvanceSetting(),
   }
 }
@@ -283,6 +348,7 @@ const bookingSelect = Prisma.sql`
     "vehicleModel",
     "vehicleVin",
     "notes",
+    "cancellationReason",
     "bookingDate",
     "bookingTime",
     "durationMinutes",
@@ -365,6 +431,29 @@ async function notifyGarageBookingStatusChanged(booking: GarageBookingRecord) {
   )
 
   await createNotificationsSafely(notifications)
+
+  if (booking.customerEmail) {
+    await sendSmtpMail({
+      to: booking.customerEmail,
+      subject: `Garage booking ${booking.status}`,
+      text: [
+        `Your booking ${booking.publicId} is now ${booking.status}.`,
+        `Service: ${booking.serviceName}`,
+        booking.cancellationReason
+          ? `Cancellation reason: ${booking.cancellationReason}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      html: [
+        `<p>Your booking <strong>${escapeHtml(booking.publicId)}</strong> is now <strong>${escapeHtml(booking.status)}</strong>.</p>`,
+        `<p><strong>Service:</strong> ${escapeHtml(booking.serviceName)}</p>`,
+        booking.cancellationReason
+          ? `<p><strong>Cancellation reason:</strong> ${escapeHtml(booking.cancellationReason)}</p>`
+          : "",
+      ].join(""),
+    }).catch(() => undefined)
+  }
 }
 
 export async function createPublicGarageBooking(
@@ -430,6 +519,7 @@ export async function createPublicGarageBooking(
 
   const [booking] = await db.$transaction(async (tx) => {
     await assertGarageSlotAvailable(tx, garageId, date, time)
+    await assertGarageMonthlyBookingLimitAvailable(tx, garageId, date)
     const rows = await tx.$queryRaw<GarageBookingRow[]>`
       INSERT INTO "garage_bookings" (
         "id",
@@ -445,6 +535,7 @@ export async function createPublicGarageBooking(
         "vehicleModel",
         "vehicleVin",
         "notes",
+        "cancellationReason",
         "bookingDate",
         "bookingTime",
         "durationMinutes",
@@ -498,6 +589,7 @@ export async function createPublicGarageBooking(
         "vehicleModel",
         "vehicleVin",
         "notes",
+        "cancellationReason",
         "bookingDate",
         "bookingTime",
         "durationMinutes",
@@ -579,6 +671,7 @@ export async function createGarageOfflineBooking(
         "vehicleModel",
         "vehicleVin",
         "notes",
+        "cancellationReason",
         "bookingDate",
         "bookingTime",
         "durationMinutes",
@@ -624,6 +717,7 @@ export async function createGarageOfflineBooking(
         "vehicleModel",
         "vehicleVin",
         "notes",
+        "cancellationReason",
         "bookingDate",
         "bookingTime",
         "durationMinutes",
@@ -736,6 +830,7 @@ export async function scheduleUserGarageBookingSlot(
         "vehicleModel",
         "vehicleVin",
         "notes",
+        "cancellationReason",
         "bookingDate",
         "bookingTime",
         "durationMinutes",
@@ -791,9 +886,13 @@ export async function updateGarageBookingStatus(
   garageId: string,
   bookingId: string,
   status: unknown,
-  options: { completionOtp?: unknown } = {},
+  options: { completionOtp?: unknown; cancellationReason?: unknown } = {},
 ) {
   const nextStatus = bookingStatus(status)
+  const cancellationReason =
+    nextStatus === "cancelled"
+      ? requiredText(options.cancellationReason, "Cancellation reason", 500)
+      : null
 
   if (nextStatus === "completed") {
     const [booking] = await db.$queryRaw<Array<{
@@ -820,6 +919,7 @@ export async function updateGarageBookingStatus(
   const [booking] = await db.$queryRaw<GarageBookingRow[]>`
     UPDATE "garage_bookings"
     SET "status" = ${nextStatus}::"GarageBookingStatus",
+        "cancellationReason" = ${cancellationReason},
         "updatedAt" = CURRENT_TIMESTAMP
     WHERE "garageId" = ${garageId}
       AND ("id" = ${bookingId} OR "publicId" = ${bookingId})
@@ -838,6 +938,7 @@ export async function updateGarageBookingStatus(
       "vehicleModel",
       "vehicleVin",
       "notes",
+      "cancellationReason",
       "bookingDate",
       "bookingTime",
       "durationMinutes",
@@ -988,6 +1089,7 @@ export async function listUserGarageBookings(customerId: string) {
       gb."vehicleModel",
       gb."vehicleVin",
       gb."notes",
+      gb."cancellationReason",
       gb."bookingDate",
       gb."bookingTime",
       gb."durationMinutes",

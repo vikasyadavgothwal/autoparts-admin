@@ -4,7 +4,6 @@ import type {
   UserAddressRecord,
 } from "@/types/user-addresses/user-addresses";
 
-const POSTAL_CODE_PATTERN = /^[A-Za-z0-9 -]{3,20}$/;
 const PHONE_PATTERN = /^\+?[0-9][0-9\s()-]{6,24}$/;
 
 const compactText = (value: unknown) =>
@@ -30,13 +29,9 @@ const optionalText = (value: unknown, maxLength: number) => {
 
 const normalizeInput = (input: UserAddressInput) => {
   const phone = requiredText(input.phone, "Phone", 32);
-  const postalCode = requiredText(input.postalCode, "Postal code", 20);
 
   if (!PHONE_PATTERN.test(phone)) {
     throw new Error("Enter a valid phone number");
-  }
-  if (!POSTAL_CODE_PATTERN.test(postalCode)) {
-    throw new Error("Enter a valid postal code");
   }
 
   return {
@@ -48,7 +43,6 @@ const normalizeInput = (input: UserAddressInput) => {
     landmark: optionalText(input.landmark, 160),
     city: requiredText(input.city, "City", 120),
     state: requiredText(input.state, "State", 120),
-    postalCode,
     country: requiredText(input.country, "Country", 120),
     isDefault: Boolean(input.isDefault),
   };
@@ -64,7 +58,6 @@ const mapAddress = (address: {
   landmark: string | null;
   city: string;
   state: string;
-  postalCode: string;
   country: string;
   isDefault: boolean;
   createdAt: Date;
@@ -93,7 +86,6 @@ export async function listUserAddresses(userId: string) {
         addressLine2: true,
         city: true,
         state: true,
-        postalCode: true,
         country: true,
       },
     });
@@ -103,7 +95,6 @@ export async function listUserAddresses(userId: string) {
       user.addressLine1 &&
       user.city &&
       user.state &&
-      user.postalCode &&
       user.country
     ) {
       const recipientName =
@@ -120,7 +111,6 @@ export async function listUserAddresses(userId: string) {
           addressLine2: user.addressLine2,
           city: user.city,
           state: user.state,
-          postalCode: user.postalCode,
           country: user.country,
           isDefault: true,
         },

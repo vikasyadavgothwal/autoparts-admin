@@ -51,7 +51,6 @@ export type SupplierRecord = {
   address: string
   city: string
   state: string
-  postalCode: string
   country: string
   products: number
   rating: string

@@ -11,7 +11,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   const auth = await requireGarageFromRequest(request)
   if (!auth.ok) return auth.response
 
-  const parsed = await readJsonBody<{ status?: unknown; completionOtp?: unknown }>(request)
+  const parsed = await readJsonBody<{
+    status?: unknown;
+    completionOtp?: unknown;
+    cancellationReason?: unknown;
+  }>(request)
   if (!parsed.ok) {
     return NextResponse.json(
       { ok: false, message: parsed.message },
@@ -24,7 +28,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       auth.user.id,
       (await context.params).id,
       parsed.body.status,
-      { completionOtp: parsed.body.completionOtp },
+      {
+        completionOtp: parsed.body.completionOtp,
+        cancellationReason: parsed.body.cancellationReason,
+      },
     )
     return NextResponse.json({ ok: true, booking })
   } catch (error) {

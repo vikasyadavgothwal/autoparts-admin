@@ -1,0 +1,2 @@
+ALTER TABLE "rfqs"
+  ADD COLUMN IF NOT EXISTS "quoteSummaryEmailSentAt" TIMESTAMP(3);

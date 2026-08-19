@@ -44,7 +44,6 @@ const detailRows = (user: UserRecord) => [
   ["Address", user.address],
   ["City", user.city],
   ["State", user.state],
-  ["Postal code", user.postalCode],
   ["Country", user.country],
   ["Orders", String(user.orders)],
   ["RFQs", String(user.rfqs)],

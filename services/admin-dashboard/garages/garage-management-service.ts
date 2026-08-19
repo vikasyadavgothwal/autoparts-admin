@@ -26,7 +26,6 @@ type GarageRow = {
   addressLine1: string | null
   city: string | null
   state: string | null
-  postalCode: string | null
   country: string | null
   isActive: boolean
   emailVerifiedAt: Date | null
@@ -39,7 +38,6 @@ type GarageRow = {
   profileCity: string | null
   profileState: string | null
   profileCountry: string | null
-  profilePincode: string | null
   bookingsCount: bigint | number
   revenueCents: bigint | number | null
   ratingAverage: number | string | null
@@ -91,7 +89,6 @@ export type GarageAdminUpdateInput = {
   city?: unknown
   state?: unknown
   country?: unknown
-  pincode?: unknown
   workingDays?: unknown
   workingHoursByDay?: unknown
   status?: unknown
@@ -310,7 +307,6 @@ const mapGarage = (row: GarageRow): GarageRecord => {
   const city = row.profileCity || row.city || ""
   const state = row.profileState || row.state || ""
   const country = row.profileCountry || row.country || ""
-  const pincode = row.profilePincode || row.postalCode || ""
   const location = [city, state, country].filter(Boolean).join(", ") || "Not added"
 
   return {
@@ -326,7 +322,6 @@ const mapGarage = (row: GarageRow): GarageRecord => {
     city,
     state,
     country,
-    pincode,
     rating: row.reviewsCount ? String(Number(row.ratingAverage ?? 0)) : "No reviews",
     reviewsCount: asNumber(row.reviewsCount),
     reviews: row.reviews ?? [],
@@ -370,7 +365,6 @@ export async function listAdminGarages() {
       u."addressLine1",
       u."city",
       u."state",
-      u."postalCode",
       u."country",
       u."isActive",
       u."emailVerifiedAt",
@@ -383,7 +377,6 @@ export async function listAdminGarages() {
       gp."city" AS "profileCity",
       gp."state" AS "profileState",
       gp."country" AS "profileCountry",
-      gp."pincode" AS "profilePincode",
       COUNT(DISTINCT gb."id") AS "bookingsCount",
       COALESCE(
         (
@@ -651,7 +644,6 @@ export async function updateAdminGarage(id: string, input: GarageAdminUpdateInpu
   const city = optionalText(input.city, 100)
   const state = optionalText(input.state, 100)
   const country = optionalText(input.country, 100)
-  const pincode = optionalText(input.pincode, 30)
   const status = statusFromInput(input.status)
   const ownerParts = splitOwnerName(owner)
 
@@ -670,7 +662,6 @@ export async function updateAdminGarage(id: string, input: GarageAdminUpdateInpu
           "addressLine1" = ${address},
           "city" = ${city},
           "state" = ${state},
-          "postalCode" = ${pincode},
           "country" = ${country},
           "isActive" = ${status !== "Suspended"},
           "updatedAt" = CURRENT_TIMESTAMP
@@ -690,7 +681,6 @@ export async function updateAdminGarage(id: string, input: GarageAdminUpdateInpu
         "city",
         "state",
         "country",
-        "pincode",
         "updatedAt"
       )
       VALUES (
@@ -702,7 +692,6 @@ export async function updateAdminGarage(id: string, input: GarageAdminUpdateInpu
         ${city},
         ${state},
         ${country},
-        ${pincode},
         CURRENT_TIMESTAMP
       )
       ON CONFLICT ("garageId") DO UPDATE SET
@@ -712,7 +701,6 @@ export async function updateAdminGarage(id: string, input: GarageAdminUpdateInpu
         "city" = EXCLUDED."city",
         "state" = EXCLUDED."state",
         "country" = EXCLUDED."country",
-        "pincode" = EXCLUDED."pincode",
         "updatedAt" = CURRENT_TIMESTAMP
     `
 

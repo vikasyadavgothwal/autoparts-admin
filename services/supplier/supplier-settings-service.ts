@@ -55,7 +55,6 @@ type DocumentUploadInput = AvatarUploadInput & {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MOBILE_PATTERN = /^\+\d{8,18}$/;
-const POSTAL_CODE_PATTERN = /^\d{6}$/;
 const ADDRESS_LINE_PATTERN = /^[A-Za-z0-9\s.,#'’/&()-]*$/;
 const PLACE_NAME_PATTERN = /^[A-Za-z\s.'’()-]*$/;
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
@@ -200,7 +199,6 @@ async function mapSupplierProfile(
       addressLine2: true,
       city: true,
       state: true,
-      postalCode: true,
       country: true,
       supplierApprovalStatus: true,
       supplierApprovalRejectionReason: true,
@@ -253,7 +251,6 @@ async function mapSupplierProfile(
     addressLine2: supplier.addressLine2,
     city: supplier.city,
     state: supplier.state,
-    postalCode: supplier.postalCode,
     country: supplier.country,
     supplierApprovalStatus: supplier.supplierApprovalStatus,
     supplierApprovalRejectionReason: supplier.supplierApprovalRejectionReason,
@@ -314,7 +311,6 @@ export async function updateSupplierProfile(
   const addressLine2 = nullableText(input.addressLine2, 255);
   const city = nullableText(input.city, 120);
   const state = nullableText(input.state, 120);
-  const postalCode = nullableText(input.postalCode, 6);
   const country = nullableText(input.country, 120);
   const tradeLicenseNumber = nullableText(input.tradeLicenseNumber, 100);
   const contactPerson = nullableText(input.contactPerson, 160);
@@ -364,9 +360,6 @@ export async function updateSupplierProfile(
     throw new Error(
       `VAT TRN must be ${VAT_TRN_MIN_LENGTH}-${VAT_TRN_MAX_LENGTH} characters`,
     );
-  }
-  if (postalCode && !POSTAL_CODE_PATTERN.test(postalCode)) {
-    throw new Error("Postal code must be exactly 6 digits");
   }
   if (addressLine1 && !ADDRESS_LINE_PATTERN.test(addressLine1)) {
     throw new Error("Address line 1 contains invalid characters");
@@ -467,7 +460,6 @@ export async function updateSupplierProfile(
       addressLine2,
       city,
       state,
-      postalCode,
       country,
       ...(email === current.email ? { email } : {}),
       phone,
@@ -510,16 +502,12 @@ export async function updateSupplierDeveloperProfile(
 ) {
   const field = (name: string, maxLength: number) =>
     Object.hasOwn(input, name) ? nullableText(input[name], maxLength) : undefined;
-  const postalCode = field("postalCode", 6);
   const addressLine1 = field("addressLine1", 255);
   const addressLine2 = field("addressLine2", 255);
   const city = field("city", 120);
   const state = field("state", 120);
   const country = field("country", 120);
 
-  if (postalCode && !POSTAL_CODE_PATTERN.test(postalCode)) {
-    throw new Error("Postal code must be exactly 6 digits");
-  }
   if (addressLine1 && !ADDRESS_LINE_PATTERN.test(addressLine1)) {
     throw new Error("Address line 1 contains invalid characters");
   }
@@ -544,7 +532,6 @@ export async function updateSupplierDeveloperProfile(
       addressLine2,
       city,
       state,
-      postalCode,
       country,
     },
   });

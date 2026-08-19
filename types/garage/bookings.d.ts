@@ -37,6 +37,7 @@ export type GarageBookingRecord = {
   vehicleModel: string | null
   vehicleVin: string | null
   notes: string | null
+  cancellationReason: string | null
   bookingDate: string | null
   bookingTime: string | null
   durationMinutes: number

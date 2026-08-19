@@ -187,7 +187,6 @@ export async function createUser(input: CreateUserInput): Promise<UserProfile> {
       addressLine2: normalizeText(input.addressLine2),
       city: normalizeText(input.city),
       state: normalizeText(input.state),
-      postalCode: normalizeText(input.postalCode),
       country: normalizeText(input.country),
       supplierContactPerson: normalizeText(input.supplierContactPerson),
       supplierDesignation: normalizeText(input.supplierDesignation),

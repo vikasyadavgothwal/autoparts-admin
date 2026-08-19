@@ -27,7 +27,6 @@ type MobileVerificationRow = {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MOBILE_PATTERN = /^\+\d{8,18}$/;
-const POSTAL_CODE_PATTERN = /^[A-Za-z0-9 -]*$/;
 
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
@@ -92,7 +91,6 @@ async function mapUserProfile(userId: string): Promise<UserProfileRecord> {
       addressLine2: true,
       city: true,
       state: true,
-      postalCode: true,
       country: true,
       createdAt: true,
       updatedAt: true,
@@ -119,7 +117,6 @@ async function mapUserProfile(userId: string): Promise<UserProfileRecord> {
     addressLine2: user.addressLine2,
     city: user.city,
     state: user.state,
-    postalCode: user.postalCode,
     country: user.country,
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
@@ -139,7 +136,6 @@ export async function updateUserProfile(
   const lastName = nullableText(input.lastName, 100);
   const email = nullableText(input.email, 254)?.toLowerCase() ?? null;
   const phone = nullableText(input.phone, 40);
-  const postalCode = nullableText(input.postalCode, 40);
 
   if (email && !EMAIL_PATTERN.test(email)) {
     throw new Error("Enter a valid email address");
@@ -147,10 +143,6 @@ export async function updateUserProfile(
   if (phone && !MOBILE_PATTERN.test(phone)) {
     throw new Error("Enter a valid mobile number");
   }
-  if (postalCode && !POSTAL_CODE_PATTERN.test(postalCode)) {
-    throw new Error("Postal code contains invalid characters");
-  }
-
   const current = await db.user.findUnique({
     where: { id: userId },
     select: { email: true, phone: true },
@@ -167,7 +159,6 @@ export async function updateUserProfile(
       addressLine2: nullableText(input.addressLine2, 255),
       city: nullableText(input.city, 120),
       state: nullableText(input.state, 120),
-      postalCode,
       country: nullableText(input.country, 120),
       ...(email === current.email ? { email } : {}),
       ...(phone === current.phone ? { phone } : {}),

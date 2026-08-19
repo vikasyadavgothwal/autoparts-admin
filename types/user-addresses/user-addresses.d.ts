@@ -7,7 +7,6 @@ export type UserAddressInput = {
   landmark?: unknown;
   city?: unknown;
   state?: unknown;
-  postalCode?: unknown;
   country?: unknown;
   isDefault?: unknown;
 };
@@ -22,7 +21,6 @@ export type UserAddressRecord = {
   landmark: string | null;
   city: string;
   state: string;
-  postalCode: string;
   country: string;
   isDefault: boolean;
   createdAt: string;

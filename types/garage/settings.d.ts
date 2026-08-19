@@ -11,7 +11,6 @@ export type GarageProfileInput = {
   country?: unknown
   state?: unknown
   city?: unknown
-  pincode?: unknown
   jobCompletedNumber?: unknown
   yearsExperience?: unknown
   responseTime?: unknown
@@ -44,7 +43,6 @@ export type GarageProfileRecord = {
   country: string | null
   state: string | null
   city: string | null
-  pincode: string | null
   jobCompletedNumber: number
   yearsExperience: number
   responseTime: string | null
