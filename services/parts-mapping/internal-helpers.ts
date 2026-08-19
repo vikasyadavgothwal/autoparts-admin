@@ -1,5 +1,9 @@
 import { Buffer } from "node:buffer"
 import crypto from "node:crypto"
+import { lookup } from "node:dns/promises"
+import { request as httpRequest } from "node:http"
+import { request as httpsRequest } from "node:https"
+import { BlockList, isIP } from "node:net"
 
 import { db } from "@/lib/database/prisma"
 import { uploadObjectToS3 } from "@/lib/storage/s3"
@@ -27,6 +31,7 @@ export const DEFAULT_CURRENCY = "AED"
 export const SUPPLIER_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 export const SUPPLIER_IMAGE_FETCH_TIMEOUT_MS = 15_000
 export const SUPPLIER_IMAGE_UPLOAD_CONCURRENCY = 3
+const SUPPLIER_IMAGE_MAX_REDIRECTS = 3
 const SUPPORTED_SUPPLIER_IMAGE_TYPES: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -1133,87 +1138,174 @@ export const sanitizeS3PathSegment = (value: string): string => {
   return sanitized.slice(0, 80) || "sku"
 }
 
-export const isBlockedExternalImageHost = (hostname: string): boolean => {
-  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase()
+const blockedImageAddressRanges = new BlockList()
 
-  return (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized === "127.0.0.1" ||
-    normalized === "0.0.0.0" ||
-    normalized === "::1" ||
-    normalized.startsWith("10.") ||
-    normalized.startsWith("192.168.") ||
-    normalized.startsWith("169.254.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(normalized) ||
-    (normalized.includes(":") &&
-      (normalized.startsWith("fc") || normalized.startsWith("fd")))
-  )
+for (const [network, prefix] of [
+  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10],
+  ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12],
+  ["192.0.0.0", 24], ["192.0.2.0", 24], ["192.88.99.0", 24],
+  ["192.168.0.0", 16], ["198.18.0.0", 15], ["198.51.100.0", 24],
+  ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4],
+] as const) {
+  blockedImageAddressRanges.addSubnet(network, prefix, "ipv4")
+}
+
+for (const [network, prefix] of [
+  ["::", 128], ["::1", 128], ["::ffff:0:0", 96], ["fc00::", 7],
+  ["fe80::", 10], ["ff00::", 8], ["2001:db8::", 32],
+] as const) {
+  blockedImageAddressRanges.addSubnet(network, prefix, "ipv6")
+}
+
+const isPublicImageAddress = (address: string): boolean => {
+  const family = isIP(address)
+  return family > 0 && !blockedImageAddressRanges.check(address, family === 4 ? "ipv4" : "ipv6")
+}
+
+const resolvePublicImageHost = async (hostname: string): Promise<string> => {
+  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase()
+  if (normalized === "localhost" || normalized.endsWith(".localhost")) {
+    throw new SupplierImageUploadError("local or private image URLs are not allowed")
+  }
+
+  const addresses = isIP(normalized)
+    ? [{ address: normalized }]
+    : await lookup(normalized, { all: true, verbatim: true })
+
+  if (!addresses.length || addresses.some(({ address }) => !isPublicImageAddress(address))) {
+    throw new SupplierImageUploadError("local or private image URLs are not allowed")
+  }
+
+  return addresses[0].address
+}
+
+const getImageUrl = (value: string, imageIndex: number): URL => {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new SupplierImageUploadError(`Image ${imageIndex}: invalid image URL`)
+  }
+
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username ||
+    url.password
+  ) {
+    throw new SupplierImageUploadError(`Image ${imageIndex}: image URL must use HTTP or HTTPS`)
+  }
+
+  return url
+}
+
+const readImageResponse = async (
+  url: URL,
+  address: string,
+  timeoutMs: number,
+): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: Buffer }> =>
+  new Promise((resolve, reject) => {
+    const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(
+      {
+        protocol: url.protocol,
+        hostname: address,
+        family: isIP(address),
+        port: url.port || undefined,
+        path: `${url.pathname}${url.search}`,
+        headers: { Host: url.host },
+        ...(url.protocol === "https:" ? { servername: url.hostname.replace(/^\[|\]$/g, "") } : {}),
+      },
+      (response) => {
+        const status = response.statusCode ?? 0
+        if ([301, 302, 303, 307, 308].includes(status)) {
+          response.resume()
+          resolve({ status, headers: response.headers, body: Buffer.alloc(0) })
+          return
+        }
+
+        const chunks: Buffer[] = []
+        let receivedBytes = 0
+        response.on("data", (chunk: Buffer) => {
+          receivedBytes += chunk.length
+          if (receivedBytes > SUPPLIER_IMAGE_MAX_BYTES) {
+            request.destroy(new Error("Image exceeds maximum size"))
+            return
+          }
+          chunks.push(chunk)
+        })
+        response.on("end", () => resolve({ status, headers: response.headers, body: Buffer.concat(chunks) }))
+        response.on("error", reject)
+      },
+    )
+
+    const timer = setTimeout(() => request.destroy(new Error("Image download timed out")), timeoutMs)
+    request.on("error", (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    request.on("close", () => clearTimeout(timer))
+    request.end()
+  })
+
+const detectImageContentType = (body: Buffer): string | null => {
+  if (body.length >= 3 && body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff) return "image/jpeg"
+  if (body.length >= 8 && body.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png"
+  if (body.length >= 12 && body.subarray(0, 4).toString() === "RIFF" && body.subarray(8, 12).toString() === "WEBP") return "image/webp"
+  return null
 }
 
 export const fetchExternalSupplierImage = async (
   imageUrl: string,
   imageIndex: number,
 ) => {
-  let parsedUrl: URL
-  try {
-    parsedUrl = new URL(imageUrl)
-  } catch {
-    throw new SupplierImageUploadError(`Image ${imageIndex}: invalid image URL`)
+  let url = getImageUrl(imageUrl, imageIndex)
+  const deadline = Date.now() + SUPPLIER_IMAGE_FETCH_TIMEOUT_MS
+  let response: Awaited<ReturnType<typeof readImageResponse>>
+
+  for (let redirects = 0; ; redirects += 1) {
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) {
+      throw new SupplierImageUploadError(`Image ${imageIndex}: image download timed out`)
+    }
+
+    try {
+      response = await readImageResponse(
+        url,
+        await resolvePublicImageHost(url.hostname),
+        remainingMs,
+      )
+    } catch (error) {
+      throw new SupplierImageUploadError(
+        `Image ${imageIndex}: unable to download image${error instanceof Error ? ` (${error.message})` : ""}`,
+      )
+    }
+
+    if (![301, 302, 303, 307, 308].includes(response.status)) break
+    const location = response.headers.location
+    if (redirects >= SUPPLIER_IMAGE_MAX_REDIRECTS || typeof location !== "string") {
+      throw new SupplierImageUploadError(`Image ${imageIndex}: image redirect is not allowed`)
+    }
+    url = getImageUrl(new URL(location, url).toString(), imageIndex)
   }
 
-  if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-    throw new SupplierImageUploadError(
-      `Image ${imageIndex}: image URL must use HTTP or HTTPS`,
-    )
-  }
-
-  if (isBlockedExternalImageHost(parsedUrl.hostname)) {
-    throw new SupplierImageUploadError(
-      `Image ${imageIndex}: local or private image URLs are not allowed`,
-    )
-  }
-
-  const abortController = new AbortController()
-  const timeout = setTimeout(
-    () => abortController.abort(),
-    SUPPLIER_IMAGE_FETCH_TIMEOUT_MS,
-  )
-
-  let response: Response
-  try {
-    response = await fetch(parsedUrl.toString(), {
-      signal: abortController.signal,
-      redirect: "follow",
-    })
-  } catch (error) {
-    throw new SupplierImageUploadError(
-      `Image ${imageIndex}: unable to download image${
-        error instanceof Error ? ` (${error.message})` : ""
-      }`,
-    )
-  } finally {
-    clearTimeout(timeout)
-  }
-
-  if (!response.ok) {
+  if (response.status < 200 || response.status >= 300) {
     throw new SupplierImageUploadError(
       `Image ${imageIndex}: image download failed with HTTP ${response.status}`,
     )
   }
 
   const contentType = normalizeImageContentType(
-    response.headers.get("content-type"),
+    typeof response.headers["content-type"] === "string" ? response.headers["content-type"] : null,
   )
-  const extension = SUPPORTED_SUPPLIER_IMAGE_TYPES[contentType]
-  if (!extension) {
+  const detectedContentType = detectImageContentType(response.body)
+  if (!detectedContentType || (contentType && contentType !== detectedContentType)) {
     throw new SupplierImageUploadError(
       `Image ${imageIndex}: only JPG, PNG, or WebP images are supported`,
     )
   }
+  const extension = SUPPORTED_SUPPLIER_IMAGE_TYPES[detectedContentType]
 
   const contentLength = Number.parseInt(
-    response.headers.get("content-length") ?? "",
+    typeof response.headers["content-length"] === "string" ? response.headers["content-length"] : "",
     10,
   )
   if (
@@ -1225,23 +1317,13 @@ export const fetchExternalSupplierImage = async (
     )
   }
 
-  let body: Buffer
-  try {
-    body = Buffer.from(await response.arrayBuffer())
-  } catch (error) {
-    throw new SupplierImageUploadError(
-      `Image ${imageIndex}: unable to read image data${
-        error instanceof Error ? ` (${error.message})` : ""
-      }`,
-    )
-  }
-  if (body.byteLength > SUPPLIER_IMAGE_MAX_BYTES) {
+  if (response.body.byteLength > SUPPLIER_IMAGE_MAX_BYTES) {
     throw new SupplierImageUploadError(
       `Image ${imageIndex}: image must be no larger than 5 MB`,
     )
   }
 
-  return { body, contentType, extension }
+  return { body: response.body, contentType: detectedContentType, extension }
 }
 
 export const uploadSupplierImageUrlsToS3 = async ({

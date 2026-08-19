@@ -3,6 +3,10 @@
 import { logError } from "@/lib/logger"
 import { revalidatePath } from "next/cache"
 import { getCurrentAdminSession } from "@/actions/admin-auth/me"
+import {
+  requireAdminPermission,
+} from "@/lib/auth/admin-guard"
+import { ADMIN_CONTENT_EDIT_PERMISSION } from "@/lib/auth/admin-permissions"
 import { saveHomePageContent } from "@/actions/admin-dashboard/public-pages/public-content"
 import {
   HOME_BANNER_IMAGE_MAX_SIZE_LABEL,
@@ -81,20 +85,9 @@ const toUploadError = (error: unknown): string => {
 export async function uploadHomeBannerImage(
   formData: FormData,
 ): Promise<HomeBannerImageUploadResult> {
-  const actor = await getCurrentAdminSession()
-
-  if (!actor.ok) {
-    return {
-      ok: false,
-      error: "Unauthorized",
-    }
-  }
-
-  if (!actor.admin.isActive) {
-    return {
-      ok: false,
-      error: "Admin is deactivated",
-    }
+  const authorization = await requireAdminPermission(ADMIN_CONTENT_EDIT_PERMISSION)
+  if (!authorization.ok) {
+    return authorization
   }
 
   const image = formData.get(IMAGE_FIELD)

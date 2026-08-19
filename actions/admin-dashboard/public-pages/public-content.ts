@@ -4,7 +4,10 @@ import { logError } from "@/lib/logger"
 import type { Prisma } from "@/lib/generated/prisma/client"
 import { db } from "@/lib/database/prisma"
 import { randomUUID } from "node:crypto"
-import { getCurrentAdminSession } from "@/actions/admin-auth/me"
+import {
+  requireAdminPermission,
+} from "@/lib/auth/admin-guard"
+import { ADMIN_CONTENT_EDIT_PERMISSION } from "@/lib/auth/admin-permissions"
 import type { HomePageConfig } from "@/types/admin-dashboard/public-pages/home-tabs-data"
 import type { ForBusinessPageConfig } from "@/types/admin-dashboard/public-pages/for-business-tabs-data"
 import { LEGAL_CONTENT_FALLBACK_TEXT } from "@/services/admin-dashboard/public-pages/legal-content-fallback"
@@ -384,6 +387,11 @@ export async function getPublicPageSeoContent(
 export async function savePublicPageSeoContent(
   input: PublicPageSeoSaveInput,
 ): Promise<PublicPageContentResult<PublicPageSeoConfig>> {
+  const authorization = await requireAdminPermission(ADMIN_CONTENT_EDIT_PERMISSION)
+  if (!authorization.ok) {
+    return authorization
+  }
+
   const normalizedSlug = resolvePublicContentSlug(input.slug)
 
   if (!normalizedSlug) {
@@ -464,20 +472,9 @@ const parseSeoPayload = (
 export async function uploadPublicPageSeoOgImage(
   formData: FormData,
 ): Promise<PublicPageSeoUploadResult> {
-  const actor = await getCurrentAdminSession()
-
-  if (!actor.ok) {
-    return {
-      ok: false,
-      error: "Unauthorized",
-    }
-  }
-
-  if (!actor.admin.isActive) {
-    return {
-      ok: false,
-      error: "Admin is deactivated",
-    }
+  const authorization = await requireAdminPermission(ADMIN_CONTENT_EDIT_PERMISSION)
+  if (!authorization.ok) {
+    return authorization
   }
 
   const normalizedSlug = resolvePublicContentSlug(
@@ -556,6 +553,11 @@ const isLegalSlug = (slug: PublicWebsiteContentSlug): slug is LegalDocumentSlug 
 export async function saveLegalDocumentContent(
   input: PublicWebsiteContentSaveInput,
 ): Promise<PublicPageContentResult<string>> {
+  const authorization = await requireAdminPermission(ADMIN_CONTENT_EDIT_PERMISSION)
+  if (!authorization.ok) {
+    return authorization
+  }
+
   const normalizedSlug = resolvePublicContentSlug(input.slug)
 
   if (!normalizedSlug || !isLegalSlug(normalizedSlug)) {
@@ -577,11 +579,16 @@ export async function saveLegalDocumentContent(
 export async function saveSectionContent(
   input: PublicPageSectionSaveInput,
 ): Promise<PublicPageContentResult<PublicPageSectionContent>> {
+  const authorization = await requireAdminPermission(ADMIN_CONTENT_EDIT_PERMISSION)
+  if (!authorization.ok) {
+    return authorization
+  }
+
   try {
     const normalized = normalizeSectionContent(input.content)
-    const slug = sanitizeSectionSaveSlug(input.slug)
+    const slug = resolvePublicContentSlug(sanitizeSectionSaveSlug(input.slug))
 
-    if (!slug) {
+    if (!slug || ![RFQ_SLUG, SUPPLIERS_SLUG, SERVICES_SLUG].includes(slug as ProfessionalSectionPage)) {
       return {
         ok: false,
         error: "Invalid page section identifier.",
@@ -671,6 +678,11 @@ const saveContent = async <T>(
 export async function saveHomePageContent(
   input: HomePageSaveInput,
 ): Promise<PublicPageContentResult<HomePageConfig>> {
+  const authorization = await requireAdminPermission(ADMIN_CONTENT_EDIT_PERMISSION)
+  if (!authorization.ok) {
+    return authorization
+  }
+
   const saveResult = await saveContent<HomePageConfig>(
     HOME_PAGE_SLUG,
     prepareHomePageConfigForStorage(input.content),
@@ -697,6 +709,11 @@ export async function saveHomePageContent(
 export async function saveForBusinessPageContent(
   input: ForBusinessPageSaveInput,
 ): Promise<PublicPageContentResult<ForBusinessPageConfig>> {
+  const authorization = await requireAdminPermission(ADMIN_CONTENT_EDIT_PERMISSION)
+  if (!authorization.ok) {
+    return authorization
+  }
+
   return saveContent<ForBusinessPageConfig>(
     FOR_BUSINESS_SLUG,
     input.content,

@@ -1,4 +1,5 @@
 import { db } from "@/lib/database/prisma"
+import { ADMIN_CONTENT_EDITOR_ROLE_ID } from "@/lib/auth/admin-permissions"
 import { ADMIN_AUTH } from "@/lib/auth/config"
 import {
   generateSessionId,
@@ -249,6 +250,7 @@ export const createAdminWithCredentials = async (
       email: normalizedEmail,
       passwordHash,
       isActive: true,
+      roleIds: [ADMIN_CONTENT_EDITOR_ROLE_ID],
     },
     select: {
       id: true,
