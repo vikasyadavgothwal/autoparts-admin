@@ -7,7 +7,7 @@ import { uploadObjectToS3 } from "@/lib/storage/s3"
 
 export const dynamic = "force-dynamic"
 
-const MAX_GALLERY_IMAGES = 12
+const MAX_GALLERY_IMAGES = 5
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024
 const IMAGE_EXTENSIONS: Record<string, string> = {
   "image/jpeg": "jpg",
