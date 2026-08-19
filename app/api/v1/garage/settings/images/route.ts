@@ -8,7 +8,7 @@ import { uploadObjectToS3 } from "@/lib/storage/s3"
 export const dynamic = "force-dynamic"
 
 const MAX_GALLERY_IMAGES = 12
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024
 const IMAGE_EXTENSIONS: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        message: "Images must be JPG, PNG, or WebP and no larger than 5 MB each",
+        message: "Images must be JPG, PNG, or WebP and no larger than 10 MB each",
       },
       { status: 400 },
     )
