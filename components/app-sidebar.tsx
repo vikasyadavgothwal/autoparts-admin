@@ -29,6 +29,7 @@ import {
   Database,
   GitBranch,
   Link2,
+  Globe2,
 } from "lucide-react"
 import {
   Sidebar,
@@ -92,7 +93,7 @@ const pageIconByKey: Record<AppPageLinkKey, (typeof House)> = {
 const isDashboardOverviewPath = (path: string) =>
   path === appRoutes.overview || path === appRoutes.legacyOverview
 
-export function AppSidebar() {
+export function AppSidebar({ branding }: { branding?: { siteName: string; logoUrl: string } }) {
   const currentPath = stripBasePath(usePathname())
 
   const isLinkActive = (url: string) => {
@@ -130,7 +131,10 @@ export function AppSidebar() {
     <Sidebar className="border-sidebar-border bg-[#1A1A1A] text-white">
       <SidebarHeader className="border-b border-[#2A2A2A] p-6">
         <Link href="/" className="block">
-          <h2 className="text-xl font-bold text-white">AutoPartsPro</h2>
+          {branding?.logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={branding.logoUrl} alt={branding.siteName} className="h-10 max-w-[190px] object-contain object-left" />
+          ) : <h2 className="text-xl font-bold text-white">{branding?.siteName === "AutoPartsPro" || branding?.siteName === "AutoParts Pro" || !branding?.siteName ? <>AutoParts<span className="text-[#DC2626]"> Pro</span></> : branding.siteName}</h2>}
           <p className="mt-1 text-sm text-[#9CA3AF]">Administrator</p>
         </Link>
       </SidebarHeader>
@@ -164,6 +168,22 @@ export function AppSidebar() {
             )
           })}
 
+            <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={currentPath === appRoutes.siteSettings || currentPath.startsWith(`${appRoutes.siteSettings}/`)}
+              className={`h-auto px-4 py-3 rounded-lg transition-all ${
+                currentPath === appRoutes.siteSettings || currentPath.startsWith(`${appRoutes.siteSettings}/`)
+                  ? "bg-[#DC2626] text-white hover:bg-[#DC2626]"
+                  : "text-[#9CA3AF] hover:bg-[#2A2A2A] hover:text-white"
+              }`}
+            >
+              <Link href={appRoutes.siteSettings} className="flex items-center gap-3">
+                <Globe2 className="h-5 w-5" />
+                <span className="font-medium">Site Settings</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild

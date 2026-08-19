@@ -1,4 +1,5 @@
 "use client"
+/* eslint-disable @next/next/no-img-element */
 
 import { Eye, EyeOff } from "lucide-react"
 import { useState } from "react"
@@ -23,9 +24,10 @@ const errorMessages: Record<string, string> = {
 
 type LoginFormProps = {
   error?: string
+  branding?: { siteName: string; logoUrl: string }
 }
 
-export function LoginForm({ error }: LoginFormProps) {
+export function LoginForm({ error, branding = { siteName: "AutoPartsPro", logoUrl: "" } }: LoginFormProps) {
   const [showPassword, setShowPassword] = useState(false)
 
   const errorMessage = error
@@ -36,6 +38,9 @@ export function LoginForm({ error }: LoginFormProps) {
     <div className="flex min-h-svh items-center justify-center px-4">
       <Card className="w-full max-w-md border border-white/10 text-white shadow-2xl">
         <CardHeader>
+          <div className="mb-3 flex justify-center">
+            {branding.logoUrl ? <img src={branding.logoUrl} alt={branding.siteName} className="h-12 max-w-[220px] object-contain" /> : <span className="text-2xl font-bold">{branding.siteName === "AutoPartsPro" || branding.siteName === "AutoParts Pro" ? <>AutoParts<span className="text-primary"> Pro</span></> : branding.siteName}</span>}
+          </div>
           <CardTitle className="text-center text-2xl">
             Admin Login
           </CardTitle>

@@ -46,6 +46,7 @@ export const appRoutes = {
   reports: "/reports",
   services: "/pages/services-page",
   settings: "/settings",
+  siteSettings: "/site-settings",
   login: "/login",
 } as const
 

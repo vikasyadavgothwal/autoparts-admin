@@ -7,6 +7,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { DashboardHeader } from "@/components/app-header"
 import { Toaster } from "@/components/ui/sonner"
+import { getMainWebsiteSiteSettings } from "@/services/platform-settings/main-website-site-settings"
 
 export default async function DashboardLayout({
   children,
@@ -18,10 +19,11 @@ export default async function DashboardLayout({
   if (!authResult.ok || !authResult.admin.isActive) {
     redirect(appRoutes.login)
   }
+  const branding = await getMainWebsiteSiteSettings()
 
   return (
     <SidebarProvider>
-      <AppSidebar />
+      <AppSidebar branding={branding} />
       <SidebarInset className="min-h-svh bg-[#0A0A0A]">
         <DashboardHeader adminName={authResult.admin.name} />
         <div className="flex flex-1 flex-col p-4 lg:p-6">{children}</div>

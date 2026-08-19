@@ -4,8 +4,10 @@ import { requireAdminFromRequest, readJsonBody } from "@/lib/auth/api-guards";
 import {
   readAdminSupportNotificationEmails,
   readGarageBookingAdvanceSetting,
+  readMainWebsiteSiteSettings,
   updateAdminSupportNotificationEmails,
   updateGarageBookingAdvanceSetting,
+  updateMainWebsiteSiteSettings,
 } from "@/actions/platform-settings/platform-settings";
 
 export async function GET() {
@@ -15,6 +17,7 @@ export async function GET() {
     ok: true,
     garageBookingAdvance: await readGarageBookingAdvanceSetting(),
     adminSupportNotificationEmails: await readAdminSupportNotificationEmails(),
+    siteSettings: await readMainWebsiteSiteSettings(),
   });
 }
 
@@ -25,6 +28,7 @@ export async function PATCH(request: NextRequest) {
     garageBookingAdvance?: { mode?: unknown; value?: unknown };
     garageBookingAdvancePercentage?: unknown;
     adminSupportNotificationEmails?: unknown;
+    siteSettings?: unknown;
   }>(request);
   if (!body.ok) return NextResponse.json({ ok: false, message: body.message }, { status: 400 });
   try {
@@ -36,6 +40,7 @@ export async function PATCH(request: NextRequest) {
       ok: true;
       garageBookingAdvance?: Awaited<ReturnType<typeof updateGarageBookingAdvanceSetting>>;
       adminSupportNotificationEmails?: string[];
+      siteSettings?: Awaited<ReturnType<typeof updateMainWebsiteSiteSettings>>;
     } = { ok: true };
     if (
       body.body.garageBookingAdvance !== undefined ||
@@ -46,6 +51,9 @@ export async function PATCH(request: NextRequest) {
     if (body.body.adminSupportNotificationEmails !== undefined) {
       response.adminSupportNotificationEmails =
         await updateAdminSupportNotificationEmails(body.body.adminSupportNotificationEmails);
+    }
+    if (body.body.siteSettings !== undefined) {
+      response.siteSettings = await updateMainWebsiteSiteSettings(body.body.siteSettings);
     }
     return NextResponse.json(response);
   } catch (error) {

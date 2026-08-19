@@ -127,3 +127,10 @@ export async function setAdminSupportNotificationEmails(input: unknown) {
   });
   return emails;
 }
+
+// Keep the platform-settings service as the compatibility import for callers
+// while the website-specific settings implementation lives in its own module.
+export {
+  getMainWebsiteSiteSettings,
+  setMainWebsiteSiteSettings,
+} from "./main-website-site-settings";
