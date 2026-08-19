@@ -270,9 +270,14 @@ export function SiteSettingsManager() {
               <CardHeader><CardTitle className="flex items-center gap-2 text-white"><Search className="size-5 text-[#DC2626]" /> robots.txt</CardTitle></CardHeader>
               <CardContent className="space-y-5">
                 <TextareaField id="robots-txt" label="robots.txt" value={settings.robotsTxt} onChange={(event) => update("robotsTxt", event.target.value)} maxLength={12000} rows={10} spellCheck={false} className="font-mono" />
-                <Button type="button" variant="outline" asChild className="gap-2">
-                  <a href={`${publicWebsiteOrigin}/robots.txt`} target="_blank" rel="noreferrer"><ExternalLink className="size-4" />Open robots.txt</a>
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" asChild className="gap-2">
+                    <a href={`${publicWebsiteOrigin}/robots.txt`} target="_blank" rel="noreferrer"><ExternalLink className="size-4" />View robots.txt</a>
+                  </Button>
+                  <Button type="button" variant="outline" asChild className="gap-2">
+                    <a href={`${publicWebsiteOrigin}/sitemap.xml`} target="_blank" rel="noreferrer"><ExternalLink className="size-4" />View sitemap.xml</a>
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ) : null}
