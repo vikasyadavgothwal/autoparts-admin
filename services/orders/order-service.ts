@@ -1,4 +1,5 @@
 import { db } from "@/lib/database/prisma";
+import { sendSmtpMail } from "@/lib/email/smtp";
 import {
   OrderSource,
   OrderStatus,
@@ -72,6 +73,102 @@ const expectedDeliveryForOption = (confirmedAt: Date, value: string | null) =>
     : null;
 const MAX_PROOF_RECIPIENT_NAME_LENGTH = 80;
 const MAX_PROOF_NOTE_LENGTH = 500;
+const sendMailSafely = (input: Parameters<typeof sendSmtpMail>[0]) =>
+  sendSmtpMail(input).catch(() => undefined);
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+const money = (value: number | null | undefined, cents: boolean) =>
+  value === null || value === undefined
+    ? "—"
+    : new Intl.NumberFormat("en-AE", {
+        style: "currency",
+        currency: "AED",
+      }).format(cents ? value / 100 : value);
+const orderItemName = (item: {
+  partName: string;
+  supplierPart?: { originalPartName: string } | null;
+}) => item.supplierPart?.originalPartName || item.partName;
+const orderItemNumber = (item: {
+  partNumber: string | null;
+  supplierPart?: {
+    originalMpn: string | null;
+    originalOemNumber: string | null;
+  } | null;
+}) => item.supplierPart?.originalOemNumber || item.supplierPart?.originalMpn || item.partNumber;
+const orderItemsText = (
+  items: Array<{
+    partName: string;
+    partNumber: string | null;
+    quantity: number;
+    lineTotal: number | null;
+    supplierPart?: {
+      originalPartName: string;
+      originalMpn: string | null;
+      originalOemNumber: string | null;
+    } | null;
+  }>,
+  cents = false,
+) =>
+  [
+    "Order parts:",
+    ...items.map(
+      (item) =>
+        `- ${orderItemName(item)}${orderItemNumber(item) ? ` (${orderItemNumber(item)})` : ""} × ${item.quantity} — ${money(item.lineTotal, cents)}`,
+    ),
+  ].join("\n");
+const orderItemsHtml = (
+  items: Array<{
+    partName: string;
+    partNumber: string | null;
+    quantity: number;
+    lineTotal: number | null;
+    supplierPart?: {
+      originalPartName: string;
+      originalMpn: string | null;
+      originalOemNumber: string | null;
+    } | null;
+  }>,
+  cents = false,
+) =>
+  [
+    `<p style="margin:0 0 12px"><strong>Order parts</strong></p>`,
+    `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden">`,
+    ...items.map((item) => [
+      `<tr>`,
+      `<td style="padding:12px;border-bottom:1px solid #2a2a2a;color:#f9fafb">`,
+      `<strong>${escapeHtml(orderItemName(item))}</strong>`,
+      orderItemNumber(item) ? `<br><span style="color:#9ca3af;font-size:12px">${escapeHtml(orderItemNumber(item)!)}</span>` : "",
+      `</td>`,
+      `<td align="center" style="padding:12px;border-bottom:1px solid #2a2a2a;color:#d1d5db;white-space:nowrap">× ${item.quantity}</td>`,
+      `<td align="right" style="padding:12px;border-bottom:1px solid #2a2a2a;color:#ffffff;white-space:nowrap">${escapeHtml(money(item.lineTotal, cents))}</td>`,
+      `</tr>`,
+    ].join("")),
+    `</table>`,
+  ].join("");
+const orderItemsSectionHtml = (
+  title: string,
+  items: Parameters<typeof orderItemsHtml>[0],
+  cents = false,
+) =>
+  items.length
+    ? orderItemsHtml(items, cents).replace("<strong>Order parts</strong>", `<strong>${escapeHtml(title)}</strong>`)
+    : "";
+const orderItemsSummary = (
+  items: Array<{
+    partName: string;
+    quantity: number;
+    supplierPart?: { originalPartName: string } | null;
+  }>,
+) =>
+  items
+    .slice(0, 3)
+    .map((item) => `${orderItemName(item)} × ${item.quantity}`)
+    .join(", ");
 
 const searchWhere = (search: string): Prisma.OrderWhereInput => {
   const query = search.trim();
@@ -123,6 +220,13 @@ const orderInclude = {
   items: {
     orderBy: { createdAt: "asc" as const },
     include: {
+      supplierPart: {
+        select: {
+          originalPartName: true,
+          originalMpn: true,
+          originalOemNumber: true,
+        },
+      },
       review: {
         select: {
           id: true,
@@ -508,6 +612,48 @@ export async function confirmSupplierOrder(
       entityType: "order",
       entityId: order.id,
     },
+    {
+      recipientUserId: supplierId,
+      type: "order.confirmed",
+      title: "Order status updated",
+      body: `You confirmed order ${order.publicId}.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: order.id,
+    },
+  ]);
+  const expectedDateText = expectedDeliveryAt
+    ? `Expected delivery: ${expectedDeliveryAt.toLocaleDateString("en-AE", { timeZone: "Asia/Dubai" })}.`
+    : "";
+  await Promise.all([
+    order.buyer.email
+      ? sendMailSafely({
+          to: order.buyer.email,
+          subject: `Order ${order.publicId} confirmed by supplier`,
+          text: [`Your order ${order.publicId} has been confirmed.`, expectedDateText, orderItemsText(order.items, true)]
+            .filter(Boolean)
+            .join("\n"),
+          html: [
+            `<p>Your order <strong>${escapeHtml(order.publicId)}</strong> has been confirmed.</p>`,
+            expectedDateText ? `<p>${escapeHtml(expectedDateText)}</p>` : "",
+            orderItemsHtml(order.items, true),
+          ].join(""),
+        })
+      : undefined,
+    order.supplier.email
+      ? sendMailSafely({
+          to: order.supplier.email,
+          subject: `You confirmed order ${order.publicId}`,
+          text: [`You confirmed order ${order.publicId}.`, expectedDateText, orderItemsText(order.items, true)]
+            .filter(Boolean)
+            .join("\n"),
+          html: [
+            `<p>You confirmed order <strong>${escapeHtml(order.publicId)}</strong>.</p>`,
+            expectedDateText ? `<p>${escapeHtml(expectedDateText)}</p>` : "",
+            orderItemsHtml(order.items, true),
+          ].join(""),
+        })
+      : undefined,
   ]);
   return mapOrder(order);
 }
@@ -598,6 +744,12 @@ export async function submitOrderProofOfDelivery(
 
   const deliveredItemCount = saved.items.filter((item) => item.deliveredAt).length;
   const isComplete = saved.items.length > 0 && deliveredItemCount === saved.items.length;
+  const deliveredItems = saved.items.filter((item) => item.deliveredAt);
+  const pendingItems = saved.items.filter((item) => !item.deliveredAt);
+  const deliveredTextTitle = isComplete ? "Delivered parts:" : "Delivered in this update:";
+  const pendingText = pendingItems.length
+    ? ["Pending parts:", ...orderItemsText(pendingItems, true).split("\n").slice(1)].join("\n")
+    : "";
   await createNotificationsSafely([
     {
       recipientUserId: saved.buyerId,
@@ -611,6 +763,59 @@ export async function submitOrderProofOfDelivery(
       entityType: "order",
       entityId: saved.id,
     },
+    {
+      recipientUserId: supplierId,
+      type: isComplete ? "order.delivered" : "order.delivery.partial",
+      title: isComplete ? "Order marked delivered" : "Order delivery updated",
+      body: isComplete
+        ? `You marked all parts for ${saved.publicId} as delivered.`
+        : `You marked ${deliveredItemCount} of ${saved.items.length} parts for ${saved.publicId} as delivered.`,
+      linkUrl: "/orders",
+      entityType: "order",
+      entityId: saved.id,
+    },
+  ]);
+  await Promise.all([
+    saved.buyer.email
+      ? sendMailSafely({
+          to: saved.buyer.email,
+          subject: isComplete ? `Order ${saved.publicId} delivered` : `${deliveredItems.length} part${deliveredItems.length === 1 ? "" : "s"} delivered for order ${saved.publicId}`,
+          text: [
+            isComplete
+            ? `All parts for ${saved.publicId} have been delivered.`
+            : `${deliveredItemCount} of ${saved.items.length} parts for ${saved.publicId} have been delivered.`,
+            [deliveredTextTitle, ...orderItemsText(deliveredItems, true).split("\n").slice(1)].join("\n"),
+            pendingText,
+          ].filter(Boolean).join("\n\n"),
+          html: [
+            `<p>${isComplete
+              ? `All parts for <strong>${escapeHtml(saved.publicId)}</strong> have been delivered.`
+              : `${deliveredItemCount} of ${saved.items.length} parts for <strong>${escapeHtml(saved.publicId)}</strong> have been delivered.`}</p>`,
+            orderItemsSectionHtml(deliveredTextTitle.replace(":", ""), deliveredItems, true),
+            orderItemsSectionHtml("Pending parts", pendingItems, true),
+          ].join(""),
+        })
+      : undefined,
+    saved.supplier.email
+      ? sendMailSafely({
+          to: saved.supplier.email,
+          subject: isComplete ? `You marked order ${saved.publicId} delivered` : `${deliveredItems.length} part${deliveredItems.length === 1 ? "" : "s"} marked delivered for order ${saved.publicId}`,
+          text: [
+            isComplete
+            ? `You marked all parts for ${saved.publicId} as delivered.`
+            : `You marked ${deliveredItemCount} of ${saved.items.length} parts for ${saved.publicId} as delivered.`,
+            [deliveredTextTitle, ...orderItemsText(deliveredItems, true).split("\n").slice(1)].join("\n"),
+            pendingText,
+          ].filter(Boolean).join("\n\n"),
+          html: [
+            `<p>${isComplete
+              ? `You marked all parts for <strong>${escapeHtml(saved.publicId)}</strong> as delivered.`
+              : `You marked ${deliveredItemCount} of ${saved.items.length} parts for <strong>${escapeHtml(saved.publicId)}</strong> as delivered.`}</p>`,
+            orderItemsSectionHtml(deliveredTextTitle.replace(":", ""), deliveredItems, true),
+            orderItemsSectionHtml("Pending parts", pendingItems, true),
+          ].join(""),
+        })
+      : undefined,
   ]);
   return mapOrder(saved);
 }
@@ -666,6 +871,22 @@ export async function confirmOrderItemReceipt(
       entityType: "order",
       entityId: saved.id,
     },
+  ]);
+  await Promise.all([
+    saved.supplier.email
+      ? sendMailSafely({
+          to: saved.supplier.email,
+          subject: `Buyer confirmed receipt for order ${saved.publicId}`,
+          text: `A delivered part for ${saved.publicId} was confirmed by the buyer.`,
+        })
+      : undefined,
+    saved.buyer.email
+      ? sendMailSafely({
+          to: saved.buyer.email,
+          subject: `Receipt confirmed for order ${saved.publicId}`,
+          text: `You confirmed receipt of a delivered part for ${saved.publicId}.`,
+        })
+      : undefined,
   ]);
 
   return mapOrder(saved);
@@ -735,7 +956,7 @@ export async function createDirectOrders(
       });
       if (reserved.count !== 1) {
         throw new Error(
-          `Insufficient stock for ${supplierPart.part?.partName || supplierPart.originalPartName}`,
+          `Insufficient stock for ${supplierPart.originalPartName || supplierPart.part?.partName || "this product"}`,
         );
       }
 
@@ -749,11 +970,11 @@ export async function createDirectOrders(
       existingGroup.totalAmount += lineTotal;
       existingGroup.items.push({
         supplierPart: { connect: { id: supplierPart.id } },
-        partName: supplierPart.part?.partName || supplierPart.originalPartName,
+        partName: supplierPart.originalPartName || supplierPart.part?.partName || "Auto part",
         partNumber:
-          supplierPart.part?.partNumber ||
           supplierPart.originalOemNumber ||
-          supplierPart.originalMpn,
+          supplierPart.originalMpn ||
+          supplierPart.part?.partNumber,
         quantity: line.quantity,
         unitPrice,
         lineTotal,
@@ -878,6 +1099,22 @@ export async function createDirectOrders(
 
   const adminIds = await activeAdminRecipientIds();
   const notifications: CreateNotificationInput[] = [];
+  const orderIds = checkout.orders.map((order) => order.id);
+  const garageBookings = orderIds.length
+    ? await db.garageBooking.findMany({
+        where: { linkedOrderId: { in: orderIds } },
+        select: {
+          id: true,
+          publicId: true,
+          garageId: true,
+          customerId: true,
+          customerName: true,
+          customerEmail: true,
+          serviceName: true,
+          garage: { select: { email: true } },
+        },
+      })
+    : [];
 
   for (const order of checkout.orders) {
     notifications.push({
@@ -885,7 +1122,7 @@ export async function createDirectOrders(
       actorUserId: buyerId,
       type: "order.created",
       title: "New order received",
-      body: `Order ${order.publicId} was created from a customer checkout.`,
+      body: `Order ${order.publicId} was created from a customer checkout: ${orderItemsSummary(order.items)}.`,
       linkUrl: "/orders",
       entityType: "order",
       entityId: order.id,
@@ -894,7 +1131,7 @@ export async function createDirectOrders(
       recipientUserId: buyerId,
       type: "order.created",
       title: "Payment successful",
-      body: `Payment for ${order.publicId} was successful. Your order has been created.`,
+      body: `Payment for ${order.publicId} was successful: ${orderItemsSummary(order.items)}.`,
       linkUrl: "/orders",
       entityType: "order",
       entityId: order.id,
@@ -912,6 +1149,82 @@ export async function createDirectOrders(
         entityId: order.id,
       });
     }
+
+    await Promise.all([
+      order.supplier.email
+        ? sendMailSafely({
+            to: order.supplier.email,
+            subject: `New order ${order.publicId} ready to confirm`,
+            text: [
+              `Order ${order.publicId} was created from a customer checkout. Please sign in to confirm it.`,
+              orderItemsText(order.items),
+              `Order total: ${money(order.totalAmount, false)}`,
+            ].join("\n"),
+            html: [
+              `<p>Order <strong>${escapeHtml(order.publicId)}</strong> was created from a customer checkout. Please sign in to confirm it.</p>`,
+              orderItemsHtml(order.items),
+              `<p style="margin:16px 0 0;color:#ffffff"><strong>Order total:</strong> ${escapeHtml(money(order.totalAmount, false))}</p>`,
+            ].join(""),
+          })
+        : undefined,
+      order.buyer.email
+        ? sendMailSafely({
+            to: order.buyer.email,
+            subject: `Order ${order.publicId} placed successfully`,
+            text: [
+              `Payment for ${order.publicId} was successful. Your order has been created.`,
+              orderItemsText(order.items),
+              `Order total: ${money(order.totalAmount, false)}`,
+            ].join("\n"),
+            html: [
+              `<p>Payment for <strong>${escapeHtml(order.publicId)}</strong> was successful. Your order has been created.</p>`,
+              orderItemsHtml(order.items),
+              `<p style="margin:16px 0 0;color:#ffffff"><strong>Order total:</strong> ${escapeHtml(money(order.totalAmount, false))}</p>`,
+            ].join(""),
+          })
+        : undefined,
+    ]);
+  }
+
+  for (const booking of garageBookings) {
+    notifications.push({
+      recipientUserId: booking.garageId,
+      actorUserId: buyerId,
+      type: "booking.created",
+      title: "New service booking",
+      body: `${booking.customerName} booked ${booking.serviceName} from checkout.`,
+      linkUrl: "/bookings",
+      entityType: "garage_booking",
+      entityId: booking.id,
+    });
+    if (booking.customerId) {
+      notifications.push({
+        recipientUserId: booking.customerId,
+        type: "booking.created",
+        title: "Service booking created",
+        body: `${booking.serviceName} was added to your checkout.`,
+        linkUrl: "/bookings",
+        entityType: "garage_booking",
+        entityId: booking.id,
+      });
+    }
+
+    await Promise.all([
+      booking.garage.email
+        ? sendMailSafely({
+            to: booking.garage.email,
+            subject: `New checkout service booking ${booking.publicId}`,
+            text: `${booking.customerName} booked ${booking.serviceName} from checkout. The customer will select a slot after part delivery.`,
+          })
+        : undefined,
+      booking.customerEmail
+        ? sendMailSafely({
+            to: booking.customerEmail,
+            subject: `Service booking ${booking.publicId} added to your order`,
+            text: `${booking.serviceName} was added to your checkout. You can select the service slot after the linked parts are delivered.`,
+          })
+        : undefined,
+    ]);
   }
 
   await createNotificationsSafely(notifications);

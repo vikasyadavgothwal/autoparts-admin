@@ -35,6 +35,8 @@ const escapeHtml = (value: string) =>
 const maxRfqBidNotesLength = 500
 const maxMoneyCents = 2147483647
 const rfqRankedBidLimit = 6
+const sendMailSafely = (input: Parameters<typeof sendSmtpMail>[0]) =>
+  sendSmtpMail(input).catch(() => undefined)
 
 const requiredText = (value: unknown, label: string) => {
   const normalized = text(value)
@@ -116,6 +118,13 @@ const rfqBidDeliveryOption = (value: unknown): RfqBidDeliveryOption => {
 const requesterLabel = (source: RfqSource) =>
   source === RfqSource.fleet ? "Fleet" : "Customer"
 
+const rfqDateLabel = (value: Date) =>
+  new Intl.DateTimeFormat("en-AE", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Dubai",
+  }).format(value)
+
 const rfqRankingWindowMinutes = () => 30
 
 const addMinutes = (date: Date, minutes: number) =>
@@ -138,11 +147,63 @@ async function notifyRfqCreated(rfq: {
   projectName: string
   requesterId: string | null
   source: RfqSource
+  description: string | null
+  responseDeadline: Date
+  deliveryRequirement: string
+  paymentTerms: string
+  companyName: string
+  contactName: string
+  vehicleVin: string | null
+  parts: Array<{
+    partName: string
+    partNumber: string | null
+    quantity: number
+    vehicleVin: string | null
+    notes: string | null
+  }>
 }) {
   const [supplierIds, adminIds] = await Promise.all([
     activeSupplierRecipientIds(),
     activeAdminRecipientIds(),
   ])
+  const suppliers = supplierIds.length
+    ? await db.user.findMany({
+        where: { id: { in: supplierIds } },
+        select: { email: true },
+      })
+    : []
+  const partsText = rfq.parts
+    .map((part, index) => [
+      `${index + 1}. ${part.partName}${part.partNumber ? ` (${part.partNumber})` : ""} × ${part.quantity}`,
+      `VIN: ${part.vehicleVin || rfq.vehicleVin || "Not provided"}`,
+    ].filter(Boolean).join(" | "))
+    .join("\n")
+  const partsHtml = rfq.parts.length
+    ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:12px 0 18px"><thead><tr><th align="left" style="padding:8px 6px;border-bottom:1px solid #d1d5db">Part</th><th align="left" style="padding:8px 6px;border-bottom:1px solid #d1d5db">Qty</th><th align="left" style="padding:8px 6px;border-bottom:1px solid #d1d5db">VIN</th></tr></thead><tbody>${rfq.parts.map((part) => `<tr><td style="padding:8px 6px;border-bottom:1px solid #e5e7eb"><strong>${escapeHtml(part.partName)}</strong>${part.partNumber ? `<br><span style="color:#6b7280">${escapeHtml(part.partNumber)}</span>` : ""}</td><td style="padding:8px 6px;border-bottom:1px solid #e5e7eb">${part.quantity}</td><td style="padding:8px 6px;border-bottom:1px solid #e5e7eb;word-break:break-all">${escapeHtml(part.vehicleVin || rfq.vehicleVin || "Not provided")}</td></tr>`).join("")}</tbody></table>`
+    : "<p>No parts listed.</p>"
+  const detailsText = [
+    `${requesterLabel(rfq.source)} RFQ ${rfq.publicId} is open for supplier quotes.`,
+    `RFQ title: ${rfq.projectName}`,
+    `Requester: ${rfq.contactName} (${rfq.companyName})`,
+    `Response deadline: ${rfqDateLabel(rfq.responseDeadline)}`,
+    `Delivery requirement: ${rfq.deliveryRequirement}`,
+    `Payment terms: ${rfq.paymentTerms}`,
+    rfq.description ? `Description: ${rfq.description}` : "",
+    "",
+    "Requested parts:",
+    partsText || "No parts listed.",
+  ].filter(Boolean).join("\n")
+  const detailsHtml = [
+    `<p>${requesterLabel(rfq.source)} RFQ <strong>${escapeHtml(rfq.publicId)}</strong> is open for supplier quotes.</p>`,
+    `<p><strong>RFQ title:</strong> ${escapeHtml(rfq.projectName)}</p>`,
+    `<p><strong>Requester:</strong> ${escapeHtml(rfq.contactName)} (${escapeHtml(rfq.companyName)})</p>`,
+    `<p><strong>Response deadline:</strong> ${escapeHtml(rfqDateLabel(rfq.responseDeadline))}</p>`,
+    `<p><strong>Delivery requirement:</strong> ${escapeHtml(rfq.deliveryRequirement)}</p>`,
+    `<p><strong>Payment terms:</strong> ${escapeHtml(rfq.paymentTerms)}</p>`,
+    rfq.description ? `<p><strong>Description:</strong> ${escapeHtml(rfq.description)}</p>` : "",
+    `<p><strong>Requested parts</strong></p>`,
+    partsHtml,
+  ].filter(Boolean).join("")
   const notifications: CreateNotificationInput[] = [
     ...supplierIds.map((supplierId) => ({
       recipientUserId: supplierId,
@@ -167,16 +228,35 @@ async function notifyRfqCreated(rfq: {
   ]
 
   await createNotificationsSafely(notifications)
+  await Promise.all(
+    suppliers.map((supplier) =>
+      supplier.email
+        ? sendMailSafely({
+            to: supplier.email,
+            subject: `New ${requesterLabel(rfq.source)} RFQ ${rfq.publicId} available to quote`,
+            text: detailsText,
+            html: detailsHtml,
+          })
+        : undefined,
+    ),
+  )
 }
 
 async function notifyRfqBidSubmitted(input: {
   rfqId: string
   rfqPublicId: string
+  projectName: string
+  requesterId: string | null
+  requesterEmail: string
   supplierId: string
   source: RfqSource
   isUpdate: boolean
 }) {
   const adminIds = await activeAdminRecipientIds()
+  const supplier = await db.user.findUnique({
+    where: { id: input.supplierId },
+    select: { email: true },
+  })
   const title = input.isUpdate ? "RFQ quote updated" : "New RFQ quote received"
   const notifications: CreateNotificationInput[] = []
 
@@ -192,8 +272,43 @@ async function notifyRfqBidSubmitted(input: {
       entityId: input.rfqId,
     })),
   )
+  if (input.requesterId) {
+    notifications.push({
+      recipientUserId: input.requesterId,
+      actorUserId: input.supplierId,
+      type: input.isUpdate ? "rfq.bid.updated" : "rfq.bid.created",
+      title,
+      body: `A supplier submitted a quote for RFQ ${input.rfqPublicId}.`,
+      linkUrl: "/rfqs",
+      entityType: "rfq",
+      entityId: input.rfqId,
+    })
+  }
+  notifications.push({
+    recipientUserId: input.supplierId,
+    type: input.isUpdate ? "rfq.bid.updated" : "rfq.bid.created",
+    title: input.isUpdate ? "RFQ quote updated" : "RFQ quote submitted",
+    body: `Your quote for RFQ ${input.rfqPublicId} was submitted.`,
+    linkUrl: "/offers",
+    entityType: "rfq",
+    entityId: input.rfqId,
+  })
 
   await createNotificationsSafely(notifications)
+  await Promise.all([
+    sendMailSafely({
+      to: input.requesterEmail,
+      subject: `${title} for RFQ ${input.rfqPublicId}`,
+      text: `A supplier submitted a quote for RFQ ${input.rfqPublicId}.\nRFQ: ${input.projectName}`,
+    }),
+    supplier?.email
+      ? sendMailSafely({
+          to: supplier.email,
+          subject: `Quote submitted for RFQ ${input.rfqPublicId}`,
+          text: `Your quote for RFQ ${input.rfqPublicId} was submitted.\nRFQ: ${input.projectName}`,
+        })
+      : undefined,
+  ])
 }
 
 async function notifyRfqQuotesReady(input: {
@@ -311,6 +426,19 @@ async function notifyRfqBidAccepted(input: {
   rejectedSupplierIds: string[]
 }) {
   const adminIds = await activeAdminRecipientIds()
+  const emailRecipients = await db.user.findMany({
+    where: {
+      id: {
+        in: [
+          input.requesterId,
+          input.acceptedSupplierId,
+          ...input.rejectedSupplierIds,
+        ],
+      },
+    },
+    select: { id: true, email: true },
+  })
+  const emailByUserId = new Map(emailRecipients.map((user) => [user.id, user.email]))
   const notifications: CreateNotificationInput[] = [
     {
       recipientUserId: input.requesterId,
@@ -354,6 +482,31 @@ async function notifyRfqBidAccepted(input: {
   ]
 
   await createNotificationsSafely(notifications)
+  await Promise.all([
+    emailByUserId.get(input.requesterId)
+      ? sendMailSafely({
+          to: emailByUserId.get(input.requesterId)!,
+          subject: `Order ${input.orderPublicId} created from RFQ ${input.rfqPublicId}`,
+          text: `Payment for ${input.orderPublicId} was successful. Your order has been created from RFQ ${input.rfqPublicId}.`,
+        })
+      : undefined,
+    emailByUserId.get(input.acceptedSupplierId)
+      ? sendMailSafely({
+          to: emailByUserId.get(input.acceptedSupplierId)!,
+          subject: `Quote accepted for RFQ ${input.rfqPublicId}`,
+          text: `${requesterLabel(input.source)} placed order ${input.orderPublicId} from RFQ ${input.rfqPublicId}. Please sign in to confirm it.`,
+        })
+      : undefined,
+    ...input.rejectedSupplierIds.map((supplierId) =>
+      emailByUserId.get(supplierId)
+        ? sendMailSafely({
+            to: emailByUserId.get(supplierId)!,
+            subject: `RFQ ${input.rfqPublicId} quote not selected`,
+            text: `Another quote was selected for RFQ ${input.rfqPublicId}.`,
+          })
+        : undefined,
+    ),
+  ])
 }
 
 async function scoreRfqBids(
@@ -1162,6 +1315,8 @@ export async function submitRfqBid(
       id: true,
       publicId: true,
       requesterId: true,
+      email: true,
+      projectName: true,
       responseDeadline: true,
       source: true,
       createdAt: true,
@@ -1251,6 +1406,9 @@ export async function submitRfqBid(
   await notifyRfqBidSubmitted({
     rfqId: rfq.id,
     rfqPublicId: rfq.publicId,
+    projectName: rfq.projectName,
+    requesterId: rfq.requesterId,
+    requesterEmail: rfq.email,
     supplierId,
     source: rfq.source,
     isUpdate: false,

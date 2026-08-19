@@ -190,51 +190,25 @@ export async function createGarageService(
   const currency = (text(input.currency) || "AED").toUpperCase().slice(0, 3)
   const bookingsCount = 0
   const status = serviceStatus(input.status)
-  const [service] = await db.$queryRaw<GarageServiceRow[]>`
-    INSERT INTO "garage_services" (
-      "id",
-      "garageId",
-      "name",
-      "category",
-      "durationMinutes",
-      "price",
-      "currency",
-      "bookingsCount",
-      "status",
-      "updatedAt"
-    )
-    VALUES (
-      ${randomUUID()},
-      ${garageId},
-      ${name},
-      ${category},
-      ${durationMinutes},
-      ${price},
-      ${currency},
-      ${bookingsCount},
-      ${status}::"GarageServiceStatus",
-      CURRENT_TIMESTAMP
-    )
-    RETURNING
-      "id",
-      "publicId",
-      "garageId",
-      "name",
-      "category",
-      "durationMinutes",
-      "price",
-      "currency",
-      "bookingsCount",
-      0 AS "ratingAverage",
-      0 AS "reviewCount",
-      '[]'::jsonb AS "reviews",
-      "status",
-      NULL AS "planSuspendedAt",
-      NULL AS "planSuspensionReason",
-      "createdAt",
-      "updatedAt"
-  `
-  return mapService(service)
+  const service = await db.garageService.create({
+    data: {
+      id: randomUUID(),
+      garageId,
+      name,
+      category,
+      durationMinutes,
+      price,
+      currency,
+      bookingsCount,
+      status,
+    },
+  })
+  return mapService({
+    ...service,
+    ratingAverage: 0,
+    reviewCount: 0,
+    reviews: [],
+  })
 }
 
 export async function updateGarageService(

@@ -22,6 +22,18 @@ const numberFromEnv = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+const textToHtml = (value: string) =>
+  value
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p style="margin:0 0 14px">${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
+    .join("")
+
+const formatEmailSubject = (subject: string) => {
+  const cleanSubject = subject.trim().replace(/\s+/g, " ") || "Notification"
+  if (/AutoParts Pro/i.test(cleanSubject)) return cleanSubject
+  return `AutoParts Pro — ${cleanSubject}`
+}
+
 export function brandedEmailHtml(input: {
   title: string
   preview?: string
@@ -32,11 +44,12 @@ export function brandedEmailHtml(input: {
 
   return [
     `<!doctype html>`,
-    `<html>`,
-    `<body ${BRAND_MARKER} style="margin:0;background:#0a0a0a;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#f9fafb">`,
+    `<html lang="en">`,
+    `<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>`,
+    `<body ${BRAND_MARKER} style="margin:0;background:#0a0a0a;padding:0;font-family:Arial,Helvetica,sans-serif;color:#f9fafb">`,
     `<span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden">${safePreview}</span>`,
     `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">`,
-    `<tr><td align="center">`,
+    `<tr><td align="center" style="padding:24px 12px">`,
     `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;border-collapse:collapse;border:1px solid #2a2a2a;background:#111111;border-radius:14px;overflow:hidden">`,
     `<tr><td style="padding:24px 28px;background:#171717;border-bottom:1px solid #2a2a2a">`,
     `<p style="margin:0 0 8px;color:#dc2626;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase">AutoParts Pro</p>`,
@@ -53,12 +66,11 @@ export function brandedEmailHtml(input: {
 }
 
 const ensureBrandedHtml = (input: MailInput) => {
-  if (!input.html) return undefined
-  if (input.html.includes(BRAND_MARKER)) return input.html
+  if (input.html?.includes(BRAND_MARKER)) return input.html
   return brandedEmailHtml({
     title: input.subject,
     preview: input.text.split("\n").find(Boolean) ?? input.subject,
-    body: input.html,
+    body: input.html ?? textToHtml(input.text),
   })
 }
 
@@ -74,6 +86,7 @@ export async function sendSmtpMail(input: MailInput) {
   }
 
   const from = fromAddress.includes("<") ? fromAddress : `AutoParts Pro <${fromAddress}>`
+  const subject = formatEmailSubject(input.subject)
 
   const transporter = nodemailer.createTransport({
     host,
@@ -85,7 +98,7 @@ export async function sendSmtpMail(input: MailInput) {
   await transporter.sendMail({
     from,
     to: input.to,
-    subject: input.subject,
+    subject,
     text: input.text,
     html: ensureBrandedHtml(input),
   })

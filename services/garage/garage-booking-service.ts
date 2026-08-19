@@ -26,6 +26,9 @@ import type {
   UserGarageBookingRecord,
 } from "@/types/garage/bookings"
 
+const sendMailSafely = (input: Parameters<typeof sendSmtpMail>[0]) =>
+  sendSmtpMail(input).catch(() => undefined)
+
 type GarageBookingRow = {
   id: string
   publicId: string
@@ -93,6 +96,23 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;")
+
+const bookingDateLabel = (value: string | null) => {
+  if (!value) return "To be scheduled"
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat("en-AE", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "UTC",
+      }).format(date)
+}
+
+const bookingAmount = (booking: GarageBookingRecord) =>
+  `${booking.currency} ${(booking.price / 100).toFixed(2)}`
 
 const requiredText = (value: unknown, label: string, maxLength = 160) => {
   const normalized = text(value)
@@ -361,7 +381,107 @@ const bookingSelect = Prisma.sql`
 `
 
 async function notifyGarageBookingCreated(booking: GarageBookingRecord) {
-  const adminIds = await activeAdminRecipientIds()
+  const [adminIds, garage] = await Promise.all([
+    activeAdminRecipientIds(),
+    db.user.findUnique({
+      where: { id: booking.garageId },
+      select: {
+        email: true,
+        phone: true,
+        companyName: true,
+        firstName: true,
+        lastName: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        country: true,
+        garageProfile: {
+          select: {
+            contactEmail: true,
+            mobile: true,
+            address: true,
+            city: true,
+            state: true,
+            country: true,
+          },
+        },
+      },
+    }),
+  ])
+  const garageName =
+    garage?.companyName ||
+    [garage?.firstName, garage?.lastName].filter(Boolean).join(" ") ||
+    garage?.email ||
+    "Garage"
+  const garageProfile = garage?.garageProfile
+  const garageAddress = [
+    garageProfile?.address || garage?.addressLine1,
+    garage?.addressLine2,
+    garageProfile?.city || garage?.city,
+    garageProfile?.state || garage?.state,
+    garageProfile?.country || garage?.country,
+  ]
+    .filter(Boolean)
+    .join(", ") || "Not provided"
+  const garageEmail = garageProfile?.contactEmail || garage?.email || "Not provided"
+  const garagePhone = garageProfile?.mobile || garage?.phone || "Not provided"
+  const garageRecipient = garageProfile?.contactEmail || garage?.email
+  const dateLabel = bookingDateLabel(booking.bookingDate)
+  const timeLabel = booking.bookingTime || "To be scheduled"
+  const vehicleLabel = [
+    booking.vehicleYear,
+    booking.vehicleMake,
+    booking.vehicleModel,
+  ]
+    .filter(Boolean)
+    .join(" ") || "Not provided"
+  const detailsText = [
+    `Garage: ${garageName}`,
+    `Garage address: ${garageAddress}`,
+    `Garage email: ${garageEmail}`,
+    `Garage phone: ${garagePhone}`,
+    `Service: ${booking.serviceName}`,
+    `Date: ${dateLabel}`,
+    `Time: ${timeLabel}`,
+    `Vehicle: ${vehicleLabel}`,
+    `VIN: ${booking.vehicleVin || "Not provided"}`,
+    `Total: ${bookingAmount(booking)}`,
+    booking.notes ? `Notes: ${booking.notes}` : "",
+  ].filter(Boolean).join("\n")
+  const detailsHtml = [
+    `<p><strong>Garage:</strong> ${escapeHtml(garageName)}</p>`,
+    `<p><strong>Garage address:</strong> ${escapeHtml(garageAddress)}</p>`,
+    `<p><strong>Garage email:</strong> ${escapeHtml(garageEmail)}</p>`,
+    `<p><strong>Garage phone:</strong> ${escapeHtml(garagePhone)}</p>`,
+    `<p><strong>Service:</strong> ${escapeHtml(booking.serviceName)}</p>`,
+    `<p><strong>Date:</strong> ${escapeHtml(dateLabel)}</p>`,
+    `<p><strong>Time:</strong> ${escapeHtml(timeLabel)}</p>`,
+    `<p><strong>Vehicle:</strong> ${escapeHtml(vehicleLabel)}</p>`,
+    `<p><strong>VIN:</strong> ${escapeHtml(booking.vehicleVin || "Not provided")}</p>`,
+    `<p><strong>Total:</strong> ${escapeHtml(bookingAmount(booking))}</p>`,
+    booking.notes ? `<p><strong>Notes:</strong> ${escapeHtml(booking.notes)}</p>` : "",
+  ].filter(Boolean).join("")
+  const customerDetailsText = [
+    `Garage: ${garageName}`,
+    `Garage address: ${garageAddress}`,
+    `Service: ${booking.serviceName}`,
+    `Date: ${dateLabel}`,
+    `Time: ${timeLabel}`,
+    `Vehicle: ${vehicleLabel}`,
+    `Total: ${bookingAmount(booking)}`,
+    booking.notes ? `Notes: ${booking.notes}` : "",
+  ].filter(Boolean).join("\n")
+  const customerDetailsHtml = [
+    `<p><strong>Garage:</strong> ${escapeHtml(garageName)}</p>`,
+    `<p><strong>Garage address:</strong> ${escapeHtml(garageAddress)}</p>`,
+    `<p><strong>Service:</strong> ${escapeHtml(booking.serviceName)}</p>`,
+    `<p><strong>Date:</strong> ${escapeHtml(dateLabel)}</p>`,
+    `<p><strong>Time:</strong> ${escapeHtml(timeLabel)}</p>`,
+    `<p><strong>Vehicle:</strong> ${escapeHtml(vehicleLabel)}</p>`,
+    `<p><strong>Total:</strong> ${escapeHtml(bookingAmount(booking))}</p>`,
+    booking.notes ? `<p><strong>Notes:</strong> ${escapeHtml(booking.notes)}</p>` : "",
+  ].filter(Boolean).join("")
   const notifications: CreateNotificationInput[] = [
     {
       recipientUserId: booking.garageId,
@@ -398,6 +518,24 @@ async function notifyGarageBookingCreated(booking: GarageBookingRecord) {
   }
 
   await createNotificationsSafely(notifications)
+  await Promise.all([
+    garageRecipient
+      ? sendMailSafely({
+          to: garageRecipient,
+          subject: `New service booking ${booking.publicId} from ${booking.customerName}`,
+          text: `${booking.customerName} created service booking ${booking.publicId}.\n\n${detailsText}`,
+          html: `<p><strong>${escapeHtml(booking.customerName)}</strong> created service booking <strong>${escapeHtml(booking.publicId)}</strong>.</p>${detailsHtml}`,
+        })
+      : undefined,
+    booking.customerEmail
+      ? sendMailSafely({
+          to: booking.customerEmail,
+          subject: `Service booking ${booking.publicId} confirmed`,
+          text: `Your service booking ${booking.publicId} is confirmed.\n\n${customerDetailsText}`,
+          html: `<p>Your service booking <strong>${escapeHtml(booking.publicId)}</strong> is confirmed.</p>${customerDetailsHtml}`,
+        })
+      : undefined,
+  ])
 }
 
 async function notifyGarageBookingStatusChanged(booking: GarageBookingRecord) {
@@ -415,8 +553,23 @@ async function notifyGarageBookingStatusChanged(booking: GarageBookingRecord) {
       entityId: booking.id,
     })
   }
+  notifications.push({
+    recipientUserId: booking.garageId,
+    type: "booking.status.updated",
+    title: "Booking status updated",
+    body: `${booking.publicId} is now ${booking.status}.`,
+    linkUrl: "/bookings",
+    entityType: "garage_booking",
+    entityId: booking.id,
+  })
 
-  const adminIds = await activeAdminRecipientIds()
+  const [adminIds, garage] = await Promise.all([
+    activeAdminRecipientIds(),
+    db.user.findUnique({
+      where: { id: booking.garageId },
+      select: { email: true },
+    }),
+  ])
   notifications.push(
     ...adminIds.map((adminId) => ({
       recipientAdminId: adminId,
@@ -433,9 +586,9 @@ async function notifyGarageBookingStatusChanged(booking: GarageBookingRecord) {
   await createNotificationsSafely(notifications)
 
   if (booking.customerEmail) {
-    await sendSmtpMail({
+    await sendMailSafely({
       to: booking.customerEmail,
-      subject: `Garage booking ${booking.status}`,
+      subject: `Your booking ${booking.publicId} is ${booking.status}`,
       text: [
         `Your booking ${booking.publicId} is now ${booking.status}.`,
         `Service: ${booking.serviceName}`,
@@ -452,7 +605,29 @@ async function notifyGarageBookingStatusChanged(booking: GarageBookingRecord) {
           ? `<p><strong>Cancellation reason:</strong> ${escapeHtml(booking.cancellationReason)}</p>`
           : "",
       ].join(""),
-    }).catch(() => undefined)
+    })
+  }
+  if (garage?.email) {
+    await sendMailSafely({
+      to: garage.email,
+      subject: `Booking ${booking.publicId} status changed to ${booking.status}`,
+      text: [
+        `Booking ${booking.publicId} is now ${booking.status}.`,
+        `Service: ${booking.serviceName}`,
+        booking.cancellationReason
+          ? `Cancellation reason: ${booking.cancellationReason}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      html: [
+        `<p>Booking <strong>${escapeHtml(booking.publicId)}</strong> is now <strong>${escapeHtml(booking.status)}</strong>.</p>`,
+        `<p><strong>Service:</strong> ${escapeHtml(booking.serviceName)}</p>`,
+        booking.cancellationReason
+          ? `<p><strong>Cancellation reason:</strong> ${escapeHtml(booking.cancellationReason)}</p>`
+          : "",
+      ].join(""),
+    })
   }
 }
 
@@ -562,6 +737,7 @@ export async function createPublicGarageBooking(
         ${vehicleModel},
         ${vehicleVin},
         ${notes},
+        NULL,
         ${date}::date,
         ${time},
         ${service.durationMinutes},
@@ -694,6 +870,7 @@ export async function createGarageOfflineBooking(
         ${vehicleModel},
         ${vehicleVinValue},
         ${notes},
+        NULL,
         ${date}::date,
         ${time},
         ${service.durationMinutes},
