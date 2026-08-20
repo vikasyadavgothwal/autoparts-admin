@@ -101,6 +101,14 @@ export async function importSupplierPartsBulk(
       !hasProductInfo &&
       !(existingSkuOffer?.partUid && existingSkuOffer.mappingStatus === SupplierPartMappingStatus.mapped)
     ) {
+      const reason =
+        "Provide OEM Part Number, or provide Brand Name and Competitor OEM Part Number"
+      await upsertPendingSupplierProductInfo(
+        supplierId,
+        rowForPersistence,
+        vendorSku,
+        reason,
+      )
       return {
         ok: false as const,
         rowNumber: row.rowNumber,
@@ -109,8 +117,7 @@ export async function importSupplierPartsBulk(
         oemNumber: "",
         competitorPartNumber: competitorOem,
         competitorBrandName: competitorBrand,
-        reason:
-          "Provide OEM Part Number, or provide Brand Name and Competitor OEM Part Number",
+        reason,
       }
     }
     if (seenSkus.has(vendorSku)) {
@@ -334,6 +341,12 @@ export async function importSupplierPartsBulk(
       }
     } catch (error) {
       if (error instanceof SupplierImageUploadError) {
+        await upsertPendingSupplierProductInfo(
+          supplierId,
+          { ...rowForPersistence, imageUrls: [] },
+          vendorSku,
+          error.message,
+        )
         return {
           ok: false as const,
           rowNumber: row.rowNumber,
