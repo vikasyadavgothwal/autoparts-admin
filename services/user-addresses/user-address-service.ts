@@ -217,3 +217,9 @@ export async function getUserAddressForCheckout(
   if (!address) throw new Error("Select a delivery address before checkout");
   return address;
 }
+
+export async function getDefaultUserAddressForCheckout(userId: string) {
+  const [address] = await listUserAddresses(userId);
+  if (!address) throw new Error("Select a default delivery address before creating an order");
+  return address;
+}

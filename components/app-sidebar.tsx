@@ -111,7 +111,8 @@ export function AppSidebar({ branding }: { branding?: { siteName: string; logoUr
   const [isBusinessPlatformOpen, setIsBusinessPlatformOpen] = useState(false)
   const [isPagesOpen, setIsPagesOpen] = useState(false)
   const isBusinessPlatformActive = businessPlatformLinks.some((item) => isLinkActive(item.url))
-  const isPagesActive = appPageLinks.some((item) => isLinkActive(item.url))
+  const isSiteSettingsActive = isLinkActive(appRoutes.siteSettings)
+  const isPagesActive = appPageLinks.some((item) => isLinkActive(item.url)) || isSiteSettingsActive
 
   useEffect(() => {
     if (isBusinessPlatformActive) {
@@ -168,22 +169,6 @@ export function AppSidebar({ branding }: { branding?: { siteName: string; logoUr
             )
           })}
 
-            <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              isActive={currentPath === appRoutes.siteSettings || currentPath.startsWith(`${appRoutes.siteSettings}/`)}
-              className={`h-auto px-4 py-3 rounded-lg transition-all ${
-                currentPath === appRoutes.siteSettings || currentPath.startsWith(`${appRoutes.siteSettings}/`)
-                  ? "bg-[#DC2626] text-white hover:bg-[#DC2626]"
-                  : "text-[#9CA3AF] hover:bg-[#2A2A2A] hover:text-white"
-              }`}
-            >
-              <Link href={appRoutes.siteSettings} className="flex items-center gap-3">
-                <Globe2 className="h-5 w-5" />
-                <span className="font-medium">Site Settings</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
@@ -200,7 +185,7 @@ export function AppSidebar({ branding }: { branding?: { siteName: string; logoUr
                 className="flex w-full items-center gap-3"
               >
                 <BadgeCheck className="h-5 w-5" />
-                <span className="font-medium">Business Platform</span>
+                <span className="font-medium">Plans and Support</span>
                 <ChevronDown
                   className={`ml-auto h-4 w-4 transition-transform ${
                     isBusinessPlatformOpen ? "rotate-180" : ""
@@ -254,7 +239,7 @@ export function AppSidebar({ branding }: { branding?: { siteName: string; logoUr
                 className="flex w-full items-center gap-3"
               >
                 <LayoutTemplate className="h-5 w-5" />
-                <span className="font-medium">Pages</span>
+                <span className="font-medium">Site Pages</span>
                 <ChevronDown
                   className={`ml-auto h-4 w-4 transition-transform ${
                     isPagesOpen ? "rotate-180" : ""
@@ -266,6 +251,22 @@ export function AppSidebar({ branding }: { branding?: { siteName: string; logoUr
 
           {isPagesOpen && (
             <SidebarMenuSub>
+              <SidebarMenuSubItem>
+                <SidebarMenuSubButton
+                  asChild
+                  isActive={isSiteSettingsActive}
+                  className={`${
+                    isSiteSettingsActive
+                      ? "bg-[#DC2626] text-white hover:bg-[#DC2626]"
+                      : "text-[#9CA3AF] hover:bg-[#2A2A2A] hover:text-white"
+                  }`}
+                >
+                  <Link href={appRoutes.siteSettings} className="flex items-center gap-3">
+                    <Globe2 className="h-4 w-4" />
+                    <span>Site Settings</span>
+                  </Link>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
               {appPageLinks.map((pageItem: AppPageLink) => {
                 const Icon = pageIconByKey[pageItem.key]
                 const isActive = isLinkActive(pageItem.url)

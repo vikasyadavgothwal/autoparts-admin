@@ -18,13 +18,11 @@ export async function PATCH(request: NextRequest) {
     if (!body.ok) return apiError(body.message)
 
     try {
-      return apiOk({
-        plan: await changeBusinessAccountPlan({
-          ownerUserId: auth.user.id,
-          businessAccountId: body.body.businessAccountId,
-          planId: body.body.planId,
-        }),
-      })
+      return apiOk(await changeBusinessAccountPlan({
+        ownerUserId: auth.user.id,
+        businessAccountId: body.body.businessAccountId,
+        planId: body.body.planId,
+      }))
     } catch (error) {
       return apiError(apiErrorMessage(error, "Unable to change plan"))
     }

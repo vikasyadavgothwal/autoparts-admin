@@ -9,7 +9,10 @@ import {
   RfqSource,
   RfqStatus,
 } from "@/lib/generated/prisma/client"
-import { getUserAddressForCheckout } from "@/services/user-addresses/user-address-service"
+import {
+  getDefaultUserAddressForCheckout,
+  getUserAddressForCheckout,
+} from "@/services/user-addresses/user-address-service"
 import { getUserVehicleForRfq } from "@/services/user-vehicles/user-vehicle-service"
 import {
   activeAdminRecipientIds,
@@ -1177,6 +1180,111 @@ export async function listFleetRfqs(
   }
 }
 
+export async function getFleetRfq(fleetId: string, rfqId: string) {
+  await refreshRfqRankingWindow(rfqId)
+  const rfq = await db.rfq.findFirst({
+    where: { id: rfqId, requesterId: fleetId, source: RfqSource.fleet },
+    include: {
+      parts: true,
+      fleetVehicle: true,
+      bids: {
+        where: {
+          OR: [
+            { rankingVisible: true, status: RfqBidStatus.submitted },
+            { status: RfqBidStatus.accepted },
+          ],
+        },
+        include: {
+          items: { orderBy: { createdAt: "asc" } },
+          supplier: {
+            select: {
+              id: true,
+              supplierPublicId: true,
+              companyName: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              featuredSupplier: true,
+            },
+          },
+        },
+        orderBy: [{ rankingPosition: "asc" }, { totalAmount: "asc" }],
+      },
+      order: true,
+    },
+  })
+  if (!rfq) throw new Error("RFQ not found")
+  return mapRfqMoney(rfq)
+}
+
+export async function getUserRfq(userId: string, rfqId: string) {
+  await refreshRfqRankingWindow(rfqId)
+  const rfq = await db.rfq.findFirst({
+    where: { id: rfqId, requesterId: userId, source: RfqSource.user },
+    include: {
+      parts: true,
+      bids: {
+        where: {
+          OR: [
+            { rankingVisible: true, status: RfqBidStatus.submitted },
+            { status: RfqBidStatus.accepted },
+          ],
+        },
+        include: {
+          items: { orderBy: { createdAt: "asc" } },
+          supplier: {
+            select: {
+              id: true,
+              supplierPublicId: true,
+              companyName: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              featuredSupplier: true,
+            },
+          },
+        },
+        orderBy: [{ rankingPosition: "asc" }, { totalAmount: "asc" }],
+      },
+      order: true,
+    },
+  })
+  if (!rfq) throw new Error("RFQ not found")
+  return mapRfqMoney(rfq)
+}
+
+export async function getSupplierRfq(supplierId: string, rfqId: string) {
+  const rfq = await db.rfq.findFirst({
+    where: {
+      id: rfqId,
+      status: RfqStatus.open,
+      order: null,
+      bids: { none: { status: RfqBidStatus.accepted } },
+    },
+    include: {
+      parts: true,
+      fleetVehicle: true,
+      bids: {
+        where: { supplierId },
+        include: { items: { orderBy: { createdAt: "asc" } } },
+        orderBy: { updatedAt: "desc" },
+      },
+    },
+  })
+  if (!rfq) throw new Error("RFQ not found")
+  const mapped = mapRfqMoney(rfq)
+  return {
+    ...mapped,
+    parts: mapped.parts.map((part) => ({
+      id: part.id,
+      partName: part.partName,
+      partNumber: part.partNumber,
+      quantity: part.quantity,
+      notes: part.notes,
+    })),
+  }
+}
+
 export async function listUserRfqs(
   userId: string,
   page: number,
@@ -1435,10 +1543,7 @@ export async function acceptRfqBid(
 ) {
   const deliveryAddress = addressId
     ? await getUserAddressForCheckout(requesterId, addressId)
-    : null
-  if (!deliveryAddress) {
-    throw new Error("Select a delivery address before creating an order")
-  }
+    : await getDefaultUserAddressForCheckout(requesterId)
 
   await refreshRfqRankingWindow(rfqId)
 

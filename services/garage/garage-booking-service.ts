@@ -75,6 +75,17 @@ type UserGarageBookingRow = GarageBookingRow & {
   reviewGarageReply: string | null
 }
 
+type GarageDayHours = {
+  enabled: boolean
+  open: string
+  close: string
+}
+
+type GarageScheduleRow = {
+  workingDays: string[] | null
+  workingHoursByDay: unknown
+}
+
 type BookingCustomer = {
   id: string
   firstName: string | null
@@ -206,6 +217,63 @@ const minutesToTime = (minutes: number) => {
   return `${hour}:${String(minute).padStart(2, "0")} ${suffix}`
 }
 
+const dayNameForDate = (date: string) =>
+  new Date(`${date}T12:00:00.000Z`).toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "UTC",
+  })
+
+const hhmmToMinutes = (value: string) => {
+  const match = value.match(/^([01]\d|2[0-3]):([0-5]\d)$/)
+  if (!match) return null
+  return Number(match[1]) * 60 + Number(match[2])
+}
+
+const scheduleHoursByDay = (value: unknown) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  const result: Record<string, GarageDayHours> = {}
+  for (const [day, rawHours] of Object.entries(value as Record<string, unknown>)) {
+    if (!rawHours || typeof rawHours !== "object" || Array.isArray(rawHours)) continue
+    const hours = rawHours as Record<string, unknown>
+    result[day] = {
+      enabled: Boolean(hours.enabled),
+      open: typeof hours.open === "string" ? hours.open : "",
+      close: typeof hours.close === "string" ? hours.close : "",
+    }
+  }
+  return result
+}
+
+async function assertGarageOpenForSlot(
+  tx: Prisma.TransactionClient,
+  garageId: string,
+  date: string,
+  time: string,
+) {
+  const [schedule] = await tx.$queryRaw<GarageScheduleRow[]>`
+    SELECT "workingDays", "workingHoursByDay"
+    FROM "garage_profiles"
+    WHERE "garageId" = ${garageId}
+    LIMIT 1
+  `
+  const day = dayNameForDate(date)
+  const hoursByDay = scheduleHoursByDay(schedule?.workingHoursByDay)
+  const dayHours = hoursByDay[day]
+  const legacyDays = Array.isArray(schedule?.workingDays) ? schedule.workingDays : []
+  const requestedStart = timeToMinutes(time)
+  const requestedEnd = requestedStart + 15
+  const open = dayHours ? hhmmToMinutes(dayHours.open) : legacyDays.length ? 9 * 60 : 9 * 60
+  const close = dayHours ? hhmmToMinutes(dayHours.close) : legacyDays.length ? 18 * 60 : 18 * 60
+
+  if (dayHours && !dayHours.enabled) throw new Error("Garage is closed on the selected day")
+  if (!dayHours && legacyDays.length > 0 && !legacyDays.includes(day)) {
+    throw new Error("Garage is closed on the selected day")
+  }
+  if (open === null || close === null || requestedStart < open || requestedEnd > close) {
+    throw new Error("Booking time must be within garage opening hours")
+  }
+}
+
 async function assertGarageSlotAvailable(
   tx: Prisma.TransactionClient,
   garageId: string,
@@ -213,6 +281,7 @@ async function assertGarageSlotAvailable(
   time: string,
 ) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${garageId}:${date}`}))`
+  await assertGarageOpenForSlot(tx, garageId, date, time)
   const existing = await tx.$queryRaw<Array<{ bookingTime: string; durationMinutes: number }>>`
     SELECT "bookingTime", "durationMinutes"
     FROM "garage_bookings"

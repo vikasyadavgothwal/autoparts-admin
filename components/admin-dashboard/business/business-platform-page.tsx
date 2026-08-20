@@ -46,7 +46,7 @@ export async function BusinessPlatformPage({ section = "plans" }: { section?: "p
               <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#DC2626]">Subscription control center</p>
-                  <h1 className="mt-3 text-3xl font-semibold text-white lg:text-4xl">Business Platform</h1>
+                  <h1 className="mt-3 text-3xl font-semibold text-white lg:text-4xl">Plans and Support</h1>
 
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:flex">

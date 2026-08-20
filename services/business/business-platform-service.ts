@@ -8,6 +8,7 @@ import { logError } from "@/lib/logger"
 import { createSignedS3ObjectUrl, deleteObjectFromS3, getS3ObjectKeyFromUrl } from "@/lib/storage/s3"
 import { createNotificationsSafely } from "@/services/notifications/notification-service"
 import { getAdminSupportNotificationEmails } from "@/services/platform-settings/platform-settings-service"
+import { getPlanPeriodEnd, getPlanTransition } from "@/services/business/plan-transition"
 import {
   calculateFeaturedVendorCategoryQuote,
   featuredCategorySource,
@@ -516,6 +517,11 @@ const accountInclude = () => ({
   roles: { orderBy: { createdAt: "asc" } },
   permissions: { orderBy: { code: "asc" } },
   addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect },
+  paymentTransactions: {
+    where: { type: "plan" },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  },
   invitations: {
     orderBy: { createdAt: "desc" },
     take: 20,
@@ -731,20 +737,6 @@ const sameDateValue = (left: Date | null | undefined, right: Date | null | undef
 const formatMailDate = (value: Date | null | undefined) =>
   value ? value.toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC", year: "numeric" }) : "Not set"
 
-const addPlanPeriod = (date: Date, plan: { billingPeriod: string; monthlyBillingDays: number }) => {
-  const next = new Date(date)
-  const period = plan.billingPeriod.toLowerCase()
-  if (period.includes("year")) {
-    next.setFullYear(next.getFullYear() + 1)
-    return next
-  }
-  if (period.includes("month")) {
-    next.setDate(next.getDate() + plan.monthlyBillingDays)
-    return next
-  }
-  return null
-}
-
 const fullName = (user: {
   firstName: string | null
   lastName: string | null
@@ -927,6 +919,9 @@ const mapBusinessPaymentTransaction = (row: {
     status: row.status,
     validityDays: typeof metadata.validityDays === "number" ? metadata.validityDays : null,
     validUntil: typeof metadata.validUntil === "string" ? metadata.validUntil : null,
+    effectiveAt: typeof metadata.effectiveAt === "string" ? metadata.effectiveAt : null,
+    fromPlanName: typeof metadata.fromPlanName === "string" ? metadata.fromPlanName : null,
+    toPlanName: typeof metadata.toPlanName === "string" ? metadata.toPlanName : null,
     createdAt: row.createdAt.toISOString(),
   }
 }
@@ -940,6 +935,7 @@ async function recordBusinessPaymentTransaction(input: {
   description: string
   amount: number
   currency?: string | null
+  status?: "Paid" | "Applied" | "Scheduled"
   metadata?: Prisma.InputJsonValue
 }) {
   return db.businessPaymentTransaction.create({
@@ -952,7 +948,7 @@ async function recordBusinessPaymentTransaction(input: {
       description: input.description,
       amount: Math.max(0, Math.round(input.amount)),
       currency: input.currency ?? defaultAddOnPriceCurrency,
-      status: "Paid",
+      status: input.status ?? "Paid",
       metadata: input.metadata,
     },
   })
@@ -965,6 +961,13 @@ const mapAccount = (account: BusinessAccountFull) => ({
   name: account.name,
   isActive: account.isActive,
   plan: mapPlan({ ...account.plan, _count: { businessAccounts: 0 } }),
+  subscription: {
+    activatedAt: account.updatedAt.toISOString(),
+    endsAt: account.plan.code === BusinessPlanCode.Free
+      ? null
+      : getPlanPeriodEnd(account.updatedAt, account.plan).toISOString(),
+  },
+  planHistory: account.paymentTransactions.map(mapBusinessPaymentTransaction),
   owner: {
     id: account.owner.id,
     publicId: account.owner.publicId,
@@ -1985,7 +1988,9 @@ const buildEntitlementPayload = async (
     plan: mapPlan({ ...account.plan, _count: { businessAccounts: 0 } }),
     subscription: {
       activatedAt: account.updatedAt.toISOString(),
-      endsAt: toIso(addPlanPeriod(account.updatedAt, account.plan)),
+      endsAt: account.plan.code === BusinessPlanCode.Free
+        ? null
+        : getPlanPeriodEnd(account.updatedAt, account.plan).toISOString(),
     },
     usage: usageCounts,
     limits,
@@ -2251,6 +2256,215 @@ export async function reconcileGarageServicePlan(userId: string) {
   })
 }
 
+const transactionMetadata = (value: Prisma.JsonValue | null | undefined) =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+
+const scheduledEffectiveAt = (metadata: Record<string, unknown>) => {
+  if (typeof metadata.effectiveAt !== "string") return null
+  const value = new Date(metadata.effectiveAt)
+  return Number.isNaN(value.getTime()) ? null : value
+}
+
+async function reconcileScheduledPlanChange(businessAccountId: string) {
+  const scheduled = await db.businessPaymentTransaction.findFirst({
+    where: { businessAccountId, type: "plan", status: "Scheduled" },
+    orderBy: { createdAt: "desc" },
+  })
+  if (!scheduled) return false
+
+  const metadata = transactionMetadata(scheduled.metadata)
+  const effectiveAt = scheduledEffectiveAt(metadata)
+  if (!effectiveAt) {
+    await db.businessPaymentTransaction.update({
+      where: { id: scheduled.id },
+      data: { status: "Cancelled" },
+    })
+    return false
+  }
+  if (effectiveAt.getTime() > Date.now()) return false
+
+  const [account, nextPlan] = await Promise.all([
+    db.businessAccount.findUnique({ where: { id: businessAccountId }, include: { plan: true } }),
+    scheduled.sourceId
+      ? db.businessPlan.findFirst({ where: { id: scheduled.sourceId, isActive: true }, include: planInclude })
+      : null,
+  ])
+  if (!account || !nextPlan || nextPlan.accountType !== account.type) {
+    await db.businessPaymentTransaction.update({
+      where: { id: scheduled.id },
+      data: { status: "Cancelled" },
+    })
+    return false
+  }
+
+  const applied = await db.$transaction(async (tx) => {
+    const claimed = await tx.businessPaymentTransaction.updateMany({
+      where: { id: scheduled.id, status: "Scheduled" },
+      data: {
+        status: "Applied",
+        description: `Plan downgraded from ${account.plan.name} to ${nextPlan.name}`,
+      },
+    })
+    if (!claimed.count) return false
+
+    await tx.businessAccount.update({
+      where: { id: account.id },
+      data: { planId: nextPlan.id },
+    })
+    await tx.businessActivityLog.create({
+      data: {
+        businessAccountId: account.id,
+        actorUserId: null,
+        action: "business_plan.downgrade_applied",
+        entityType: "business_plan",
+        entityId: nextPlan.id,
+        metadata: {
+          fromPlan: account.plan.name,
+          toPlan: nextPlan.name,
+          effectiveAt: effectiveAt.toISOString(),
+          accountType: account.type,
+        },
+      },
+    })
+    return true
+  })
+  if (!applied) return false
+
+  await enforcePlanLimitedRecords({ account, plan: nextPlan })
+  return true
+}
+
+async function reconcileScheduledPlanChanges(businessAccountIds: string[]) {
+  const results = await Promise.all(
+    Array.from(new Set(businessAccountIds)).map(reconcileScheduledPlanChange),
+  )
+  return results.some(Boolean)
+}
+
+async function transitionBusinessAccountPlan(input: {
+  account: Prisma.BusinessAccountGetPayload<{ include: { plan: true } }>
+  nextPlan: BusinessPlanWithCount
+  actorUserId?: string | null
+  adminId?: string | null
+}) {
+  const direction = getPlanTransition(input.account.plan.code, input.nextPlan.code)
+  if (direction === "same") {
+    return {
+      plan: mapPlan(input.nextPlan),
+      change: {
+        status: "unchanged" as const,
+        effectiveAt: input.account.updatedAt.toISOString(),
+        fromPlanName: input.account.plan.name,
+        toPlanName: input.nextPlan.name,
+      },
+    }
+  }
+
+  const periodEnd = getPlanPeriodEnd(input.account.updatedAt, input.account.plan)
+  const scheduleDowngrade = direction === "downgrade" && periodEnd.getTime() > Date.now()
+  const effectiveAt = scheduleDowngrade ? periodEnd : new Date()
+  const metadata = {
+    fromPlanId: input.account.plan.id,
+    fromPlanName: input.account.plan.name,
+    fromPlanPriceAmount: input.account.plan.priceAmount,
+    toPlanId: input.nextPlan.id,
+    toPlanName: input.nextPlan.name,
+    toPlanPriceAmount: input.nextPlan.priceAmount,
+    effectiveAt: effectiveAt.toISOString(),
+    accountType: input.account.type,
+    ...(input.adminId ? { assignedBy: "admin", adminId: input.adminId } : {}),
+  }
+
+  if (scheduleDowngrade) {
+    await db.$transaction(async (tx) => {
+      await tx.businessPaymentTransaction.updateMany({
+        where: { businessAccountId: input.account.id, type: "plan", status: "Scheduled" },
+        data: { status: "Cancelled" },
+      })
+      await tx.businessPaymentTransaction.create({
+        data: {
+          businessAccountId: input.account.id,
+          payerUserId: input.actorUserId ?? null,
+          type: "plan",
+          sourceId: input.nextPlan.id,
+          sourceKey: input.nextPlan.code,
+          description: `Downgrade from ${input.account.plan.name} to ${input.nextPlan.name} scheduled for ${effectiveAt.toISOString().slice(0, 10)}`,
+          amount: 0,
+          currency: input.nextPlan.priceCurrency,
+          status: "Scheduled",
+          metadata,
+        },
+      })
+      await tx.businessActivityLog.create({
+        data: {
+          businessAccountId: input.account.id,
+          actorUserId: input.actorUserId ?? null,
+          action: input.adminId ? "business_plan.admin_downgrade_scheduled" : "business_plan.downgrade_scheduled",
+          entityType: "business_plan",
+          entityId: input.nextPlan.id,
+          metadata,
+        },
+      })
+    })
+    return {
+      plan: mapPlan({ ...input.account.plan, _count: { businessAccounts: 0 } }),
+      change: {
+        status: "scheduled" as const,
+        effectiveAt: effectiveAt.toISOString(),
+        fromPlanName: input.account.plan.name,
+        toPlanName: input.nextPlan.name,
+      },
+    }
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.businessPaymentTransaction.updateMany({
+      where: { businessAccountId: input.account.id, type: "plan", status: "Scheduled" },
+      data: { status: "Cancelled" },
+    })
+    await tx.businessAccount.update({
+      where: { id: input.account.id },
+      data: { planId: input.nextPlan.id },
+    })
+    await tx.businessPaymentTransaction.create({
+      data: {
+        businessAccountId: input.account.id,
+        payerUserId: input.actorUserId ?? null,
+        type: "plan",
+        sourceId: input.nextPlan.id,
+        sourceKey: input.nextPlan.code,
+        description: `Plan ${direction === "upgrade" ? "upgraded" : "downgraded"} from ${input.account.plan.name} to ${input.nextPlan.name}`,
+        amount: input.adminId || direction === "downgrade" ? 0 : input.nextPlan.priceAmount,
+        currency: input.nextPlan.priceCurrency,
+        status: input.adminId || direction === "downgrade" ? "Applied" : "Paid",
+        metadata,
+      },
+    })
+    await tx.businessActivityLog.create({
+      data: {
+        businessAccountId: input.account.id,
+        actorUserId: input.actorUserId ?? null,
+        action: input.adminId ? "business_plan.admin_assigned" : "business_plan.changed",
+        entityType: "business_plan",
+        entityId: input.nextPlan.id,
+        metadata,
+      },
+    })
+  })
+  await enforcePlanLimitedRecords({ account: input.account, plan: input.nextPlan })
+  return {
+    plan: mapPlan(input.nextPlan),
+    change: {
+      status: "activated" as const,
+      effectiveAt: effectiveAt.toISOString(),
+      fromPlanName: input.account.plan.name,
+      toPlanName: input.nextPlan.name,
+    },
+  }
+}
+
 export async function changeBusinessAccountPlan(input: {
   ownerUserId: string
   businessAccountId: unknown
@@ -2261,66 +2475,19 @@ export async function changeBusinessAccountPlan(input: {
   if (!businessAccountId) throw new Error("Business account id is required")
   if (!planId) throw new Error("Plan id is required")
 
+  await reconcileScheduledPlanChange(businessAccountId)
   const account = await db.businessAccount.findFirst({
-    where: {
-      id: businessAccountId,
-      ownerUserId: input.ownerUserId,
-      isActive: true,
-    },
+    where: { id: businessAccountId, ownerUserId: input.ownerUserId, isActive: true },
     include: { plan: true },
   })
   if (!account) throw new Error("Only the account owner can change this plan")
 
   const nextPlan = await db.businessPlan.findFirst({
-    where: {
-      id: planId,
-      accountType: account.type,
-      isActive: true,
-    },
+    where: { id: planId, accountType: account.type, isActive: true },
     include: planInclude,
   })
   if (!nextPlan) throw new Error("Selected plan is not available for this business")
-  if (nextPlan.id === account.planId) return mapPlan(nextPlan)
-
-  await db.businessAccount.update({
-    where: { id: account.id },
-    data: { planId: nextPlan.id },
-  })
-  if (nextPlan.priceAmount > account.plan.priceAmount) {
-    await recordBusinessPaymentTransaction({
-      businessAccountId: account.id,
-      payerUserId: input.ownerUserId,
-      type: "plan",
-      sourceId: nextPlan.id,
-      sourceKey: nextPlan.code,
-      description: `Plan upgraded from ${account.plan.name} to ${nextPlan.name}`,
-      amount: nextPlan.priceAmount,
-      currency: nextPlan.priceCurrency,
-      metadata: {
-        fromPlanId: account.plan.id,
-        fromPlanName: account.plan.name,
-        fromPlanPriceAmount: account.plan.priceAmount,
-        toPlanId: nextPlan.id,
-        toPlanName: nextPlan.name,
-        toPlanPriceAmount: nextPlan.priceAmount,
-        accountType: account.type,
-      },
-    })
-  }
-  await enforcePlanLimitedRecords({ account, plan: nextPlan })
-  await logBusinessActivity({
-    businessAccountId: account.id,
-    actorUserId: input.ownerUserId,
-    action: "business_plan.changed",
-    entityType: "business_plan",
-    entityId: nextPlan.id,
-    metadata: {
-      fromPlan: account.plan.name,
-      toPlan: nextPlan.name,
-      accountType: account.type,
-    },
-  })
-  return mapPlan(nextPlan)
+  return transitionBusinessAccountPlan({ account, nextPlan, actorUserId: input.ownerUserId })
 }
 
 export async function assignAdminBusinessAccountPlan(input: {
@@ -2333,6 +2500,7 @@ export async function assignAdminBusinessAccountPlan(input: {
   if (!businessAccountId) throw new Error("Business account id is required")
   if (!planId) throw new Error("Plan id is required")
 
+  await reconcileScheduledPlanChange(businessAccountId)
   const account = await db.businessAccount.findFirst({
     where: { id: businessAccountId, isActive: true },
     include: { plan: true },
@@ -2344,33 +2512,12 @@ export async function assignAdminBusinessAccountPlan(input: {
     include: planInclude,
   })
   if (!nextPlan) throw new Error("Selected plan is not available for this business type")
-  if (nextPlan.id === account.planId) return mapPlan(nextPlan)
-
-  await db.businessAccount.update({
-    where: { id: account.id },
-    data: { planId: nextPlan.id },
-  })
-  await enforcePlanLimitedRecords({ account, plan: nextPlan })
-  await logBusinessActivity({
-    businessAccountId: account.id,
-    actorUserId: null,
-    action: "business_plan.admin_assigned",
-    entityType: "business_plan",
-    entityId: nextPlan.id,
-    metadata: {
-      fromPlan: account.plan.name,
-      toPlan: nextPlan.name,
-      accountType: account.type,
-      assignedBy: "admin",
-      adminId: input.adminId,
-    },
-  })
-  return mapPlan(nextPlan)
+  return transitionBusinessAccountPlan({ account, nextPlan, adminId: input.adminId })
 }
 
 async function findUserBusinessAccount(userId: string, accountType: BusinessAccountType) {
   await ensureFreeBusinessAccountsForExistingUsers()
-  return db.businessAccount.findFirst({
+  const query = () => db.businessAccount.findFirst({
     where: {
       type: accountType,
       isActive: true,
@@ -2383,6 +2530,9 @@ async function findUserBusinessAccount(userId: string, accountType: BusinessAcco
     },
     include: { plan: true, addOnRequests: { where: activeAddOnRequestWhere(), select: activeAddOnRequestSelect } },
   })
+  const account = await query()
+  if (account && await reconcileScheduledPlanChange(account.id)) return query()
+  return account
 }
 
 export async function assertBusinessPlanLimit(input: {
@@ -4180,10 +4330,14 @@ export async function assertSupplierCatalogPlanLimits(input: {
 
 export async function listBusinessAccounts() {
   await ensureFreeBusinessAccountsForExistingUsers()
-  const accounts = await db.businessAccount.findMany({
+  const query = () => db.businessAccount.findMany({
     include: accountInclude(),
     orderBy: { createdAt: "desc" },
   })
+  let accounts = await query()
+  if (await reconcileScheduledPlanChanges(accounts.map((account) => account.id))) {
+    accounts = await query()
+  }
   return accounts.map(mapAccount)
 }
 
@@ -4249,10 +4403,12 @@ export async function searchBusinessAccountOptions(input: {
 
 export async function getBusinessAccount(id: string) {
   await ensureDefaultBusinessPlans()
-  const account = await db.businessAccount.findUnique({
+  const query = () => db.businessAccount.findUnique({
     where: { id },
     include: accountInclude(),
   })
+  let account = await query()
+  if (account && await reconcileScheduledPlanChange(account.id)) account = await query()
   return account ? mapAccount(account) : null
 }
 
@@ -4350,7 +4506,7 @@ export async function getBusinessAccountOwnerId(
 }
 
 export async function getMyBusinessAccess(userId: string) {
-  const memberships = await db.businessAccountMember.findMany({
+  const query = () => db.businessAccountMember.findMany({
     where: { userId, status: BusinessMemberStatus.Active },
     include: {
       businessAccount: {
@@ -4364,6 +4520,10 @@ export async function getMyBusinessAccess(userId: string) {
     },
     orderBy: { createdAt: "asc" },
   })
+  let memberships = await query()
+  if (await reconcileScheduledPlanChanges(memberships.map((membership) => membership.businessAccountId))) {
+    memberships = await query()
+  }
 
   return Promise.all(memberships.map(async (membership) => {
     const roleIds = new Set(membership.roleIds)

@@ -202,11 +202,11 @@ export function AdminSettingsPage({ admin }: { admin: AdminProfile }) {
             <CardContent className="grid gap-3 text-sm text-[#9CA3AF] md:grid-cols-2">
               <div className="rounded-md border border-[#2A2A2A] bg-[#0A0A0A] p-3">
                 <p className="font-medium text-white">Business plans</p>
-                <p className="mt-1">Plan pricing, limits, add-ons, and support workflows are managed from Business Platform.</p>
+                <p className="mt-1">Plan pricing, limits, add-ons, and support workflows are managed from Plans and Support.</p>
               </div>
               <div className="rounded-md border border-[#2A2A2A] bg-[#0A0A0A] p-3">
                 <p className="font-medium text-white">Public content</p>
-                <p className="mt-1">Homepage, business, supplier, RFQ, services, and legal pages are managed from Pages.</p>
+                <p className="mt-1">Homepage, business, supplier, RFQ, services, legal pages, and site settings are managed from Site Pages.</p>
               </div>
             </CardContent>
           </Card>

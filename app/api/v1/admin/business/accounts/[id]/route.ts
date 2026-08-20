@@ -34,12 +34,12 @@ export async function PATCH(
 
   try {
     const { id } = await params
-    const plan = await assignAdminBusinessAccountPlan({
+    const result = await assignAdminBusinessAccountPlan({
       adminId: auth.admin.id,
       businessAccountId: id,
       planId: body.body.planId,
     })
-    return NextResponse.json({ ok: true, plan })
+    return NextResponse.json({ ok: true, ...result })
   } catch (error) {
     return apiError(apiErrorMessage(error, "Unable to assign business plan"))
   }

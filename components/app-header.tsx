@@ -9,6 +9,15 @@ import {
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
@@ -25,6 +34,7 @@ export function DashboardHeader({
   adminName: string | null
 }) {
   const [unreadNotifications, setUnreadNotifications] = useState(0)
+  const [isLogoutOpen, setIsLogoutOpen] = useState(false)
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-brand-panel backdrop-blur-sm">
@@ -89,19 +99,34 @@ export function DashboardHeader({
               sideOffset={12}
               className="w-44 rounded-sm border border-border bg-brand-panel p-1 text-sm"
             >
-              <form action={logoutAdmin} className="w-full">
                 <Button
-                  type="submit"
+                  type="button"
                   variant="ghost"
                   size="sm"
+                  onClick={() => setIsLogoutOpen(true)}
                   className="h-9 w-full justify-start gap-2 text-red-500 hover:bg-red-500/10 hover:text-red-400"
                 >
                   <LogOut className="h-4 w-4" />
                   Logout
                 </Button>
-              </form>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Dialog open={isLogoutOpen} onOpenChange={setIsLogoutOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Log out?</DialogTitle>
+                <DialogDescription>Are you sure you want to log out of the admin dashboard?</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button type="button" variant="outline">Cancel</Button>
+                </DialogClose>
+                <form action={logoutAdmin}>
+                  <Button type="submit" variant="destructive">Log out</Button>
+                </form>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
     </header>

@@ -28,7 +28,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 type BusinessPlan = {
   id: string
-  code: string
+  code: "Free" | "Pro" | "Enterprise"
   accountType: string
   name: string
   isActive: boolean
@@ -58,6 +58,15 @@ type BusinessAddOn = {
   validUntil?: string | null
   renewalAt?: string | null
   createdAt: string
+}
+
+type PlanHistoryItem = {
+  id: string
+  description: string
+  status: string
+  createdAt: string
+  effectiveAt?: string | null
+  toPlanName?: string | null
 }
 
 type BusinessPermission = {
@@ -118,6 +127,8 @@ type BusinessAccount = {
   name: string
   isActive: boolean
   plan: BusinessPlan
+  subscription?: { activatedAt?: string | null; endsAt?: string | null }
+  planHistory: PlanHistoryItem[]
   owner: BusinessPerson
   members: BusinessMember[]
   roles: BusinessRole[]
@@ -193,6 +204,12 @@ const statusBadgeClass = (status: string) => {
   if (status === "Rejected") return "border-red-500/30 bg-red-500/10 text-red-300"
   return "border-blue-500/30 bg-blue-500/10 text-blue-300"
 }
+const planStatusBadgeClass = (status: string) => status === "Scheduled"
+  ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+  : status === "Cancelled"
+    ? "border-[#3A3A3A] bg-[#151515] text-[#9CA3AF]"
+    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+const planRank = { Free: 0, Pro: 1, Enterprise: 2 } as const
 const dateFormatter = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", timeZone: "UTC", year: "numeric" })
 const dateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   day: "2-digit",
@@ -338,6 +355,12 @@ export function BusinessAccountPlanAssignment({
   const currentPage = Math.min(page, totalPages)
   const visibleAccounts = filteredAccounts.slice((currentPage - 1) * pageSize, currentPage * pageSize)
   const selectedPlanId = assignAccount ? selectedPlanByAccount[assignAccount.id] ?? assignAccount.plan.id : ""
+  const selectedPlan = assignAccount
+    ? (activePlansByType[assignAccount.type] ?? []).find((plan) => plan.id === selectedPlanId)
+    : undefined
+  const selectedPlanIsDowngrade = Boolean(
+    assignAccount && selectedPlan && planRank[selectedPlan.code] < planRank[assignAccount.plan.code],
+  )
   const selectedPlanChanged = Boolean(assignAccount && selectedPlanId !== assignAccount.plan.id)
   const permissionFeatures = permissionAccount ? effectiveFeaturesForAccount(permissionAccount) : []
   const detailSessionGroups = detailAccount ? sessionGroupsForAccount(detailAccount) : []
@@ -365,10 +388,18 @@ export function BusinessAccountPlanAssignment({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ planId }),
       })
-      const result = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+      const result = (await response.json().catch(() => null)) as {
+        ok?: boolean
+        message?: string
+        change?: { status?: string; effectiveAt?: string; toPlanName?: string }
+      } | null
       setSavingId(null)
       if (response.ok && result?.ok) {
-        toast.success("Plan assigned successfully.")
+        toast.success(
+          result.change?.status === "scheduled"
+            ? `Downgrade scheduled for ${formatDate(result.change.effectiveAt)}.`
+            : "Plan assigned and active now.",
+        )
         setAssignAccount(null)
         router.refresh()
       } else {
@@ -459,6 +490,7 @@ export function BusinessAccountPlanAssignment({
           <TableBody>
             {visibleAccounts.map((account) => {
               const addOnPreview = account.activeAddOns.slice(0, 2)
+              const pendingPlanChange = account.planHistory.find((item) => item.status === "Scheduled")
               return (
                 <TableRow key={account.id}>
                   <TableCell className="min-w-[280px] whitespace-normal">
@@ -475,6 +507,7 @@ export function BusinessAccountPlanAssignment({
                       </Badge>
                     </div>
                     <p className="mt-2 text-xs text-[#9CA3AF]">Staff {account.members.length}</p>
+                    {pendingPlanChange ? <p className="mt-1 text-xs text-amber-300">{pendingPlanChange.toPlanName ?? "Downgrade"} scheduled for {formatDate(pendingPlanChange.effectiveAt)}</p> : null}
                   </TableCell>
                   <TableCell className="min-w-[220px] whitespace-normal">
                     {addOnPreview.length ? (
@@ -674,7 +707,7 @@ export function BusinessAccountPlanAssignment({
           <DialogHeader>
             <DialogTitle>Assign plan</DialogTitle>
             <DialogDescription>
-              Change the assigned plan for {assignAccount?.name}. Downgrade limits are still validated by the backend.
+              Upgrades activate immediately. Downgrades activate after the current paid period ends.
             </DialogDescription>
           </DialogHeader>
           {assignAccount ? (
@@ -698,6 +731,22 @@ export function BusinessAccountPlanAssignment({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              {selectedPlanChanged && selectedPlan ? (
+                <div className={`rounded-lg border p-3 text-sm ${selectedPlanIsDowngrade ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}>
+                  {selectedPlanIsDowngrade
+                    ? `${assignAccount.plan.name} remains active until ${formatDate(assignAccount.subscription?.endsAt)}. ${selectedPlan.name} then activates automatically.`
+                    : `${selectedPlan.name} activates immediately.`}
+                </div>
+              ) : null}
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Plan history</p>
+                {assignAccount.planHistory.length ? assignAccount.planHistory.slice(0, 5).map((item) => (
+                  <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background p-3 text-sm">
+                    <div><p className="font-medium">{item.description}</p><p className="mt-1 text-xs text-muted-foreground">Requested {formatDate(item.createdAt)} · Effective {formatDate(item.effectiveAt ?? item.createdAt)}</p></div>
+                    <Badge variant="outline" className={planStatusBadgeClass(item.status)}>{item.status}</Badge>
+                  </div>
+                )) : <p className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">No plan history yet.</p>}
               </div>
             </div>
           ) : null}

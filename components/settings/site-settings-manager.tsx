@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { MainWebsiteSiteSettings } from "@/types/site-settings"
 
 const EMPTY_SETTINGS: MainWebsiteSiteSettings = {
@@ -33,13 +34,102 @@ const SITE_SETTINGS_TABS = [
 
 type SiteSettingsTabKey = (typeof SITE_SETTINGS_TABS)[number]["key"]
 
+const PHONE_COUNTRIES = [
+  { country: "UAE", code: "+971", digits: 9 },
+  { country: "India", code: "+91", digits: 10 },
+  { country: "Saudi Arabia", code: "+966", digits: 9 },
+  { country: "United States", code: "+1", digits: 10 },
+  { country: "United Kingdom", code: "+44", digits: 10 },
+  { country: "Oman", code: "+968", digits: 8 },
+  { country: "Qatar", code: "+974", digits: 8 },
+  { country: "Bahrain", code: "+973", digits: 8 },
+  { country: "Kuwait", code: "+965", digits: 8 },
+] as const
+
+const DEFAULT_PHONE_COUNTRY = PHONE_COUNTRIES[0]
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const ASSET_RULES: Record<"logo" | "favicon", { maxBytes: number; types: readonly string[] }> = {
+  logo: { maxBytes: 5 * 1024 * 1024, types: ["image/svg+xml", "image/png", "image/jpeg", "image/webp"] },
+  favicon: { maxBytes: 1 * 1024 * 1024, types: ["image/x-icon", "image/vnd.microsoft.icon", "image/svg+xml", "image/png", "image/webp"] },
+}
+
+function phoneCountryFor(value: string) {
+  const normalized = value.trim()
+  return PHONE_COUNTRIES.find((country) => normalized.startsWith(country.code)) ?? DEFAULT_PHONE_COUNTRY
+}
+
+function selectedPhoneCountry(code: string) {
+  return PHONE_COUNTRIES.find((country) => country.code === code) ?? DEFAULT_PHONE_COUNTRY
+}
+
+function phoneLocalNumber(value: string, countryCode: string) {
+  const digits = value.replace(/\D/g, "")
+  const countryDigits = countryCode.replace(/\D/g, "")
+  return digits.startsWith(countryDigits) ? digits.slice(countryDigits.length) : digits
+}
+
+function hasHttpUrl(value: string) {
+  if (!value) return true
+  try {
+    const url = new URL(value)
+    return url.protocol === "http:" || url.protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
+function cleanSettings(settings: MainWebsiteSiteSettings): MainWebsiteSiteSettings {
+  return {
+    ...settings,
+    siteName: settings.siteName.trim(),
+    robotsTxt: settings.robotsTxt.trim(),
+    copyright: settings.copyright.trim(),
+    seo: {
+      ...settings.seo,
+      title: settings.seo.title.trim(),
+      description: settings.seo.description.trim(),
+      keywords: settings.seo.keywords.trim(),
+      canonicalUrl: settings.seo.canonicalUrl.trim(),
+    },
+    social: {
+      facebook: settings.social.facebook.trim(),
+      instagram: settings.social.instagram.trim(),
+      x: settings.social.x.trim(),
+      youtube: settings.social.youtube.trim(),
+      linkedin: settings.social.linkedin.trim(),
+    },
+    contact: {
+      phone: settings.contact.phone.trim(),
+      email: settings.contact.email.trim().toLowerCase(),
+      address: settings.contact.address.trim(),
+    },
+  }
+}
+
+function validateSettings(settings: MainWebsiteSiteSettings, phoneCountryCode: string) {
+  const country = selectedPhoneCountry(phoneCountryCode)
+  const localPhone = phoneLocalNumber(settings.contact.phone, country.code)
+  const socialEntries = Object.entries(settings.social)
+  const invalidSocial = socialEntries.find(([, value]) => value && !hasHttpUrl(value))
+
+  if (settings.robotsTxt.length > 12000) return "robots.txt must be 12,000 characters or fewer."
+  if (settings.copyright.length > 240) return "Copyright text must be 240 characters or fewer."
+  if (invalidSocial) return `${invalidSocial[0]} must be a valid http or https URL.`
+  if (!settings.contact.phone) return "Mobile number is required."
+  if (localPhone.length !== country.digits) return `${country.country} mobile number must be ${country.digits} digits.`
+  if (!settings.contact.email) return "Contact email is required."
+  if (!EMAIL_PATTERN.test(settings.contact.email)) return "Enter a valid contact email."
+  if (!settings.contact.address) return "Contact address is required."
+  return ""
+}
+
 const publicWebsiteOrigin = (
   process.env.NEXT_PUBLIC_MAIN_WEBSITE_URL?.trim() ||
   process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
   (process.env.NODE_ENV === "production" ? "https://websitedesignersdubai.ae" : "http://localhost:3001")
 ).replace(/\/+$/, "")
 
-type TextareaProps = React.ComponentProps<"textarea"> & { label: string }
+type TextareaProps = React.ComponentProps<"textarea"> & { label: React.ReactNode }
 
 function TextareaField({ label, id, className, ...props }: TextareaProps) {
   return (
@@ -118,6 +208,7 @@ export function SiteSettingsManager() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploadingAsset, setUploadingAsset] = useState<"logo" | "favicon" | null>(null)
+  const [phoneCountryCode, setPhoneCountryCode] = useState(DEFAULT_PHONE_COUNTRY.code)
 
   useEffect(() => {
     void fetch("/api/v1/admin/platform-settings", { cache: "no-store" })
@@ -127,6 +218,7 @@ export function SiteSettingsManager() {
           throw new Error(payload.message ?? "Unable to load site settings")
         }
         setSettings(payload.siteSettings)
+        setPhoneCountryCode(phoneCountryFor(payload.siteSettings.contact.phone).code)
       })
       .catch((error) => toast.error(error instanceof Error ? error.message : "Unable to load site settings"))
       .finally(() => setLoading(false))
@@ -142,6 +234,15 @@ export function SiteSettingsManager() {
 
   async function uploadAsset(kind: "logo" | "favicon", file: File | undefined) {
     if (!file) return
+    const rule = ASSET_RULES[kind]
+    if (!rule.types.includes(file.type)) {
+      toast.error(kind === "logo" ? "Upload an SVG, PNG, JPG, or WebP logo." : "Upload an ICO, SVG, PNG, or WebP favicon.")
+      return
+    }
+    if (!file.size || file.size > rule.maxBytes) {
+      toast.error(kind === "logo" ? "Logo must be 5 MB or smaller." : "Favicon must be 1 MB or smaller.")
+      return
+    }
     setUploadingAsset(kind)
     try {
       const body = new FormData()
@@ -192,12 +293,21 @@ export function SiteSettingsManager() {
       event.currentTarget.reportValidity()
       return
     }
+    const nextSettings = cleanSettings({
+      ...settings,
+      contact: { ...settings.contact, phone: `${phoneCountry.code}${localPhone}` },
+    })
+    const validationError = validateSettings(nextSettings, phoneCountryCode)
+    if (validationError) {
+      toast.error(validationError)
+      return
+    }
     setSaving(true)
     try {
       const response = await fetch("/api/v1/admin/platform-settings", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ siteSettings: settings }),
+        body: JSON.stringify({ siteSettings: nextSettings }),
       })
       const payload = (await response.json().catch(() => ({}))) as {
         ok?: boolean
@@ -214,6 +324,21 @@ export function SiteSettingsManager() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const phoneCountry = selectedPhoneCountry(phoneCountryCode)
+  const localPhone = phoneLocalNumber(settings.contact.phone, phoneCountry.code).slice(0, phoneCountry.digits)
+
+  function updatePhoneCountry(code: string) {
+    const nextCountry = selectedPhoneCountry(code)
+    const nextLocalPhone = localPhone.slice(0, nextCountry.digits)
+    setPhoneCountryCode(nextCountry.code)
+    update("contact.phone", `${nextCountry.code}${nextLocalPhone}`)
+  }
+
+  function updateLocalPhone(value: string) {
+    const digits = value.replace(/\D/g, "").slice(0, phoneCountry.digits)
+    update("contact.phone", `${phoneCountry.code}${digits}`)
   }
 
   return (
@@ -255,10 +380,6 @@ export function SiteSettingsManager() {
                 <CardTitle className="flex items-center gap-2 text-white"><Globe2 className="size-5 text-[#DC2626]" /> Brand assets</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-5 md:grid-cols-2">
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="site-name">Website name <span className="text-[#DC2626]">*</span></Label>
-                  <Input id="site-name" value={settings.siteName} onChange={(event) => update("siteName", event.target.value)} maxLength={120} required placeholder="AutoParts Pro" />
-                </div>
                 <AssetCard kind="logo" url={settings.logoUrl} hasAsset={Boolean(settings.logoUrl || settings.logoKey)} uploading={uploadingAsset === "logo"} onUpload={(file) => { void uploadAsset("logo", file) }} onRemove={() => { void removeAsset("logo") }} />
                 <AssetCard kind="favicon" url={settings.faviconUrl} hasAsset={Boolean(settings.faviconUrl || settings.faviconKey)} uploading={uploadingAsset === "favicon"} onUpload={(file) => { void uploadAsset("favicon", file) }} onRemove={() => { void removeAsset("favicon") }} />
               </CardContent>
@@ -297,9 +418,35 @@ export function SiteSettingsManager() {
             <Card className="border-[#2A2A2A] bg-[#1A1A1A] shadow-none">
               <CardHeader><CardTitle className="flex items-center gap-2 text-white"><Mail className="size-5 text-[#DC2626]" /> Contact info</CardTitle></CardHeader>
               <CardContent className="grid gap-5 md:grid-cols-2">
-                <div className="space-y-2"><Label htmlFor="contact-phone">Phone</Label><Input id="contact-phone" type="tel" value={settings.contact.phone} onChange={(event) => update("contact.phone", event.target.value)} maxLength={40} placeholder="+971..." /></div>
-                <div className="space-y-2"><Label htmlFor="contact-email">Email</Label><Input id="contact-email" type="email" value={settings.contact.email} onChange={(event) => update("contact.email", event.target.value)} maxLength={254} placeholder="info@example.com" /></div>
-                <TextareaField id="contact-address" label="Address" value={settings.contact.address} onChange={(event) => update("contact.address", event.target.value)} maxLength={240} className="md:col-span-2" placeholder="Abu Dhabi, UAE" />
+                <div className="space-y-2">
+                  <Label htmlFor="contact-phone">Mobile <span className="text-[#DC2626]">*</span></Label>
+                  <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
+                    <Select value={phoneCountry.code} onValueChange={updatePhoneCountry}>
+                      <SelectTrigger className="h-10 w-full border-[#2A2A2A] bg-[#0A0A0A] text-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="border-[#2A2A2A] bg-[#111111] text-white">
+                        {PHONE_COUNTRIES.map((country) => (
+                          <SelectItem key={country.code} value={country.code}>{country.country} {country.code}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      id="contact-phone"
+                      type="tel"
+                      inputMode="numeric"
+                      pattern={`\\d{${phoneCountry.digits}}`}
+                      value={localPhone}
+                      onChange={(event) => updateLocalPhone(event.target.value)}
+                      maxLength={phoneCountry.digits}
+                      required
+                      placeholder={"0".repeat(phoneCountry.digits)}
+                    />
+                  </div>
+                  <p className="text-xs text-[#9CA3AF]">{phoneCountry.digits} digits required.</p>
+                </div>
+                <div className="space-y-2"><Label htmlFor="contact-email">Email <span className="text-[#DC2626]">*</span></Label><Input id="contact-email" type="email" value={settings.contact.email} onChange={(event) => update("contact.email", event.target.value)} maxLength={254} required placeholder="info@example.com" /></div>
+                <TextareaField id="contact-address" label={<>Address <span className="text-[#DC2626]">*</span></>} value={settings.contact.address} onChange={(event) => update("contact.address", event.target.value)} maxLength={240} required className="md:col-span-2" placeholder="Abu Dhabi, UAE" />
               </CardContent>
             </Card>
           ) : null}

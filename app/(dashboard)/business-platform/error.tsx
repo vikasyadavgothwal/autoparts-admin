@@ -7,7 +7,7 @@ export default function BusinessPlatformError({
 }) {
   return (
     <div className="flex min-h-[40vh] flex-col items-start justify-center gap-3 text-sm text-muted-foreground">
-      <p>Unable to load business platform.</p>
+      <p>Unable to load plans and support.</p>
       <button
         type="button"
         onClick={reset}
