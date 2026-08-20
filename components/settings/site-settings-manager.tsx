@@ -47,6 +47,7 @@ const PHONE_COUNTRIES = [
 ] as const
 
 const DEFAULT_PHONE_COUNTRY = PHONE_COUNTRIES[0]
+type PhoneCountryCode = (typeof PHONE_COUNTRIES)[number]["code"]
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const ASSET_RULES: Record<"logo" | "favicon", { maxBytes: number; types: readonly string[] }> = {
   logo: { maxBytes: 5 * 1024 * 1024, types: ["image/svg+xml", "image/png", "image/jpeg", "image/webp"] },
@@ -106,7 +107,7 @@ function cleanSettings(settings: MainWebsiteSiteSettings): MainWebsiteSiteSettin
   }
 }
 
-function validateSettings(settings: MainWebsiteSiteSettings, phoneCountryCode: string) {
+function validateSettings(settings: MainWebsiteSiteSettings, phoneCountryCode: PhoneCountryCode) {
   const country = selectedPhoneCountry(phoneCountryCode)
   const localPhone = phoneLocalNumber(settings.contact.phone, country.code)
   const socialEntries = Object.entries(settings.social)
@@ -208,7 +209,7 @@ export function SiteSettingsManager() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploadingAsset, setUploadingAsset] = useState<"logo" | "favicon" | null>(null)
-  const [phoneCountryCode, setPhoneCountryCode] = useState(DEFAULT_PHONE_COUNTRY.code)
+  const [phoneCountryCode, setPhoneCountryCode] = useState<PhoneCountryCode>(DEFAULT_PHONE_COUNTRY.code)
 
   useEffect(() => {
     void fetch("/api/v1/admin/platform-settings", { cache: "no-store" })
