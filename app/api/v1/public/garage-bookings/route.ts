@@ -54,7 +54,19 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await createPublicGarageBooking(auth.user, parsed.body)
+    const requestOrigin = request.headers.get("origin") ?? ""
+    const result = await createPublicGarageBooking(auth.user, {
+      ...parsed.body,
+      idempotencyKey: request.headers.get("idempotency-key") ?? undefined,
+      paymentSuccessUrl:
+        parsed.body.paymentSuccessUrl ??
+        (requestOrigin
+          ? `${requestOrigin}/booking?payment=success&session_id={CHECKOUT_SESSION_ID}`
+          : undefined),
+      paymentCancelUrl:
+        parsed.body.paymentCancelUrl ??
+        (requestOrigin ? `${requestOrigin}/booking?payment=cancelled` : undefined),
+    })
     return NextResponse.json({ ok: true, ...result }, { status: 201 })
   } catch (error) {
     return NextResponse.json(

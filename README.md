@@ -82,6 +82,26 @@ USER_JWT_REFRESH_SECRET=
 USER_COOKIE_DOMAIN=.websitedesignersdubai.ae
 ```
 
+## Stripe Payments
+
+Stripe is the payment authority for customer checkout, garage booking advances,
+and paid business plan/add-on purchases. Configure test-mode keys locally:
+
+```bash
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_SUCCESS_URL=http://localhost:3001/cart?payment=success&session_id={CHECKOUT_SESSION_ID}
+STRIPE_CANCEL_URL=http://localhost:3001/cart?payment=cancelled
+```
+
+Webhook endpoint:
+
+```text
+/api/v1/payments/webhook
+```
+
+Do not commit Stripe keys. Use live-mode keys only in production secrets.
+
 `USER_COOKIE_DOMAIN` allows the main website and role dashboards on sibling
 subdomains to receive the same HttpOnly user session after authentication. It
 should remain unset for localhost development.

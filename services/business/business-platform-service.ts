@@ -17,6 +17,10 @@ import {
   setSupplierFeaturedCategories,
 } from "@/services/featured-vendor/featured-vendor-category-service"
 import {
+  createStripeCheckoutPayment,
+  isStripePaymentsConfigured,
+} from "@/services/payments/stripe-payment-service"
+import {
   BusinessAccountType,
   BusinessAddOnRequestStatus,
   BusinessMemberStatus,
@@ -54,6 +58,17 @@ const faqAnswerMaxWords = 250
 
 const pickAllowed = <T extends readonly string[]>(values: T, value: string | null): T[number] | undefined =>
   values.includes(value as T[number]) ? value as T[number] : undefined
+
+const checkoutUrl = (value: unknown, fallback: string) => {
+  const raw = typeof value === "string" ? value.trim() : ""
+  if (!raw) return fallback
+  try {
+    const url = new URL(raw)
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : fallback
+  } catch {
+    return fallback
+  }
+}
 
 const staffPasswordAlphabet =
   "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*"
@@ -2469,6 +2484,9 @@ export async function changeBusinessAccountPlan(input: {
   ownerUserId: string
   businessAccountId: unknown
   planId: unknown
+  paymentSuccessUrl?: unknown
+  paymentCancelUrl?: unknown
+  idempotencyKey?: unknown
 }) {
   const businessAccountId = cleanText(input.businessAccountId, 80)
   const planId = cleanText(input.planId, 80)
@@ -2487,6 +2505,52 @@ export async function changeBusinessAccountPlan(input: {
     include: planInclude,
   })
   if (!nextPlan) throw new Error("Selected plan is not available for this business")
+  const direction = getPlanTransition(account.plan.code, nextPlan.code)
+  if (direction === "upgrade" && nextPlan.priceAmount > 0) {
+    if (!isStripePaymentsConfigured()) {
+      throw new Error("Stripe test keys are not configured on the backend")
+    }
+    const defaultSuccessUrl = process.env.STRIPE_SUCCESS_URL ?? "http://localhost:3004/plans?payment=success&session_id={CHECKOUT_SESSION_ID}"
+    const defaultCancelUrl = process.env.STRIPE_CANCEL_URL ?? "http://localhost:3004/plans?payment=cancelled"
+    const payment = await createStripeCheckoutPayment({
+      payerUserId: input.ownerUserId,
+      businessAccountId: account.id,
+      purpose: "business_plan",
+      amount: nextPlan.priceAmount,
+      currency: nextPlan.priceCurrency,
+      description: `Upgrade to ${nextPlan.name}`,
+      idempotencyKey:
+        typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
+          ? input.idempotencyKey.trim()
+          : `business-plan:${account.id}:${nextPlan.id}:${createHash("sha256").update(account.updatedAt.toISOString()).digest("hex").slice(0, 16)}`,
+      successUrl: checkoutUrl(input.paymentSuccessUrl, defaultSuccessUrl),
+      cancelUrl: checkoutUrl(input.paymentCancelUrl, defaultCancelUrl),
+      entities: [{ entityType: "business_plan", entityId: nextPlan.id, amount: nextPlan.priceAmount }],
+      metadata: {
+        businessAccountId: account.id,
+        fromPlanId: account.plan.id,
+        fromPlanName: account.plan.name,
+        toPlanId: nextPlan.id,
+        toPlanName: nextPlan.name,
+      },
+    })
+    return {
+      plan: mapPlan({ ...account.plan, _count: { businessAccounts: 0 } }),
+      change: {
+        status: "payment_required" as const,
+        effectiveAt: new Date().toISOString(),
+        fromPlanName: account.plan.name,
+        toPlanName: nextPlan.name,
+      },
+      payment: {
+        id: payment.payment.id,
+        publicId: payment.payment.publicId,
+        status: payment.payment.status,
+        checkoutUrl: payment.checkoutUrl,
+        stripeConfigured: payment.stripeConfigured,
+      },
+    }
+  }
   return transitionBusinessAccountPlan({ account, nextPlan, actorUserId: input.ownerUserId })
 }
 
@@ -2770,6 +2834,9 @@ export async function requestBusinessAddOn(input: {
   note?: unknown
   categoryIds?: unknown
   validityDays?: unknown
+  paymentSuccessUrl?: unknown
+  paymentCancelUrl?: unknown
+  idempotencyKey?: unknown
 }) {
   const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
   const featureKey = cleanText(input.featureKey, 120)
@@ -2815,8 +2882,8 @@ export async function requestBusinessAddOn(input: {
       priceQuantity: priceQuote.priceQuantity,
       unitPriceAmount: priceQuote.unitPriceAmount,
       requestedByUserId: input.userId,
-      status: BusinessAddOnRequestStatus.Enabled,
-      decidedAt: enabledAt,
+      status: priceQuote.priceAmount > 0 ? BusinessAddOnRequestStatus.Requested : BusinessAddOnRequestStatus.Enabled,
+      decidedAt: priceQuote.priceAmount > 0 ? null : enabledAt,
       validFrom: enabledAt,
       validUntil,
       renewalAt: validUntil,
@@ -2829,14 +2896,65 @@ export async function requestBusinessAddOn(input: {
       priceQuantity: priceQuote.priceQuantity,
       unitPriceAmount: priceQuote.unitPriceAmount,
       requestedByUserId: input.userId,
-      status: BusinessAddOnRequestStatus.Enabled,
+      status: priceQuote.priceAmount > 0 ? BusinessAddOnRequestStatus.Requested : BusinessAddOnRequestStatus.Enabled,
       decidedByAdminId: null,
-      decidedAt: enabledAt,
+      decidedAt: priceQuote.priceAmount > 0 ? null : enabledAt,
       validFrom: enabledAt,
       validUntil,
       renewalAt: validUntil,
     },
   })
+
+  if (priceQuote.priceAmount > 0) {
+    if (!isStripePaymentsConfigured()) {
+      throw new Error("Stripe test keys are not configured on the backend")
+    }
+    const defaultSuccessUrl = process.env.STRIPE_SUCCESS_URL ?? "http://localhost:3004/add-ons?payment=success&session_id={CHECKOUT_SESSION_ID}"
+    const defaultCancelUrl = process.env.STRIPE_CANCEL_URL ?? "http://localhost:3004/add-ons?payment=cancelled"
+    const payment = await createStripeCheckoutPayment({
+      payerUserId: input.userId,
+      businessAccountId: account.id,
+      purpose: "business_add_on",
+      amount: priceQuote.priceAmount,
+      currency: priceQuote.priceCurrency,
+      description: `Add-on: ${label}`,
+      idempotencyKey:
+        typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
+          ? input.idempotencyKey.trim()
+          : `business-add-on:${account.id}:${featureKey}`,
+      successUrl: checkoutUrl(input.paymentSuccessUrl, defaultSuccessUrl),
+      cancelUrl: checkoutUrl(input.paymentCancelUrl, defaultCancelUrl),
+      entities: [{ entityType: "business_add_on", entityId: row.id, amount: priceQuote.priceAmount }],
+      metadata: {
+        businessAccountId: account.id,
+        featureKey,
+        label,
+        validityDays: priceQuote.validityDays,
+        categoryIds: categoryQuote?.categoryIds ?? null,
+      },
+    })
+    return {
+      id: row.id,
+      featureKey,
+      label,
+      status: row.status,
+      priceAmount: row.priceAmount,
+      priceCurrency: row.priceCurrency,
+      priceQuantity: row.priceQuantity,
+      unitPriceAmount: row.unitPriceAmount,
+      validityDays: priceQuote.validityDays,
+      validFrom: toIso(row.validFrom),
+      validUntil: toIso(row.validUntil),
+      renewalAt: toIso(row.renewalAt),
+      payment: {
+        id: payment.payment.id,
+        publicId: payment.payment.publicId,
+        status: payment.payment.status,
+        checkoutUrl: payment.checkoutUrl,
+        stripeConfigured: payment.stripeConfigured,
+      },
+    }
+  }
 
   if (categoryQuote) {
     await setSupplierFeaturedCategories({

@@ -1057,6 +1057,67 @@ model BusinessPaymentTransaction {
   @@map("business_payment_transactions")
 }
 
+model Payment {
+  id                      String    @id
+  publicId                String    @unique
+  payerUserId             String?
+  businessAccountId       String?
+  purpose                 String
+  amount                  Int
+  currency                String    @default("AED")
+  status                  String    @default("requires_payment")
+  stripePaymentIntentId   String?   @unique
+  stripeCheckoutSessionId String?   @unique
+  stripeCustomerId        String?
+  idempotencyKey          String    @unique
+  description             String
+  failureCode             String?
+  failureMessage          String?
+  metadata                Json?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  paidAt                  DateTime?
+  failedAt                DateTime?
+  refundedAt              DateTime?
+
+  items PaymentItem[]
+
+  @@index([payerUserId, createdAt])
+  @@index([businessAccountId, createdAt])
+  @@index([purpose, status])
+  @@map("payments")
+}
+
+model PaymentItem {
+  id         String   @id
+  paymentId  String
+  entityType String
+  entityId   String
+  amount     Int
+  currency   String   @default("AED")
+  createdAt  DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentId, entityType, entityId])
+  @@index([entityType, entityId])
+  @@map("payment_items")
+}
+
+model StripeWebhookEvent {
+  id              String    @id
+  stripeEventId   String    @unique
+  eventType       String
+  objectId        String?
+  processedAt     DateTime?
+  processingError String?
+  payload         Json?
+  createdAt       DateTime  @default(now())
+
+  @@index([eventType, objectId])
+  @@map("stripe_webhook_events")
+}
+
 model BusinessApiKey {
   id                String    @id
   businessAccountId String

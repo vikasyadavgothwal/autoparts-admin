@@ -18,6 +18,9 @@ export type GarageBookingInput = {
   notes?: unknown
   bookingDate?: unknown
   bookingTime?: unknown
+  paymentSuccessUrl?: unknown
+  paymentCancelUrl?: unknown
+  idempotencyKey?: unknown
 }
 
 export type GarageOfflineBookingInput = Omit<GarageBookingInput, "garageId">

@@ -73,6 +73,8 @@ export async function POST(request: NextRequest) {
     items?: unknown;
     services?: unknown;
     addressId?: unknown;
+    paymentSuccessUrl?: unknown;
+    paymentCancelUrl?: unknown;
   }>(request);
   if (!body.ok)
     return NextResponse.json(
@@ -80,7 +82,19 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   try {
-    const checkout = await createDirectOrders(auth.user.id, body.body);
+    const requestOrigin = request.headers.get("origin") ?? "";
+    const fallbackSuccessUrl = requestOrigin
+      ? `${requestOrigin}/cart?payment=success&session_id={CHECKOUT_SESSION_ID}`
+      : undefined;
+    const fallbackCancelUrl = requestOrigin
+      ? `${requestOrigin}/cart?payment=cancelled`
+      : undefined;
+    const checkout = await createDirectOrders(auth.user.id, {
+      ...body.body,
+      idempotencyKey: request.headers.get("idempotency-key") ?? undefined,
+      paymentSuccessUrl: body.body.paymentSuccessUrl ?? fallbackSuccessUrl,
+      paymentCancelUrl: body.body.paymentCancelUrl ?? fallbackCancelUrl,
+    });
     return NextResponse.json(
       {
         ok: true,

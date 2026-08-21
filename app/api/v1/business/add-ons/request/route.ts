@@ -19,6 +19,8 @@ export async function POST(request: NextRequest) {
       note?: unknown
       categoryIds?: unknown
       validityDays?: unknown
+      paymentSuccessUrl?: unknown
+      paymentCancelUrl?: unknown
     }>(request)
     if (!body.ok) return apiError(body.message)
 
@@ -30,6 +32,9 @@ export async function POST(request: NextRequest) {
         note: body.body.note,
         categoryIds: body.body.categoryIds,
         validityDays: body.body.validityDays,
+        idempotencyKey: request.headers.get("idempotency-key") ?? undefined,
+        paymentSuccessUrl: body.body.paymentSuccessUrl,
+        paymentCancelUrl: body.body.paymentCancelUrl,
       })
       return apiCreated({ addOnRequest })
     } catch (error) {

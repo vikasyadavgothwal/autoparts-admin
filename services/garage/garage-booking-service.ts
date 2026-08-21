@@ -18,6 +18,10 @@ import {
   type PaginatedResult,
   type PaginationInput,
 } from "@/services/garage/pagination"
+import {
+  createStripeCheckoutPayment,
+  isStripePaymentsConfigured,
+} from "@/services/payments/stripe-payment-service"
 import type {
   GarageBookingInput,
   GarageOfflineBookingInput,
@@ -28,6 +32,17 @@ import type {
 
 const sendMailSafely = (input: Parameters<typeof sendSmtpMail>[0]) =>
   sendSmtpMail(input).catch(() => undefined)
+
+const checkoutUrl = (value: unknown, fallback: string) => {
+  const raw = typeof value === "string" ? value.trim() : ""
+  if (!raw) return fallback
+  try {
+    const url = new URL(raw)
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : fallback
+  } catch {
+    return fallback
+  }
+}
 
 type GarageBookingRow = {
   id: string
@@ -704,6 +719,9 @@ export async function createPublicGarageBooking(
   customer: BookingCustomer,
   input: GarageBookingInput,
 ) {
+  if (!isStripePaymentsConfigured()) {
+    throw new Error("Stripe test keys are not configured on the backend")
+  }
   const garageId = requiredText(input.garageId, "Garage")
   const serviceId = requiredText(input.serviceId, "Service")
   const customerName =
@@ -760,6 +778,16 @@ export async function createPublicGarageBooking(
 
   const advance = await getGarageBookingAdvanceSetting()
   const advanceAmount = calculateGarageBookingAdvanceAmount(service.price, advance)
+  const defaultSuccessUrl =
+    process.env.STRIPE_SUCCESS_URL ??
+    process.env.NEXT_PUBLIC_SITE_URL ??
+    process.env.SITE_URL ??
+    "http://localhost:3001/booking?payment=success&session_id={CHECKOUT_SESSION_ID}"
+  const defaultCancelUrl =
+    process.env.STRIPE_CANCEL_URL ??
+    process.env.NEXT_PUBLIC_SITE_URL ??
+    process.env.SITE_URL ??
+    "http://localhost:3001/booking?payment=cancelled"
 
   const [booking] = await db.$transaction(async (tx) => {
     await assertGarageSlotAvailable(tx, garageId, date, time)
@@ -814,9 +842,9 @@ export async function createPublicGarageBooking(
         ${service.currency},
         ${advance.mode === "percentage" ? advance.value : null},
         ${advanceAmount},
-        'succeeded',
-        CURRENT_TIMESTAMP,
-        'confirmed'::"GarageBookingStatus",
+        'pending',
+        NULL,
+        'pending'::"GarageBookingStatus",
         CURRENT_TIMESTAMP
       )
       RETURNING
@@ -858,6 +886,30 @@ export async function createPublicGarageBooking(
   })
 
   const mappedBooking = mapBooking(booking)
+  const payment = await createStripeCheckoutPayment({
+    payerUserId: customer.id,
+    purpose: "garage_booking_advance",
+    amount: advanceAmount,
+    currency: service.currency,
+    description: `Garage booking advance ${mappedBooking.publicId}`,
+    idempotencyKey:
+      typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
+        ? input.idempotencyKey.trim()
+        : `garage-booking:${customer.id}:${createHash("sha256")
+            .update(JSON.stringify({ garageId, serviceId, date, time, vehicleVin }))
+            .digest("hex")
+            .slice(0, 32)}`,
+    successUrl: checkoutUrl(input.paymentSuccessUrl, defaultSuccessUrl),
+    cancelUrl: checkoutUrl(input.paymentCancelUrl, defaultCancelUrl),
+    entities: [
+      {
+        entityType: "garage_booking",
+        entityId: booking.id,
+        amount: advanceAmount,
+      },
+    ],
+    metadata: { garageId, serviceId, bookingId: booking.id },
+  })
   await notifyGarageBookingCreated(mappedBooking)
   return {
     booking: mappedBooking,
@@ -867,7 +919,9 @@ export async function createPublicGarageBooking(
       percentage: advance.mode === "percentage" ? advance.value : null,
       amount: advanceAmount / 100,
       currency: service.currency,
-      status: "succeeded" as const,
+      status: payment.payment.status,
+      checkoutUrl: payment.checkoutUrl,
+      stripeConfigured: payment.stripeConfigured,
     },
   }
 }

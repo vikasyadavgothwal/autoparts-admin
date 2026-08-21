@@ -14,6 +14,8 @@ export async function PATCH(request: NextRequest) {
     const body = await readJsonBody<{
       businessAccountId?: unknown
       planId?: unknown
+      paymentSuccessUrl?: unknown
+      paymentCancelUrl?: unknown
     }>(request)
     if (!body.ok) return apiError(body.message)
 
@@ -22,6 +24,9 @@ export async function PATCH(request: NextRequest) {
         ownerUserId: auth.user.id,
         businessAccountId: body.body.businessAccountId,
         planId: body.body.planId,
+        idempotencyKey: request.headers.get("idempotency-key") ?? undefined,
+        paymentSuccessUrl: body.body.paymentSuccessUrl,
+        paymentCancelUrl: body.body.paymentCancelUrl,
       }))
     } catch (error) {
       return apiError(apiErrorMessage(error, "Unable to change plan"))

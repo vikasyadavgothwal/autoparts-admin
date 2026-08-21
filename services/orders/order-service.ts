@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { db } from "@/lib/database/prisma";
 import { sendSmtpMail } from "@/lib/email/smtp";
 import {
@@ -20,6 +22,10 @@ import {
 } from "@/services/platform-settings/platform-settings-service";
 import { getSupplierPartEffectivePriceCents } from "@/services/supplier-part-pricing";
 import { getUserAddressForCheckout } from "@/services/user-addresses/user-address-service";
+import {
+  createStripeCheckoutPayment,
+  isStripePaymentsConfigured,
+} from "@/services/payments/stripe-payment-service";
 
 const normalizePaging = (page: number, pageSize: number) => ({
   page: Math.max(1, Number.isFinite(page) ? page : 1),
@@ -300,6 +306,9 @@ type DirectOrderCheckoutInput = DirectOrderLineInput & {
   items?: unknown;
   services?: unknown;
   addressId?: unknown;
+  paymentSuccessUrl?: unknown;
+  paymentCancelUrl?: unknown;
+  idempotencyKey?: unknown;
 };
 
 const maxDirectOrderLines = 50;
@@ -406,6 +415,21 @@ const normalizeDirectServiceBookings = (input: DirectOrderCheckoutInput) => {
 
 const normalizeAddressId = (value: unknown) =>
   typeof value === "string" ? value.trim() : "";
+
+const normalizeCheckoutUrl = (value: unknown, fallback: string) => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return fallback;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return fallback;
+    return url.toString();
+  } catch {
+    return fallback;
+  }
+};
+
+const checkoutFingerprint = (value: unknown) =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 32);
 
 const mapOrder = <
   T extends {
@@ -906,6 +930,9 @@ export async function createDirectOrders(
   buyerId: string,
   input: DirectOrderCheckoutInput,
 ) {
+  if (!isStripePaymentsConfigured()) {
+    throw new Error("Stripe test keys are not configured on the backend");
+  }
   const lines = normalizeDirectOrderLines(input);
   const serviceBookings = normalizeDirectServiceBookings(input);
   const addressId = normalizeAddressId(input.addressId);
@@ -913,6 +940,18 @@ export async function createDirectOrders(
   if (serviceBookings.length && !lines.length) {
     throw new Error("Add at least one product before adding a delayed service slot");
   }
+  const defaultSuccessUrl =
+    process.env.STRIPE_SUCCESS_URL ??
+    process.env.NEXT_PUBLIC_SITE_URL ??
+    process.env.SITE_URL ??
+    "http://localhost:3001/cart?payment=success&session_id={CHECKOUT_SESSION_ID}";
+  const defaultCancelUrl =
+    process.env.STRIPE_CANCEL_URL ??
+    process.env.NEXT_PUBLIC_SITE_URL ??
+    process.env.SITE_URL ??
+    "http://localhost:3001/cart?payment=cancelled";
+  const paymentSuccessUrl = normalizeCheckoutUrl(input.paymentSuccessUrl, defaultSuccessUrl);
+  const paymentCancelUrl = normalizeCheckoutUrl(input.paymentCancelUrl, defaultCancelUrl);
   const deliveryAddress = await getUserAddressForCheckout(buyerId, addressId);
   const supplierPartIds = lines.map((line) => line.supplierPartId);
 
@@ -1001,8 +1040,7 @@ export async function createDirectOrders(
             deliveryCountry: deliveryAddress.country,
             totalAmount: group.totalAmount,
             status: OrderStatus.pending,
-            paymentStatus: PaymentStatus.succeeded,
-            paidAt: new Date(),
+            paymentStatus: PaymentStatus.pending,
             items: { create: group.items },
           },
           include: orderInclude,
@@ -1067,8 +1105,7 @@ export async function createDirectOrders(
                   ? advanceSetting.value
                   : null,
               advanceAmount,
-              advancePaymentStatus: "succeeded",
-              advancePaidAt: new Date(),
+              advancePaymentStatus: "pending",
               status: "pending_slot_selection",
               linkedOrderId: firstLinkedOrder.id,
             },
@@ -1084,6 +1121,11 @@ export async function createDirectOrders(
     }
 
     return {
+      rawOrders: orders.map((order) => ({
+        id: order.id,
+        publicId: order.publicId,
+        totalAmount: order.totalAmount,
+      })),
       orders: orders.map(mapOrder),
       summary: {
         orderCount: orders.length,
@@ -1111,18 +1153,51 @@ export async function createDirectOrders(
           customerName: true,
           customerEmail: true,
           serviceName: true,
+          advanceAmount: true,
           garage: { select: { email: true } },
         },
       })
     : [];
+
+  const payment = await createStripeCheckoutPayment({
+    payerUserId: buyerId,
+    purpose: "direct_order",
+    amount:
+      checkout.rawOrders.reduce((total, order) => total + order.totalAmount, 0) +
+      garageBookings.reduce((total, booking) => total + (booking.advanceAmount ?? 0), 0),
+    currency: "AED",
+    description: `AutoParts Pro checkout (${checkout.summary.itemCount} product${checkout.summary.itemCount === 1 ? "" : "s"})`,
+    idempotencyKey:
+      typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
+        ? input.idempotencyKey.trim()
+        : `direct-order:${buyerId}:${checkoutFingerprint({ lines, serviceBookings, addressId })}`,
+    successUrl: paymentSuccessUrl,
+    cancelUrl: paymentCancelUrl,
+    entities: [
+      ...checkout.rawOrders.map((order) => ({
+        entityType: "order" as const,
+        entityId: order.id,
+        amount: order.totalAmount,
+      })),
+      ...garageBookings.map((booking) => ({
+        entityType: "garage_booking" as const,
+        entityId: booking.id,
+        amount: booking.advanceAmount ?? 0,
+      })),
+    ].filter((entity) => entity.amount > 0),
+    metadata: {
+      orderIds: checkout.rawOrders.map((order) => order.id),
+      garageBookingIds: garageBookings.map((booking) => booking.id),
+    },
+  });
 
   for (const order of checkout.orders) {
     notifications.push({
       recipientUserId: order.supplier.id,
       actorUserId: buyerId,
       type: "order.created",
-      title: "New order received",
-      body: `Order ${order.publicId} was created from a customer checkout: ${orderItemsSummary(order.items)}.`,
+      title: "New order pending payment",
+      body: `Order ${order.publicId} was created and is waiting for customer payment.`,
       linkUrl: "/orders",
       entityType: "order",
       entityId: order.id,
@@ -1130,8 +1205,8 @@ export async function createDirectOrders(
     notifications.push({
       recipientUserId: buyerId,
       type: "order.created",
-      title: "Payment successful",
-      body: `Payment for ${order.publicId} was successful: ${orderItemsSummary(order.items)}.`,
+      title: "Checkout started",
+      body: `Complete payment for ${order.publicId}: ${orderItemsSummary(order.items)}.`,
       linkUrl: "/orders",
       entityType: "order",
       entityId: order.id,
@@ -1142,8 +1217,8 @@ export async function createDirectOrders(
         recipientAdminId: adminId,
         actorUserId: buyerId,
         type: "order.created",
-        title: "New direct order",
-        body: `Direct order ${order.publicId} was created.`,
+        title: "Direct order pending payment",
+        body: `Direct order ${order.publicId} was created and is waiting for payment.`,
         linkUrl: "/orders",
         entityType: "order",
         entityId: order.id,
@@ -1154,14 +1229,14 @@ export async function createDirectOrders(
       order.supplier.email
         ? sendMailSafely({
             to: order.supplier.email,
-            subject: `New order ${order.publicId} ready to confirm`,
+            subject: `New order ${order.publicId} pending payment`,
             text: [
-              `Order ${order.publicId} was created from a customer checkout. Please sign in to confirm it.`,
+              `Order ${order.publicId} was created from a customer checkout and is waiting for payment.`,
               orderItemsText(order.items),
               `Order total: ${money(order.totalAmount, false)}`,
             ].join("\n"),
             html: [
-              `<p>Order <strong>${escapeHtml(order.publicId)}</strong> was created from a customer checkout. Please sign in to confirm it.</p>`,
+              `<p>Order <strong>${escapeHtml(order.publicId)}</strong> was created from a customer checkout and is waiting for payment.</p>`,
               orderItemsHtml(order.items),
               `<p style="margin:16px 0 0;color:#ffffff"><strong>Order total:</strong> ${escapeHtml(money(order.totalAmount, false))}</p>`,
             ].join(""),
@@ -1170,14 +1245,14 @@ export async function createDirectOrders(
       order.buyer.email
         ? sendMailSafely({
             to: order.buyer.email,
-            subject: `Order ${order.publicId} placed successfully`,
+            subject: `Finish payment for order ${order.publicId}`,
             text: [
-              `Payment for ${order.publicId} was successful. Your order has been created.`,
+              `Your order ${order.publicId} has been created. Finish payment to send it to the supplier.`,
               orderItemsText(order.items),
               `Order total: ${money(order.totalAmount, false)}`,
             ].join("\n"),
             html: [
-              `<p>Payment for <strong>${escapeHtml(order.publicId)}</strong> was successful. Your order has been created.</p>`,
+              `<p>Your order <strong>${escapeHtml(order.publicId)}</strong> has been created. Finish payment to send it to the supplier.</p>`,
               orderItemsHtml(order.items),
               `<p style="margin:16px 0 0;color:#ffffff"><strong>Order total:</strong> ${escapeHtml(money(order.totalAmount, false))}</p>`,
             ].join(""),
@@ -1228,5 +1303,15 @@ export async function createDirectOrders(
   }
 
   await createNotificationsSafely(notifications);
-  return checkout;
+  return {
+    orders: checkout.orders,
+    summary: checkout.summary,
+    payment: {
+      id: payment.payment.id,
+      publicId: payment.payment.publicId,
+      status: payment.payment.status,
+      checkoutUrl: payment.checkoutUrl,
+      stripeConfigured: payment.stripeConfigured,
+    },
+  };
 }
