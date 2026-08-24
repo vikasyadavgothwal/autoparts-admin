@@ -23,7 +23,7 @@ export default function Error({
           <AlertTriangle className="h-7 w-7" />
         </div>
         <h1 className="text-2xl font-semibold text-foreground">
-          Something went wrong
+          Something went wrong while loading this view
         </h1>
         <p className="mt-3 text-sm text-muted-foreground">
           The admin app could not finish loading this view.
