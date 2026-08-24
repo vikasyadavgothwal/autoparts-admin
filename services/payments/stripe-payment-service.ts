@@ -70,6 +70,23 @@ type PaymentHistoryRow = PaymentRow & {
   itemCount: number;
 };
 
+type PaymentHistoryFilters = {
+  page?: number;
+  pageSize?: number;
+  from?: Date | null;
+  to?: Date | null;
+};
+
+type PaymentHistoryResult = {
+  payments: ReturnType<typeof serializePaymentHistory>[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
 type StripeCheckoutSession = {
   id: string;
   url?: string | null;
@@ -450,7 +467,28 @@ function serializePaymentHistory(row: PaymentHistoryRow) {
   };
 }
 
-export async function listUserPaymentHistory(userId: string) {
+const paymentHistoryPagination = (input: PaymentHistoryFilters) => {
+  const page = Math.max(1, Math.floor(input.page ?? 1));
+  const pageSize = Math.min(100, Math.max(1, Math.floor(input.pageSize ?? 10)));
+  return { page, pageSize, skip: (page - 1) * pageSize };
+};
+
+const paymentCreatedAtFilter = (from?: Date | null, to?: Date | null) => Prisma.sql`
+  AND (${from ?? null}::timestamp IS NULL OR p."createdAt" >= ${from ?? null})
+  AND (${to ?? null}::timestamp IS NULL OR p."createdAt" < ${to ?? null})
+`;
+
+export async function listUserPaymentHistory(
+  userId: string,
+  filters: PaymentHistoryFilters = {},
+): Promise<PaymentHistoryResult> {
+  const { page, pageSize, skip } = paymentHistoryPagination(filters);
+  const count = await db.$queryRaw<Array<{ total: number }>>`
+    SELECT COUNT(*)::int AS "total"
+    FROM "payments" p
+    WHERE p."payerUserId" = ${userId}
+    ${paymentCreatedAtFilter(filters.from, filters.to)}
+  `;
   const rows = await db.$queryRaw<PaymentHistoryRow[]>`
     SELECT p.*,
       COUNT(pi."id")::int AS "itemCount",
@@ -458,17 +496,41 @@ export async function listUserPaymentHistory(userId: string) {
     FROM "payments" p
     LEFT JOIN "payment_items" pi ON pi."paymentId" = p."id"
     WHERE p."payerUserId" = ${userId}
+    ${paymentCreatedAtFilter(filters.from, filters.to)}
     GROUP BY p."id"
     ORDER BY p."createdAt" DESC
-    LIMIT 100
+    LIMIT ${pageSize} OFFSET ${skip}
   `;
-  return rows.map(serializePaymentHistory);
+  const total = count[0]?.total ?? 0;
+  return {
+    payments: rows.map(serializePaymentHistory),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+  };
 }
 
 export async function listBusinessPaymentHistory(input: {
   userId: string;
   businessAccountId?: string | null;
-}) {
+} & PaymentHistoryFilters): Promise<PaymentHistoryResult> {
+  const { page, pageSize, skip } = paymentHistoryPagination(input);
+  const count = await db.$queryRaw<Array<{ total: number }>>`
+    SELECT COUNT(*)::int AS "total"
+    FROM "payments" p
+    WHERE p."businessAccountId" IS NOT NULL
+      AND (${input.businessAccountId ?? null}::text IS NULL OR p."businessAccountId" = ${input.businessAccountId ?? null})
+      AND (
+        p."payerUserId" = ${input.userId}
+        OR p."businessAccountId" IN (
+          SELECT "id" FROM "business_accounts" WHERE "ownerUserId" = ${input.userId}
+        )
+      )
+      ${paymentCreatedAtFilter(input.from, input.to)}
+  `;
   const rows = await db.$queryRaw<PaymentHistoryRow[]>`
     SELECT p.*,
       COUNT(pi."id")::int AS "itemCount",
@@ -483,11 +545,21 @@ export async function listBusinessPaymentHistory(input: {
           SELECT "id" FROM "business_accounts" WHERE "ownerUserId" = ${input.userId}
         )
       )
+      ${paymentCreatedAtFilter(input.from, input.to)}
     GROUP BY p."id"
     ORDER BY p."createdAt" DESC
-    LIMIT 100
+    LIMIT ${pageSize} OFFSET ${skip}
   `;
-  return rows.map(serializePaymentHistory);
+  const total = count[0]?.total ?? 0;
+  return {
+    payments: rows.map(serializePaymentHistory),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+  };
 }
 
 async function notifyPaymentStatus(payment: PaymentRow, status: "succeeded" | "failed") {

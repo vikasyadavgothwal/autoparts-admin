@@ -96,7 +96,7 @@ export async function AdminDashboardPage() {
                 <div className="flex-1 rounded-lg border border-dashboard-panel-border bg-dashboard-panel-bg px-4 py-3 font-mono text-sm font-semibold text-dashboard-text">
                   {data.vin.sample}
                 </div>
-                <Button asChild className="bg-dashboard-danger hover:bg-dashboard-danger/90">
+                <Button asChild className="bg-primary hover:bg-dashboard-danger/90">
                   <Link href={appRoutes.vinDecoder}>Decode VIN</Link>
                 </Button>
               </div>
