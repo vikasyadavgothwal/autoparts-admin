@@ -201,6 +201,17 @@ async function findPaymentById(paymentId: string) {
   return rows[0] ?? null;
 }
 
+async function findPaymentByIdOrSession(paymentId: string) {
+  const rows = await db.$queryRaw<PaymentRow[]>`
+    SELECT * FROM "payments"
+    WHERE "id" = ${paymentId}
+       OR "publicId" = ${paymentId}
+       OR "stripeCheckoutSessionId" = ${paymentId}
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
 async function findPaymentForStripeObject(input: {
   sessionId?: string | null;
   paymentIntentId?: string | null;
@@ -441,6 +452,9 @@ async function paymentPurposeDetails(paymentId: string) {
 const paymentStatusLabel = (status: string) =>
   status === "succeeded" ? "Paid" : status === "failed" ? "Failed" : "Pending";
 
+const paymentNeedsStripeRefresh = (status: string) =>
+  status === "pending" || status === "requires_payment";
+
 const moneyText = (amount: number, currency: string) =>
   `${currency || defaultCurrency} ${(amount / 100).toLocaleString("en-US", {
     minimumFractionDigits: 2,
@@ -469,7 +483,7 @@ function serializePaymentHistory(row: PaymentHistoryRow) {
 
 async function refreshPendingHistoryRows(rows: PaymentHistoryRow[]) {
   const pendingRows = rows.filter(
-    (row) => row.status === "pending" && row.stripeCheckoutSessionId,
+    (row) => paymentNeedsStripeRefresh(row.status) && row.stripeCheckoutSessionId,
   );
   if (!pendingRows.length || !isStripePaymentsConfigured()) return false;
 
@@ -480,7 +494,7 @@ async function refreshPendingHistoryRows(rows: PaymentHistoryRow[]) {
     (result) =>
       result.status === "fulfilled" &&
       result.value?.status &&
-      result.value.status !== "pending",
+      !paymentNeedsStripeRefresh(result.value.status),
   );
 }
 
@@ -937,7 +951,7 @@ export async function markPaymentFailed(input: {
 }
 
 export async function refreshStripePaymentStatus(paymentId: string) {
-  const payment = await findPaymentById(paymentId.trim());
+  const payment = await findPaymentByIdOrSession(paymentId.trim());
   if (!payment) throw new Error("Payment not found");
   if (!isStripePaymentsConfigured() || !payment.stripeCheckoutSessionId || payment.status === "succeeded") {
     return payment;

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { db } from "@/lib/database/prisma";
 import { getOptionalUserFromRequest } from "@/lib/auth/api-guards";
 import { refreshStripePaymentStatus } from "@/services/payments/stripe-payment-service";
 
@@ -25,11 +26,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
         { status: 404 },
       );
     }
-    if (
-      payment.payerUserId &&
-      payment.payerUserId !== auth.user.id &&
-      payment.businessAccountId === null
-    ) {
+    const ownsBusinessPayment = payment.businessAccountId
+      ? await db.businessAccount.count({
+          where: { id: payment.businessAccountId, ownerUserId: auth.user.id },
+        })
+      : 0;
+    if (payment.payerUserId !== auth.user.id && ownsBusinessPayment < 1) {
       return NextResponse.json(
         { ok: false, message: "Payment not found" },
         { status: 404 },
