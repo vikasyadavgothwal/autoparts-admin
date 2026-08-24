@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { optimizePublicImageUpload } from "@/lib/client-image-optimization"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -246,9 +247,20 @@ export function SiteSettingsManager() {
     }
     setUploadingAsset(kind)
     try {
+      const uploadFile = kind === "logo"
+        ? await optimizePublicImageUpload(file, {
+            maxWidth: 720,
+            maxHeight: 480,
+            quality: 0.82,
+          })
+        : file
+      if (!uploadFile.size || uploadFile.size > rule.maxBytes) {
+        throw new Error(kind === "logo" ? "Logo must be 5 MB or smaller." : "Favicon must be 1 MB or smaller.")
+      }
+
       const body = new FormData()
       body.set("kind", kind)
-      body.set("file", file)
+      body.set("file", uploadFile)
       const response = await fetch("/api/v1/admin/platform-settings/assets", { method: "POST", body })
       const payload = (await response.json().catch(() => ({}))) as {
         ok?: boolean

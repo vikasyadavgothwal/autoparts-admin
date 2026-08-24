@@ -131,12 +131,11 @@ export function AppSidebar({ branding }: { branding?: { siteName: string; logoUr
   return (
     <Sidebar className="border-sidebar-border bg-[#1A1A1A] text-white">
       <SidebarHeader className="border-b border-[#2A2A2A] p-6">
-        <Link href="/" className="block">
+        <Link href="/" className="flex justify-center">
           {branding?.logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={branding.logoUrl} alt={branding.siteName} className="h-20 w-auto max-w-full object-contain object-left" />
-          ) : <h2 className="text-2xl font-bold text-white">{branding?.siteName === "AutoPartsPro" || branding?.siteName === "AutoParts Pro" || !branding?.siteName ? <>AutoParts<span className="text-[#DC2626]"> Pro</span></> : branding.siteName}</h2>}
-          <p className="mt-1 text-sm text-[#9CA3AF]">Administrator</p>
+            <img src={branding.logoUrl} alt={branding.siteName} className="h-20 w-auto max-w-full object-contain object-center" />
+          ) : <h2 className="text-center text-2xl font-bold text-white">{branding?.siteName === "AutoPartsPro" || branding?.siteName === "AutoParts Pro" || !branding?.siteName ? <>AutoParts<span className="text-[#DC2626]"> Pro</span></> : branding.siteName}</h2>}
         </Link>
       </SidebarHeader>
 

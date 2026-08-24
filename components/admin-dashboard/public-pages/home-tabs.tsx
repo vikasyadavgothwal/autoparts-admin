@@ -3,6 +3,7 @@
 import { type ChangeEvent, type ReactNode, useEffect, useState } from "react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import { optimizePublicImageUpload } from "@/lib/client-image-optimization"
 import { uploadHomeBannerImage } from "@/actions/admin-dashboard/public-pages/home-banner-image"
 import { saveHomePageContent } from "@/actions/admin-dashboard/public-pages/public-content"
 import { SeoPanel } from "@/components/admin-dashboard/public-pages/seo-panel"
@@ -260,7 +261,24 @@ export function HomeTabs({ initialConfig, initialSeo }: HomePageContentProps) {
       return
     }
 
-    const objectUrl = URL.createObjectURL(file)
+    let uploadFile: File
+    try {
+      uploadFile = await optimizePublicImageUpload(file, {
+        maxWidth: 1600,
+        maxHeight: 1100,
+        quality: 0.76,
+      })
+    } catch {
+      uploadFile = file
+    }
+
+    if (uploadFile.size > HOME_BANNER_IMAGE_MAX_BYTES) {
+      toast.error(`Image must be ${HOME_BANNER_IMAGE_MAX_SIZE_LABEL} or smaller.`)
+      event.target.value = ""
+      return
+    }
+
+    const objectUrl = URL.createObjectURL(uploadFile)
 
     setHomeConfig((previous: HomePageConfig) => ({
       ...previous,
@@ -274,7 +292,7 @@ export function HomeTabs({ initialConfig, initialSeo }: HomePageContentProps) {
       banner: "Image selected. Click Publish to upload.",
     }))
 
-    setPendingBannerImage(file)
+    setPendingBannerImage(uploadFile)
     event.target.value = ""
   }
 
