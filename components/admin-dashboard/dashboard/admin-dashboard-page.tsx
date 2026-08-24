@@ -58,7 +58,7 @@ export async function AdminDashboardPage() {
               <span
                 className={`rounded-full px-4 py-2 text-sm font-semibold ${
                   index === 0
-                    ? "bg-dashboard-danger text-white"
+                    ? "bg-primary text-white"
                     : index === pipeline.length - 1
                       ? "bg-dashboard-warning/10 text-dashboard-warning"
                       : "bg-dashboard-page-bg text-dashboard-text"

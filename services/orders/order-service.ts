@@ -20,7 +20,9 @@ import {
   calculateGarageBookingAdvanceAmount,
   getGarageBookingAdvanceSetting,
 } from "@/services/platform-settings/platform-settings-service";
-import { getSupplierPartEffectivePriceCents } from "@/services/supplier-part-pricing";
+import {
+  getSupplierPartPriceBreakdownCents,
+} from "@/services/supplier-part-pricing";
 import { getUserAddressForCheckout } from "@/services/user-addresses/user-address-service";
 import {
   createStripeCheckoutPayment,
@@ -438,6 +440,10 @@ const mapOrder = <
       quantity: number;
       unitPrice: number | null;
       lineTotal: number | null;
+      supplierOriginalUnitPrice?: number | null;
+      supplierVatPercentage?: number | null;
+      supplierVatAmount?: number | null;
+      supplierVatMode?: string | null;
       deliveredAt?: Date | string | null;
     }>;
     garageBookings?: Array<{
@@ -462,11 +468,19 @@ const mapOrder = <
   })(),
   deliveredItemCount: order.items.filter((item) => item.deliveredAt).length,
   totalItemCount: order.items.length,
-  items: order.items.map((item) => ({
-    ...item,
-    unitPrice: item.unitPrice === null ? null : item.unitPrice / 100,
-    lineTotal: item.lineTotal === null ? null : item.lineTotal / 100,
-  })),
+  items: order.items.map((item) => {
+    const publicItem = { ...item };
+    delete publicItem.supplierOriginalUnitPrice;
+    delete publicItem.supplierVatPercentage;
+    delete publicItem.supplierVatAmount;
+    delete publicItem.supplierVatMode;
+
+    return {
+      ...publicItem,
+      unitPrice: item.unitPrice === null ? null : item.unitPrice / 100,
+      lineTotal: item.lineTotal === null ? null : item.lineTotal / 100,
+    };
+  }),
   garageBookings: order.garageBookings?.map((booking) => ({
     ...booking,
     price: booking.price / 100,
@@ -978,7 +992,14 @@ export async function createDirectOrders(
       {
         supplierId: string;
         totalAmount: number;
-        items: Prisma.OrderItemCreateWithoutOrderInput[];
+        items: Array<{
+          create: Prisma.OrderItemCreateWithoutOrderInput;
+          supplierPartId: string;
+          supplierOriginalUnitPrice: number;
+          supplierVatPercentage: number;
+          supplierVatAmount: number;
+          supplierVatMode: string | null;
+        }>;
       }
     >();
 
@@ -999,7 +1020,8 @@ export async function createDirectOrders(
         );
       }
 
-      const unitPrice = getSupplierPartEffectivePriceCents(supplierPart);
+      const price = getSupplierPartPriceBreakdownCents(supplierPart);
+      const unitPrice = price.customerUnitPrice;
       const lineTotal = unitPrice * line.quantity;
       const existingGroup = groupedOrders.get(supplierPart.supplierId) ?? {
         supplierId: supplierPart.supplierId,
@@ -1008,44 +1030,61 @@ export async function createDirectOrders(
       };
       existingGroup.totalAmount += lineTotal;
       existingGroup.items.push({
-        supplierPart: { connect: { id: supplierPart.id } },
-        partName: supplierPart.originalPartName || supplierPart.part?.partName || "Auto part",
-        partNumber:
-          supplierPart.originalOemNumber ||
-          supplierPart.originalMpn ||
-          supplierPart.part?.partNumber,
-        quantity: line.quantity,
-        unitPrice,
-        lineTotal,
+        create: {
+          supplierPart: { connect: { id: supplierPart.id } },
+          partName: supplierPart.originalPartName || supplierPart.part?.partName || "Auto part",
+          partNumber:
+            supplierPart.originalOemNumber ||
+            supplierPart.originalMpn ||
+            supplierPart.part?.partNumber,
+          quantity: line.quantity,
+          unitPrice,
+          lineTotal,
+        },
+        supplierPartId: supplierPart.id,
+        supplierOriginalUnitPrice: price.supplierUnitPrice,
+        supplierVatPercentage: price.vatPercent,
+        supplierVatAmount: price.vatAmount,
+        supplierVatMode: price.vatMode,
       });
       groupedOrders.set(supplierPart.supplierId, existingGroup);
     }
 
     const orders = [];
     for (const group of groupedOrders.values()) {
-      orders.push(
-        await transaction.order.create({
-          data: {
-            source: OrderSource.direct,
-            buyerId,
-            supplierId: group.supplierId,
-            deliveryAddressId: deliveryAddress.id,
-            deliveryRecipientName: deliveryAddress.recipientName,
-            deliveryPhone: deliveryAddress.phone,
-            deliveryAddressLine1: deliveryAddress.addressLine1,
-            deliveryAddressLine2: deliveryAddress.addressLine2,
-            deliveryLandmark: deliveryAddress.landmark,
-            deliveryCity: deliveryAddress.city,
-            deliveryState: deliveryAddress.state,
-            deliveryCountry: deliveryAddress.country,
-            totalAmount: group.totalAmount,
-            status: OrderStatus.pending,
-            paymentStatus: PaymentStatus.pending,
-            items: { create: group.items },
-          },
-          include: orderInclude,
-        }),
-      );
+      const createdOrder = await transaction.order.create({
+        data: {
+          source: OrderSource.direct,
+          buyerId,
+          supplierId: group.supplierId,
+          deliveryAddressId: deliveryAddress.id,
+          deliveryRecipientName: deliveryAddress.recipientName,
+          deliveryPhone: deliveryAddress.phone,
+          deliveryAddressLine1: deliveryAddress.addressLine1,
+          deliveryAddressLine2: deliveryAddress.addressLine2,
+          deliveryLandmark: deliveryAddress.landmark,
+          deliveryCity: deliveryAddress.city,
+          deliveryState: deliveryAddress.state,
+          deliveryCountry: deliveryAddress.country,
+          totalAmount: group.totalAmount,
+          status: OrderStatus.pending,
+          paymentStatus: PaymentStatus.pending,
+          items: { create: group.items.map((item) => item.create) },
+        },
+        include: orderInclude,
+      });
+      orders.push(createdOrder);
+      for (const item of group.items) {
+        await transaction.$executeRaw`
+          UPDATE "order_items"
+          SET
+            "supplierOriginalUnitPrice" = ${item.supplierOriginalUnitPrice},
+            "supplierVatPercentage" = ${item.supplierVatPercentage},
+            "supplierVatAmount" = ${item.supplierVatAmount},
+            "supplierVatMode" = ${item.supplierVatMode}
+          WHERE "orderId" = ${createdOrder.id} AND "supplierPartId" = ${item.supplierPartId}
+        `;
+      }
     }
 
     const firstLinkedOrder = orders[0];

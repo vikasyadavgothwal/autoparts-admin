@@ -439,7 +439,7 @@ async function paymentPurposeDetails(paymentId: string) {
 }
 
 const paymentStatusLabel = (status: string) =>
-  status === "succeeded" ? "Successful" : status === "failed" ? "Failed" : "Pending";
+  status === "succeeded" ? "Paid" : status === "failed" ? "Failed" : "Pending";
 
 const moneyText = (amount: number, currency: string) =>
   `${currency || defaultCurrency} ${(amount / 100).toLocaleString("en-US", {
@@ -465,6 +465,23 @@ function serializePaymentHistory(row: PaymentHistoryRow) {
     paidAt: row.paidAt?.toISOString() ?? null,
     failedAt: row.failedAt?.toISOString() ?? null,
   };
+}
+
+async function refreshPendingHistoryRows(rows: PaymentHistoryRow[]) {
+  const pendingRows = rows.filter(
+    (row) => row.status === "pending" && row.stripeCheckoutSessionId,
+  );
+  if (!pendingRows.length || !isStripePaymentsConfigured()) return false;
+
+  const results = await Promise.allSettled(
+    pendingRows.map((row) => refreshStripePaymentStatus(row.id)),
+  );
+  return results.some(
+    (result) =>
+      result.status === "fulfilled" &&
+      result.value?.status &&
+      result.value.status !== "pending",
+  );
 }
 
 const paymentHistoryPagination = (input: PaymentHistoryFilters) => {
@@ -501,9 +518,24 @@ export async function listUserPaymentHistory(
     ORDER BY p."createdAt" DESC
     LIMIT ${pageSize} OFFSET ${skip}
   `;
+  const refreshed = await refreshPendingHistoryRows(rows);
+  const finalRows = refreshed
+    ? await db.$queryRaw<PaymentHistoryRow[]>`
+        SELECT p.*,
+          COUNT(pi."id")::int AS "itemCount",
+          STRING_AGG(DISTINCT pi."entityType", ', ') AS "entitySummary"
+        FROM "payments" p
+        LEFT JOIN "payment_items" pi ON pi."paymentId" = p."id"
+        WHERE p."payerUserId" = ${userId}
+        ${paymentCreatedAtFilter(filters.from, filters.to)}
+        GROUP BY p."id"
+        ORDER BY p."createdAt" DESC
+        LIMIT ${pageSize} OFFSET ${skip}
+      `
+    : rows;
   const total = count[0]?.total ?? 0;
   return {
-    payments: rows.map(serializePaymentHistory),
+    payments: finalRows.map(serializePaymentHistory),
     pagination: {
       page,
       pageSize,
@@ -550,9 +582,31 @@ export async function listBusinessPaymentHistory(input: {
     ORDER BY p."createdAt" DESC
     LIMIT ${pageSize} OFFSET ${skip}
   `;
+  const refreshed = await refreshPendingHistoryRows(rows);
+  const finalRows = refreshed
+    ? await db.$queryRaw<PaymentHistoryRow[]>`
+        SELECT p.*,
+          COUNT(pi."id")::int AS "itemCount",
+          STRING_AGG(DISTINCT pi."entityType", ', ') AS "entitySummary"
+        FROM "payments" p
+        LEFT JOIN "payment_items" pi ON pi."paymentId" = p."id"
+        WHERE p."businessAccountId" IS NOT NULL
+          AND (${input.businessAccountId ?? null}::text IS NULL OR p."businessAccountId" = ${input.businessAccountId ?? null})
+          AND (
+            p."payerUserId" = ${input.userId}
+            OR p."businessAccountId" IN (
+              SELECT "id" FROM "business_accounts" WHERE "ownerUserId" = ${input.userId}
+            )
+          )
+          ${paymentCreatedAtFilter(input.from, input.to)}
+        GROUP BY p."id"
+        ORDER BY p."createdAt" DESC
+        LIMIT ${pageSize} OFFSET ${skip}
+      `
+    : rows;
   const total = count[0]?.total ?? 0;
   return {
-    payments: rows.map(serializePaymentHistory),
+    payments: finalRows.map(serializePaymentHistory),
     pagination: {
       page,
       pageSize,
@@ -901,6 +955,14 @@ export async function refreshStripePaymentStatus(paymentId: string) {
   }
   if (session.payment_status === "paid") {
     return settlePaymentSucceeded({ sessionId: session.id, paymentIntentId });
+  }
+  if (session.status === "expired") {
+    return markPaymentFailed({
+      sessionId: session.id,
+      paymentIntentId,
+      failureCode: "checkout_session_expired",
+      failureMessage: "Stripe Checkout session expired before payment was completed.",
+    });
   }
   return (await findPaymentById(payment.id)) ?? payment;
 }

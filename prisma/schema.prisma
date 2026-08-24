@@ -576,6 +576,10 @@ model OrderItem {
   quantity            Int
   unitPrice           Int?
   lineTotal           Int?
+  supplierOriginalUnitPrice Int?
+  supplierVatPercentage    Int?
+  supplierVatAmount        Int?
+  supplierVatMode          String?
   deliveryOption      String?
   expectedDeliveryAt  DateTime?
   deliveredAt         DateTime?

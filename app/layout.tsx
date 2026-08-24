@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { getMainWebsiteSiteSettings } from "@/services/platform-settings/main-website-site-settings";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,10 +15,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "Admin Dashboard",
-  description: "The best way to manage your Admin Dashboard.",
-};  
+export async function generateMetadata(): Promise<Metadata> {
+  const settings = await getMainWebsiteSiteSettings();
+  return {
+    title: "Admin Dashboard",
+    description: "The best way to manage your Admin Dashboard.",
+    icons: {
+      icon: settings.faviconUrl || "/favicon.ico",
+    },
+  };
+}
 
 export default function RootLayout({
   children,

@@ -1645,6 +1645,15 @@ export async function acceptRfqBid(
         },
       },
     })
+    await transaction.$executeRaw`
+      UPDATE "order_items"
+      SET
+        "supplierOriginalUnitPrice" = "unitPrice",
+        "supplierVatPercentage" = 0,
+        "supplierVatAmount" = 0,
+        "supplierVatMode" = NULL
+      WHERE "orderId" = ${order.id}
+    `
 
     return {
       order: { ...order, totalAmount: order.totalAmount / 100 },
