@@ -326,7 +326,8 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
       adaptive_pricing: {
         enabled: false,
       },
-      // Keep Wallet methods (Apple/Google/Link) managed by Stripe dashboard for this account.
+      // Stripe renders Apple Pay, Google Pay, and Link from the card method when eligible.
+      payment_method_types: ["card"],
       client_reference_id: payment.id,
       metadata: {
         paymentId: payment.id,
