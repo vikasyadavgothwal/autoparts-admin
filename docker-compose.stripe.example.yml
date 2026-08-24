@@ -1,0 +1,12 @@
+services:
+  auto_parts_admin:
+    image: your-auto-parts-admin-image:latest
+    container_name: auto_parts_admin
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      STRIPE_SECRET_KEY: "sk_live_put_your_key_here"
+      STRIPE_WEBHOOK_SECRET: "whsec_put_your_webhook_secret_here"
+      STRIPE_SUCCESS_URL: "https://websitedesignersdubai.ae/cart?payment=success&session_id={CHECKOUT_SESSION_ID}"
+      STRIPE_CANCEL_URL: "https://websitedesignersdubai.ae/cart?payment=cancelled"
