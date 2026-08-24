@@ -225,11 +225,10 @@ async function findPaymentForStripeObject(input: {
   return rows[0] ?? null;
 }
 
-async function retrieveCheckoutUrl(sessionId: string | null) {
+async function retrieveCheckoutSession(sessionId: string | null) {
   if (!sessionId || !isStripePaymentsConfigured()) return null;
   try {
-    const session = await stripeRequest<StripeCheckoutSession>(`/checkout/sessions/${sessionId}`);
-    return session.status === "open" ? (session.url ?? null) : null;
+    return await stripeRequest<StripeCheckoutSession>(`/checkout/sessions/${sessionId}`);
   } catch (error) {
     logError("Unable to retrieve Stripe Checkout session", error);
     return null;
@@ -288,13 +287,23 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
     payment = await findPaymentByIdempotencyKey(idempotencyKey);
   }
   if (!payment) throw new Error("Unable to create payment");
+  if (payment.status === "succeeded") {
+    return { payment, checkoutUrl: null, stripeConfigured: isStripePaymentsConfigured() };
+  }
 
   if (payment.stripeCheckoutSessionId) {
-    const checkoutUrl = await retrieveCheckoutUrl(payment.stripeCheckoutSessionId);
-    if (checkoutUrl) {
+    const session = await retrieveCheckoutSession(payment.stripeCheckoutSessionId);
+    if (session?.payment_status === "paid") {
+      const settled = await settlePaymentSucceeded({
+        sessionId: session.id,
+        paymentIntentId: stripeObjectId(session.payment_intent),
+      });
+      return { payment: settled ?? payment, checkoutUrl: null, stripeConfigured: isStripePaymentsConfigured() };
+    }
+    if (session?.status === "open" && session.url) {
       return {
         payment,
-        checkoutUrl,
+        checkoutUrl: session.url,
         stripeConfigured: isStripePaymentsConfigured(),
       };
     }
@@ -314,6 +323,9 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
       mode: "payment",
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
+      // Keep Google Pay available in Stripe Checkout by ensuring we use card-based checkout,
+      // which is required for the Google Pay wallet button.
+      payment_method_types: ["card"],
       client_reference_id: payment.id,
       metadata: {
         paymentId: payment.id,

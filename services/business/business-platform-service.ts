@@ -2506,7 +2506,7 @@ export async function changeBusinessAccountPlan(input: {
   })
   if (!nextPlan) throw new Error("Selected plan is not available for this business")
   const direction = getPlanTransition(account.plan.code, nextPlan.code)
-  if (direction === "upgrade" && nextPlan.priceAmount > 0) {
+  if (nextPlan.priceAmount > 0) {
     if (!isStripePaymentsConfigured()) {
       throw new Error("Stripe test keys are not configured on the backend")
     }
@@ -2518,11 +2518,11 @@ export async function changeBusinessAccountPlan(input: {
       purpose: "business_plan",
       amount: nextPlan.priceAmount,
       currency: nextPlan.priceCurrency,
-      description: `Upgrade to ${nextPlan.name}`,
+      description: `${direction === "downgrade" ? "Downgrade" : "Upgrade"} to ${nextPlan.name}`,
       idempotencyKey:
         typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
           ? input.idempotencyKey.trim()
-          : `business-plan:${account.id}:${nextPlan.id}:${createHash("sha256").update(account.updatedAt.toISOString()).digest("hex").slice(0, 16)}`,
+          : `business-plan:${account.id}:${nextPlan.id}:${direction}:${createHash("sha256").update(account.updatedAt.toISOString()).digest("hex").slice(0, 16)}`,
       successUrl: checkoutUrl(input.paymentSuccessUrl, defaultSuccessUrl),
       cancelUrl: checkoutUrl(input.paymentCancelUrl, defaultCancelUrl),
       entities: [{ entityType: "business_plan", entityId: nextPlan.id, amount: nextPlan.priceAmount }],

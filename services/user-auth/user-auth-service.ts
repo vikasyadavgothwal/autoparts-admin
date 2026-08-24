@@ -490,6 +490,7 @@ export async function loginUserWithFirebase(
     email ? matchingUsers.find((user) => user.email === email) : undefined
 
   const existingUser = phoneMatchedUser ?? uidMatchedUser ?? emailMatchedUser
+  const googleSignIn = firebaseProvider(identity.signInProvider) === "google"
 
   if (
     matchingUsers.some((user) => user.id !== existingUser?.id) &&
@@ -586,7 +587,7 @@ export async function loginUserWithFirebase(
     })
   }
 
-  const challenge = phoneSignIn
+  const challenge = phoneSignIn || googleSignIn
     ? null
     : await createBusinessLoginChallenge({ user, role: requestedRole ?? user.activeRole })
   if (challenge) return { user: mapUserProfile(user), challenge }
