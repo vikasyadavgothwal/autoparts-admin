@@ -323,9 +323,10 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
       mode: "payment",
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
-      // Keep Google Pay available in Stripe Checkout by ensuring we use card-based checkout,
-      // which is required for the Google Pay wallet button.
-      payment_method_types: ["card"],
+      adaptive_pricing: {
+        enabled: false,
+      },
+      // Keep Wallet methods (Apple/Google/Link) managed by Stripe dashboard for this account.
       client_reference_id: payment.id,
       metadata: {
         paymentId: payment.id,

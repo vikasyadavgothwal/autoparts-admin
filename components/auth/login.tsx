@@ -39,7 +39,7 @@ export function LoginForm({ error, branding = { siteName: "AutoPartsPro", logoUr
       <Card className="w-full max-w-md border border-white/10 text-white shadow-2xl">
         <CardHeader>
           <div className="mb-3 flex justify-center">
-            {branding.logoUrl ? <img src={branding.logoUrl} alt={branding.siteName} className="h-12 max-w-[220px] object-contain" /> : <span className="text-2xl font-bold">{branding.siteName === "AutoPartsPro" || branding.siteName === "AutoParts Pro" ? <>AutoParts<span className="text-primary"> Pro</span></> : branding.siteName}</span>}
+            {branding.logoUrl ? <img src={branding.logoUrl} alt={branding.siteName} className="h-16 max-w-[280px] object-contain" /> : <span className="text-2xl font-bold">{branding.siteName === "AutoPartsPro" || branding.siteName === "AutoParts Pro" ? <>AutoParts<span className="text-primary"> Pro</span></> : branding.siteName}</span>}
           </div>
           <CardTitle className="text-center text-2xl">
             Admin Login
