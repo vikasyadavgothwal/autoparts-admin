@@ -3,7 +3,10 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
-import { getMainWebsiteSiteSettings } from "@/services/platform-settings/main-website-site-settings";
+import {
+  DEFAULT_MAIN_WEBSITE_SITE_SETTINGS,
+  getMainWebsiteSiteSettings,
+} from "@/services/platform-settings/main-website-site-settings";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,7 +19,9 @@ const geistMono = Geist_Mono({
 });
 
 export async function generateMetadata(): Promise<Metadata> {
-  const settings = await getMainWebsiteSiteSettings();
+  const settings = await getMainWebsiteSiteSettings().catch(
+    () => DEFAULT_MAIN_WEBSITE_SITE_SETTINGS,
+  );
   return {
     title: "Admin Dashboard",
     description: "The best way to manage your Admin Dashboard.",
