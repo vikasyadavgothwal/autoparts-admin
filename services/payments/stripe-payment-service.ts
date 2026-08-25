@@ -13,6 +13,12 @@ import {
   createNotificationsSafely,
   type CreateNotificationInput,
 } from "@/services/notifications/notification-service";
+import {
+  getPaidDowngradeEffectiveAt,
+  getPlanPeriodEnd,
+  getPlanTransition,
+  type BusinessPlanTier,
+} from "@/services/business/plan-transition";
 
 type PaymentPurpose =
   | "direct_order"
@@ -115,6 +121,20 @@ const normalizeIdempotencyKey = (value: string) => value.trim().slice(0, 255);
 const stripeSecretKey = () => process.env.STRIPE_SECRET_KEY?.trim() || "";
 
 export const isStripePaymentsConfigured = () => stripeSecretKey().startsWith("sk_");
+
+const businessPlanTier = (value: string): BusinessPlanTier | null =>
+  value === "Free" || value === "Pro" || value === "Enterprise" ? value : null;
+
+const paymentMetadata = (value: Prisma.JsonValue | null | undefined) =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+
+const scheduledEffectiveAt = (metadata: Record<string, unknown>) => {
+  if (typeof metadata.effectiveAt !== "string") return null;
+  const value = new Date(metadata.effectiveAt);
+  return Number.isNaN(value.getTime()) ? null : value;
+};
 
 const stripeObjectId = (value: unknown) => {
   if (typeof value === "string") return value;
@@ -728,6 +748,119 @@ async function notifySettledPayment(payment: PaymentRow) {
   await createNotificationsSafely(notifications);
 }
 
+async function hasAppliedBusinessPlanPayment(paymentId: string) {
+  const rows = await db.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "business_payment_transactions"
+    WHERE "type" = 'plan'
+      AND (
+        "metadata"->>'paymentId' = ${paymentId}
+        OR "metadata"->'paymentIds' ? ${paymentId}
+      )
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+async function schedulePaidPlanDowngrade(input: {
+  payment: PaymentRow;
+  account: {
+    id: string;
+    planName: string;
+    planCode: string;
+    planBillingPeriod: string;
+    planMonthlyBillingDays: number;
+    updatedAt: Date;
+  };
+  nextPlan: {
+    id: string;
+    code: string;
+    name: string;
+    priceCurrency: string;
+    billingPeriod: string;
+    monthlyBillingDays: number;
+  };
+}) {
+  if (await hasAppliedBusinessPlanPayment(input.payment.id)) return;
+
+  const existing = await db.businessPaymentTransaction.findFirst({
+    where: {
+      businessAccountId: input.account.id,
+      type: "plan",
+      status: "Scheduled",
+      sourceId: input.nextPlan.id,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  const existingMetadata = paymentMetadata(existing?.metadata);
+  const currentPeriodEnd = getPlanPeriodEnd(input.account.updatedAt, {
+    billingPeriod: input.account.planBillingPeriod,
+    monthlyBillingDays: input.account.planMonthlyBillingDays,
+  });
+  const effectiveAt = getPaidDowngradeEffectiveAt(
+    currentPeriodEnd,
+    scheduledEffectiveAt(existingMetadata),
+    input.nextPlan,
+  );
+  const existingPaymentIds = Array.isArray(existingMetadata.paymentIds)
+    ? existingMetadata.paymentIds.filter((id): id is string => typeof id === "string")
+    : [];
+  const existingIntentIds = Array.isArray(existingMetadata.stripePaymentIntentIds)
+    ? existingMetadata.stripePaymentIntentIds.filter((id): id is string => typeof id === "string")
+    : [];
+  const metadata = {
+    ...existingMetadata,
+    fromPlanName: input.account.planName,
+    toPlanName: input.nextPlan.name,
+    effectiveAt: effectiveAt.toISOString(),
+    periodCount: Math.max(1, Number(existingMetadata.periodCount) || 0) + (existing ? 1 : 0),
+    paymentIds: [...existingPaymentIds, input.payment.id],
+    stripePaymentIntentIds: [
+      ...existingIntentIds,
+      ...(input.payment.stripePaymentIntentId ? [input.payment.stripePaymentIntentId] : []),
+    ],
+  };
+
+  await db.businessPaymentTransaction.updateMany({
+    where: {
+      businessAccountId: input.account.id,
+      type: "plan",
+      status: "Scheduled",
+      sourceId: { not: input.nextPlan.id },
+    },
+    data: { status: "Cancelled" },
+  });
+
+  const description = `Downgrade from ${input.account.planName} to ${input.nextPlan.name} scheduled for ${effectiveAt.toISOString().slice(0, 10)}`;
+  if (existing) {
+    await db.businessPaymentTransaction.update({
+      where: { id: existing.id },
+      data: {
+        description,
+        amount: existing.amount + input.payment.amount,
+        currency: input.payment.currency || input.nextPlan.priceCurrency,
+        metadata,
+      },
+    });
+    return;
+  }
+
+  await db.businessPaymentTransaction.create({
+    data: {
+      businessAccountId: input.account.id,
+      payerUserId: input.payment.payerUserId,
+      type: "plan",
+      sourceId: input.nextPlan.id,
+      sourceKey: input.nextPlan.code,
+      description,
+      amount: input.payment.amount,
+      currency: input.payment.currency || input.nextPlan.priceCurrency,
+      status: "Scheduled",
+      metadata,
+    },
+  });
+}
+
 async function applyBusinessPayment(payment: PaymentRow) {
   if (!payment.businessAccountId) return;
   const items = await paymentItems(payment.id);
@@ -738,20 +871,36 @@ async function applyBusinessPayment(payment: PaymentRow) {
       code: string;
       name: string;
       priceCurrency: string;
+      billingPeriod: string;
+      monthlyBillingDays: number;
     }>>`
-      SELECT "id", "code"::text, "name", "priceCurrency"
+      SELECT "id", "code"::text, "name", "priceCurrency", "billingPeriod", "monthlyBillingDays"
       FROM "business_plans"
       WHERE "id" = ${plan.entityId}
       LIMIT 1
     `;
     if (nextPlan) {
-      const [account] = await db.$queryRaw<Array<{ planName: string }>>`
-        SELECT bp."name" AS "planName"
+      const [account] = await db.$queryRaw<Array<{
+        id: string;
+        planName: string;
+        planCode: string;
+        planBillingPeriod: string;
+        planMonthlyBillingDays: number;
+        updatedAt: Date;
+      }>>`
+        SELECT ba."id", ba."updatedAt", bp."name" AS "planName", bp."code"::text AS "planCode",
+          bp."billingPeriod" AS "planBillingPeriod", bp."monthlyBillingDays" AS "planMonthlyBillingDays"
         FROM "business_accounts" ba
         JOIN "business_plans" bp ON bp."id" = ba."planId"
         WHERE ba."id" = ${payment.businessAccountId}
         LIMIT 1
       `;
+      const currentTier = account ? businessPlanTier(account.planCode) : null;
+      const nextTier = businessPlanTier(nextPlan.code);
+      if (account && currentTier && nextTier && getPlanTransition(currentTier, nextTier) === "downgrade") {
+        await schedulePaidPlanDowngrade({ payment, account, nextPlan });
+        return;
+      }
       await db.$executeRaw`
         UPDATE "business_accounts"
         SET "planId" = ${nextPlan.id}, "updatedAt" = CURRENT_TIMESTAMP
@@ -762,7 +911,7 @@ async function applyBusinessPayment(payment: PaymentRow) {
           "id", "businessAccountId", "payerUserId", "type", "sourceId",
           "sourceKey", "description", "amount", "currency", "status", "metadata"
         )
-        VALUES (
+        SELECT
           ${randomUUID()}, ${payment.businessAccountId}, ${payment.payerUserId},
           'plan', ${nextPlan.id}, ${nextPlan.code},
           ${`Plan upgraded from ${account?.planName ?? "current plan"} to ${nextPlan.name}`},
@@ -772,6 +921,10 @@ async function applyBusinessPayment(payment: PaymentRow) {
             stripePaymentIntentId: payment.stripePaymentIntentId,
             toPlanName: nextPlan.name,
           })}::jsonb
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "business_payment_transactions"
+          WHERE "type" = 'plan'
+            AND "metadata"->>'paymentId' = ${payment.id}
         )
       `;
     }
@@ -854,7 +1007,10 @@ export async function settlePaymentSucceeded(input: {
 }) {
   const payment = await findPaymentForStripeObject(input);
   if (!payment) return null;
-  if (payment.status === "succeeded") return payment;
+  if (payment.status === "succeeded") {
+    await applyBusinessPayment(payment);
+    return (await findPaymentById(payment.id)) ?? payment;
+  }
 
   await db.$transaction(async (tx) => {
     await tx.$executeRaw`

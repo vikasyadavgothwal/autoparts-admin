@@ -27,3 +27,11 @@ export const getPlanPeriodEnd = (
   }
   return end
 }
+
+export const getPaidDowngradeEffectiveAt = (
+  currentPeriodEnd: Date,
+  existingEffectiveAt: Date | null,
+  nextPlan: { billingPeriod: string; monthlyBillingDays: number },
+) => existingEffectiveAt && existingEffectiveAt.getTime() >= currentPeriodEnd.getTime()
+  ? getPlanPeriodEnd(existingEffectiveAt, nextPlan)
+  : currentPeriodEnd
