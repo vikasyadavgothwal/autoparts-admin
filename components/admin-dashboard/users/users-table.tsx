@@ -1,13 +1,15 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { MoreHorizontal } from "lucide-react"
+import Link from "next/link"
+import { MoreHorizontal, Search } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
 import { StatusBadge } from "@/components/admin-dashboard/shared/status-badge"
 import { SectionTable } from "@/components/admin-dashboard/shared/section-table"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Dialog,
   DialogContent,
@@ -53,7 +55,20 @@ const detailRows = (user: UserRecord) => [
   ["Account status", user.status],
 ] as const
 
-export function UsersTable({ rows, columns }: UsersTableProps) {
+const usersPageHref = (page: number, search: string) => {
+  const params = new URLSearchParams()
+  if (page > 1) params.set("page", String(page))
+  if (search) params.set("search", search)
+  const query = params.toString()
+  return query ? `/users?${query}` : "/users"
+}
+
+export function UsersTable({
+  rows,
+  columns,
+  pagination,
+  search,
+}: UsersTableProps) {
   const router = useRouter()
   const [viewingUser, setViewingUser] = useState<UserRecord | null>(null)
   const [statusTarget, setStatusTarget] = useState<UserRecord | null>(null)
@@ -126,6 +141,27 @@ export function UsersTable({ rows, columns }: UsersTableProps) {
 
   return (
     <>
+      <div className="space-y-4 rounded-lg border border-dashboard-panel-border bg-dashboard-panel-bg p-4">
+        <form action="/users" className="flex flex-col gap-3 md:flex-row">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dashboard-muted" />
+            <Input
+              name="search"
+              defaultValue={search}
+              maxLength={120}
+              placeholder="Search user ID, name, email, mobile, company, or location..."
+              className="h-11 border-dashboard-panel-border bg-dashboard-page-bg pl-9 text-dashboard-text"
+            />
+          </div>
+          <Button type="submit">Search</Button>
+          {search ? (
+            <Button asChild type="button" variant="outline">
+              <Link href="/users">Clear</Link>
+            </Button>
+          ) : null}
+        </form>
+      </div>
+
       <SectionTable columns={columns as readonly SectionTableColumn[]}>
         {rows.length === 0 ? (
           <tr className="dashboard-table-row">
@@ -205,6 +241,42 @@ export function UsersTable({ rows, columns }: UsersTableProps) {
           </tr>
         ))}
       </SectionTable>
+
+      <div className="flex flex-col gap-3 text-sm text-dashboard-muted sm:flex-row sm:items-center sm:justify-between">
+        <p>
+          Showing{" "}
+          {rows.length ? (pagination.page - 1) * pagination.pageSize + 1 : 0}-
+          {Math.min(pagination.page * pagination.pageSize, pagination.total)} of{" "}
+          {pagination.total}
+        </p>
+        <div className="flex items-center gap-2">
+          {pagination.page <= 1 ? (
+            <Button variant="outline" size="sm" disabled>
+              Previous
+            </Button>
+          ) : (
+            <Button asChild variant="outline" size="sm">
+              <Link href={usersPageHref(pagination.page - 1, search)}>
+                Previous
+              </Link>
+            </Button>
+          )}
+          <span>
+            Page {pagination.page} of {pagination.totalPages}
+          </span>
+          {pagination.page >= pagination.totalPages ? (
+            <Button variant="outline" size="sm" disabled>
+              Next
+            </Button>
+          ) : (
+            <Button asChild variant="outline" size="sm">
+              <Link href={usersPageHref(pagination.page + 1, search)}>
+                Next
+              </Link>
+            </Button>
+          )}
+        </div>
+      </div>
 
       <Dialog
         open={Boolean(viewingUser)}

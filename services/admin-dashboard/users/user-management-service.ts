@@ -9,6 +9,8 @@ import type {
   UserRecord,
   UserRoleLabel,
   UsersKpi,
+  UsersPagination,
+  UsersSummary,
 } from "@/types/admin-dashboard/users/users-types"
 
 const userInclude = {
@@ -21,6 +23,17 @@ const userInclude = {
 } satisfies Prisma.UserInclude
 
 type UserAccount = Prisma.UserGetPayload<{ include: typeof userInclude }>
+
+type ListAdminUsersInput = {
+  page?: string | number | null
+  pageSize?: string | number | null
+  search?: string | null
+}
+
+type ListAdminUsersResult = {
+  users: UserRecord[]
+  pagination: UsersPagination
+}
 
 const roleLabels: Record<UserRole, UserRoleLabel> = {
   [UserRole.User]: "Buyer",
@@ -72,13 +85,52 @@ const mapUser = (user: UserAccount): UserRecord => {
   }
 }
 
-export async function listAdminUsers(): Promise<UserRecord[]> {
+const numberParam = (value: unknown, fallback: number, max: number) => {
+  const parsed = Number.parseInt(String(value ?? ""), 10)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(1, parsed))
+}
+
+const userSearchWhere = (search?: string | null): Prisma.UserWhereInput => {
+  const query = search?.trim()
+  if (!query) return {}
+
+  return {
+    OR: [
+      { publicId: { contains: query, mode: "insensitive" } },
+      { firstName: { contains: query, mode: "insensitive" } },
+      { lastName: { contains: query, mode: "insensitive" } },
+      { email: { contains: query, mode: "insensitive" } },
+      { phone: { contains: query, mode: "insensitive" } },
+      { companyName: { contains: query, mode: "insensitive" } },
+      { city: { contains: query, mode: "insensitive" } },
+      { state: { contains: query, mode: "insensitive" } },
+      { country: { contains: query, mode: "insensitive" } },
+    ],
+  }
+}
+
+export async function listAdminUsers(
+  input: ListAdminUsersInput = {},
+): Promise<ListAdminUsersResult> {
+  const pageSize = numberParam(input.pageSize, 10, 50)
+  const requestedPage = numberParam(input.page, 1, 10_000)
+  const where = userSearchWhere(input.search)
+  const total = await db.user.count({ where })
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const page = Math.min(requestedPage, totalPages)
   const users = await db.user.findMany({
+    where,
     include: userInclude,
     orderBy: [{ createdAt: "desc" }],
+    skip: (page - 1) * pageSize,
+    take: pageSize,
   })
 
-  return users.map(mapUser)
+  return {
+    users: users.map(mapUser),
+    pagination: { page, pageSize, total, totalPages },
+  }
 }
 
 export async function updateAdminUserStatus(
@@ -183,37 +235,44 @@ export async function deleteAdminUserAccount(id: string) {
   }
 }
 
-export function buildUserKpis(users: readonly UserRecord[]): UsersKpi[] {
+export async function getAdminUsersSummary(): Promise<UsersSummary> {
+  const [totalAccounts, buyers, fleetManagers, garageOwners] = await Promise.all([
+    db.user.count(),
+    db.user.count({ where: { roles: { has: UserRole.User } } }),
+    db.user.count({ where: { roles: { has: UserRole.Fleet } } }),
+    db.user.count({ where: { roles: { has: UserRole.Garage } } }),
+  ])
+
+  return { totalAccounts, buyers, fleetManagers, garageOwners }
+}
+
+export function buildUserKpis(summary: UsersSummary): UsersKpi[] {
   return [
     {
       id: "users",
       title: "Total Accounts",
-      value: String(users.length),
+      value: String(summary.totalAccounts),
       icon: UsersIcon,
       iconTone: "primary",
     },
     {
       id: "buyers",
       title: "Buyers",
-      value: String(users.filter((user) => user.roles.includes("Buyer")).length),
+      value: String(summary.buyers),
       icon: ShoppingCart,
       iconTone: "info",
     },
     {
       id: "fleet",
       title: "Fleet Managers",
-      value: String(
-        users.filter((user) => user.roles.includes("Fleet Manager")).length,
-      ),
+      value: String(summary.fleetManagers),
       icon: Building,
       iconTone: "success",
     },
     {
       id: "garages",
       title: "Garage Owners",
-      value: String(
-        users.filter((user) => user.roles.includes("Garage Owner")).length,
-      ),
+      value: String(summary.garageOwners),
       icon: FileText,
       iconTone: "warning",
     },

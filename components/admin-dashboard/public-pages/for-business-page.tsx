@@ -50,10 +50,11 @@ const validatePricing = (config: ForBusinessPageConfig): string | null => {
     if (!plan.subheading.trim()) return `${plan.heading} needs a subheading.`
     if (!plan.price.trim()) return `${plan.heading} needs a price.`
     if (
+      !/^free$/i.test(plan.price.trim()) &&
       !/^custom$/i.test(plan.price.trim()) &&
       !/^[A-Z]{2,4}\s?\d+(\.\d{1,2})?$/i.test(plan.price.trim())
     ) {
-      return `${plan.heading} price must look like AED 299 or Custom.`
+      return `${plan.heading} price must look like Free, AED 299, or Custom.`
     }
     if (!plan.duration.trim()) return `${plan.heading} needs a duration.`
     if (!plan.buttonText.trim()) return `${plan.heading} needs button text.`

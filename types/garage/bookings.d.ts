@@ -46,6 +46,8 @@ export type GarageBookingRecord = {
   durationMinutes: number
   price: number
   currency: string
+  advanceAmount: number | null
+  advancePaymentStatus: string | null
   status: GarageBookingStatus
   linkedOrderId: string | null
   canSelectSlot?: boolean

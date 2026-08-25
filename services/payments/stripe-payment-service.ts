@@ -252,12 +252,14 @@ async function findPaymentByIdOrSession(paymentId: string) {
 }
 
 async function findPaymentForStripeObject(input: {
+  paymentId?: string | null;
   sessionId?: string | null;
   paymentIntentId?: string | null;
 }) {
   const rows = await db.$queryRaw<PaymentRow[]>`
     SELECT * FROM "payments"
-    WHERE (${input.sessionId}::text IS NOT NULL AND "stripeCheckoutSessionId" = ${input.sessionId})
+    WHERE (${input.paymentId}::text IS NOT NULL AND ("id" = ${input.paymentId} OR "publicId" = ${input.paymentId}))
+       OR (${input.sessionId}::text IS NOT NULL AND "stripeCheckoutSessionId" = ${input.sessionId})
        OR (${input.paymentIntentId}::text IS NOT NULL AND "stripePaymentIntentId" = ${input.paymentIntentId})
     LIMIT 1
   `;
@@ -282,6 +284,18 @@ async function clearCheckoutSession(paymentId: string) {
     WHERE "id" = ${paymentId}
   `;
 }
+
+const paymentReturnUrl = (value: string, paymentPublicId: string) => {
+  try {
+    const url = new URL(value);
+    if (!url.searchParams.has("payment_id")) {
+      url.searchParams.set("payment_id", paymentPublicId);
+    }
+    return url.toString().replaceAll("%7BCHECKOUT_SESSION_ID%7D", "{CHECKOUT_SESSION_ID}");
+  } catch {
+    return value;
+  }
+};
 
 export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentInput) {
   const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
@@ -368,8 +382,8 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
   });
   const sessionBody: Record<string, unknown> = {
     mode: input.subscription ? "subscription" : "payment",
-    success_url: input.successUrl,
-    cancel_url: input.cancelUrl,
+    success_url: paymentReturnUrl(input.successUrl, payment.publicId),
+    cancel_url: paymentReturnUrl(input.cancelUrl, payment.publicId),
     adaptive_pricing: {
       enabled: false,
     },
@@ -1259,6 +1273,7 @@ export async function settlePaymentSucceeded(input: {
 }
 
 export async function markPaymentFailed(input: {
+  paymentId?: string | null;
   sessionId?: string | null;
   paymentIntentId?: string | null;
   failureCode?: string | null;

@@ -375,7 +375,7 @@ export function PricingPanel({
                           value={plan.price}
                           onChange={(value) => onPlanChange(index, "price", value)}
                           maxLength={FOR_BUSINESS_INPUT_LIMITS.planPrice}
-                          placeholder="AED 299 or Custom"
+                          placeholder="Free, AED 299, or Custom"
                         />
                         <InputField
                           id={`pricing-${index}-duration`}

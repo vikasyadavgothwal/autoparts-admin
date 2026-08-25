@@ -65,6 +65,8 @@ type GarageBookingRow = {
   durationMinutes: number
   price: number
   currency: string
+  advanceAmount: number | null
+  advancePaymentStatus: string | null
   status: GarageBookingStatus
   linkedOrderId: string | null
   slotSelectedAt: Date | null
@@ -458,10 +460,21 @@ const bookingSelect = Prisma.sql`
     "durationMinutes",
     "price",
     "currency",
+    "advanceAmount",
+    "advancePaymentStatus",
     "status",
+    "linkedOrderId",
+    "slotSelectedAt",
     "createdAt",
     "updatedAt"
   FROM "garage_bookings"
+`
+
+const paidOrOfflineBookingFilter = Prisma.sql`
+  NOT (
+    COALESCE("advancePaymentStatus", '') IN ('pending', 'failed')
+    AND COALESCE("advanceAmount", 0) > 0
+  )
 `
 
 async function notifyGarageBookingCreated(booking: GarageBookingRecord) {
@@ -867,13 +880,15 @@ export async function createPublicGarageBooking(
         "bookingTime",
         "durationMinutes",
         "price",
-    "currency",
-    "status",
-    "linkedOrderId",
-    "slotSelectedAt",
-    "createdAt",
-    "updatedAt"
-`
+        "currency",
+        "advanceAmount",
+        "advancePaymentStatus",
+        "status",
+        "linkedOrderId",
+        "slotSelectedAt",
+        "createdAt",
+        "updatedAt"
+    `
 
     await tx.$executeRaw`
       UPDATE "garage_services"
@@ -910,7 +925,6 @@ export async function createPublicGarageBooking(
     ],
     metadata: { garageId, serviceId, bookingId: booking.id },
   })
-  await notifyGarageBookingCreated(mappedBooking)
   return {
     booking: mappedBooking,
     payment: {
@@ -1023,6 +1037,8 @@ export async function createGarageOfflineBooking(
         "durationMinutes",
         "price",
         "currency",
+        "advanceAmount",
+        "advancePaymentStatus",
         "status",
         "linkedOrderId",
         "slotSelectedAt",
@@ -1136,6 +1152,8 @@ export async function scheduleUserGarageBookingSlot(
         "durationMinutes",
         "price",
         "currency",
+        "advanceAmount",
+        "advancePaymentStatus",
         "status",
         "linkedOrderId",
         "slotSelectedAt",
@@ -1154,6 +1172,7 @@ export async function listGarageBookings(garageId: string) {
   const rows = await db.$queryRaw<GarageBookingRow[]>`
     ${bookingSelect}
     WHERE "garageId" = ${garageId}
+      AND ${paidOrOfflineBookingFilter}
     ORDER BY "createdAt" DESC, "bookingDate" DESC, "bookingTime" DESC
   `
   return rows.map(mapBooking)
@@ -1168,10 +1187,12 @@ export async function listGarageBookingsPage(
     SELECT COUNT(*)::int AS "total"
     FROM "garage_bookings"
     WHERE "garageId" = ${garageId}
+      AND ${paidOrOfflineBookingFilter}
   `
   const rows = await db.$queryRaw<GarageBookingRow[]>`
     ${bookingSelect}
     WHERE "garageId" = ${garageId}
+      AND ${paidOrOfflineBookingFilter}
     ORDER BY "createdAt" DESC, "bookingDate" DESC, "bookingTime" DESC
     LIMIT ${pageSize} OFFSET ${skip}
   `
@@ -1244,6 +1265,8 @@ export async function updateGarageBookingStatus(
       "durationMinutes",
       "price",
       "currency",
+      "advanceAmount",
+      "advancePaymentStatus",
       "status",
       "linkedOrderId",
       "slotSelectedAt",
@@ -1395,6 +1418,8 @@ export async function listUserGarageBookings(customerId: string) {
       gb."durationMinutes",
       gb."price",
       gb."currency",
+      gb."advanceAmount",
+      gb."advancePaymentStatus",
       gb."status",
       gb."linkedOrderId",
       gb."slotSelectedAt",
@@ -1441,6 +1466,10 @@ export async function listUserGarageBookings(customerId: string) {
       LIMIT 1
     ) gsr ON TRUE
     WHERE gb."customerId" = ${customerId}
+      AND NOT (
+        COALESCE(gb."advancePaymentStatus", '') IN ('pending', 'failed')
+        AND COALESCE(gb."advanceAmount", 0) > 0
+      )
     ORDER BY gb."createdAt" DESC, gb."bookingDate" DESC, gb."bookingTime" DESC
   `
 

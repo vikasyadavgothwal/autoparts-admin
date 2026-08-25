@@ -19,6 +19,20 @@ export type UsersKpi = {
   iconTone: UserKpiTone
 }
 
+export type UsersPagination = {
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
+}
+
+export type UsersSummary = {
+  totalAccounts: number
+  buyers: number
+  fleetManagers: number
+  garageOwners: number
+}
+
 export type UsersTableColumn = {
   key: string
   label: string

@@ -3,7 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/database/prisma";
 import { getOptionalUserFromRequest } from "@/lib/auth/api-guards";
 import { BusinessMemberStatus } from "@/lib/generated/prisma/client";
-import { refreshStripePaymentStatus } from "@/services/payments/stripe-payment-service";
+import {
+  markPaymentFailed,
+  refreshStripePaymentStatus,
+} from "@/services/payments/stripe-payment-service";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -20,7 +23,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   const { id } = await context.params;
   try {
-    const payment = await refreshStripePaymentStatus(id);
+    const isCancelledReturn =
+      request.nextUrl.searchParams.get("payment") === "cancelled";
+    let payment = await refreshStripePaymentStatus(id);
     if (!payment) {
       return NextResponse.json(
         { ok: false, message: "Payment not found" },
@@ -50,6 +55,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
         { ok: false, message: "Payment not found" },
         { status: 404 },
       );
+    }
+    if (isCancelledReturn) {
+      payment =
+        (await markPaymentFailed({
+          paymentId: payment.publicId,
+          sessionId: id,
+          failureCode: "checkout_cancelled",
+          failureMessage: "Stripe Checkout was cancelled before payment was completed.",
+        })) ?? payment;
     }
     return NextResponse.json({
       ok: true,
