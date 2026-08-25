@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { db } from "@/lib/database/prisma";
 import { getOptionalUserFromRequest } from "@/lib/auth/api-guards";
+import { BusinessMemberStatus } from "@/lib/generated/prisma/client";
 import { refreshStripePaymentStatus } from "@/services/payments/stripe-payment-service";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -28,7 +29,20 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
     const ownsBusinessPayment = payment.businessAccountId
       ? await db.businessAccount.count({
-          where: { id: payment.businessAccountId, ownerUserId: auth.user.id },
+          where: {
+            id: payment.businessAccountId,
+            OR: [
+              { ownerUserId: auth.user.id },
+              {
+                members: {
+                  some: {
+                    userId: auth.user.id,
+                    status: BusinessMemberStatus.Active,
+                  },
+                },
+              },
+            ],
+          },
         })
       : 0;
     if (payment.payerUserId !== auth.user.id && ownsBusinessPayment < 1) {

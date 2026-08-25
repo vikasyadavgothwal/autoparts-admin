@@ -2,7 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { db } from "@/lib/database/prisma";
 import { sendSmtpMail } from "@/lib/email/smtp";
-import { PaymentStatus, Prisma } from "@/lib/generated/prisma/client";
+import { BusinessAccountType, BusinessMemberStatus, PaymentStatus, Prisma, RfqSource } from "@/lib/generated/prisma/client";
 import { logError } from "@/lib/logger";
 import {
   featuredCategorySource,
@@ -135,6 +135,19 @@ const paymentMetadata = (value: Prisma.JsonValue | null | undefined) =>
   value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+
+const stripeMetadataValue = (value: unknown) => {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value) ?? String(value);
+};
+
+const stripeMetadata = (metadata: Record<string, unknown>) =>
+  Object.fromEntries(
+    Object.entries(metadata)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => [key, stripeMetadataValue(value).slice(0, 500)]),
+  );
 
 const scheduledEffectiveAt = (metadata: Record<string, unknown>) => {
   if (typeof metadata.effectiveAt !== "string") return null;
@@ -344,7 +357,7 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
     return { payment, checkoutUrl: null, stripeConfigured: false };
   }
 
-  const stripeMetadata = {
+  const checkoutMetadata = stripeMetadata({
     paymentId: payment.id,
     purpose: input.purpose,
     ...(input.payerUserId ? { payerUserId: input.payerUserId } : {}),
@@ -352,7 +365,7 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
     ...(input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata)
       ? input.metadata as Record<string, unknown>
       : {}),
-  };
+  });
   const sessionBody: Record<string, unknown> = {
     mode: input.subscription ? "subscription" : "payment",
     success_url: input.successUrl,
@@ -363,7 +376,7 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
     // Stripe renders Apple Pay, Google Pay, and Link from the card method when eligible.
     payment_method_types: ["card"],
     client_reference_id: payment.id,
-    metadata: stripeMetadata,
+    metadata: checkoutMetadata,
     line_items: [
       {
         quantity: 1,
@@ -387,14 +400,14 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
     sessionBody.subscription_data = {
       description: input.description.slice(0, 500),
       metadata: {
-        ...stripeMetadata,
+        ...checkoutMetadata,
         autoRenewConsent: "true",
         consentText: input.subscription.consentText ?? "Customer authorized automatic renewal.",
       },
     };
   } else {
     sessionBody.payment_intent_data = {
-      metadata: stripeMetadata,
+      metadata: checkoutMetadata,
     };
   }
 
@@ -580,6 +593,60 @@ const paymentCreatedAtFilter = (from?: Date | null, to?: Date | null) => Prisma.
   AND (${to ?? null}::timestamp IS NULL OR p."createdAt" < ${to ?? null})
 `;
 
+async function backfillFleetRfqPaymentBusinessAccount(paymentId: string) {
+  await db.$executeRaw`
+    UPDATE "payments" p
+    SET "businessAccountId" = ba."id",
+        "updatedAt" = CURRENT_TIMESTAMP
+    FROM "payment_items" pi
+    JOIN "orders" o ON o."id" = pi."entityId"
+    JOIN "rfqs" r ON r."id" = o."rfqId"
+    JOIN "business_accounts" ba ON ba."ownerUserId" = o."buyerId"
+    WHERE p."id" = ${paymentId}
+      AND p."id" = pi."paymentId"
+      AND p."businessAccountId" IS NULL
+      AND p."purpose" = 'rfq_order'
+      AND pi."entityType" = 'order'
+      AND r."source" = ${RfqSource.fleet}::"RfqSource"
+      AND ba."type" = ${BusinessAccountType.Fleet}::"BusinessAccountType"
+      AND ba."isActive" = true
+  `;
+  return findPaymentById(paymentId);
+}
+
+async function backfillFleetRfqPaymentBusinessAccountsForUser(
+  userId: string,
+  businessAccountId?: string | null,
+) {
+  await db.$executeRaw`
+    UPDATE "payments" p
+    SET "businessAccountId" = ba."id",
+        "updatedAt" = CURRENT_TIMESTAMP
+    FROM "payment_items" pi
+    JOIN "orders" o ON o."id" = pi."entityId"
+    JOIN "rfqs" r ON r."id" = o."rfqId"
+    JOIN "business_accounts" ba ON ba."ownerUserId" = o."buyerId"
+    WHERE p."id" = pi."paymentId"
+      AND p."businessAccountId" IS NULL
+      AND p."purpose" = 'rfq_order'
+      AND pi."entityType" = 'order'
+      AND r."source" = ${RfqSource.fleet}::"RfqSource"
+      AND ba."type" = ${BusinessAccountType.Fleet}::"BusinessAccountType"
+      AND ba."isActive" = true
+      AND (${businessAccountId ?? null}::text IS NULL OR ba."id" = ${businessAccountId ?? null})
+      AND (
+        ba."ownerUserId" = ${userId}
+        OR EXISTS (
+          SELECT 1
+          FROM "business_account_members" bam
+          WHERE bam."businessAccountId" = ba."id"
+            AND bam."userId" = ${userId}
+            AND bam."status" = ${BusinessMemberStatus.Active}::"BusinessMemberStatus"
+        )
+      )
+  `;
+}
+
 export async function listUserPaymentHistory(
   userId: string,
   filters: PaymentHistoryFilters = {},
@@ -634,6 +701,7 @@ export async function listBusinessPaymentHistory(input: {
   userId: string;
   businessAccountId?: string | null;
 } & PaymentHistoryFilters): Promise<PaymentHistoryResult> {
+  await backfillFleetRfqPaymentBusinessAccountsForUser(input.userId, input.businessAccountId);
   const { page, pageSize, skip } = paymentHistoryPagination(input);
   const count = await db.$queryRaw<Array<{ total: number }>>`
     SELECT COUNT(*)::int AS "total"
@@ -644,6 +712,11 @@ export async function listBusinessPaymentHistory(input: {
         p."payerUserId" = ${input.userId}
         OR p."businessAccountId" IN (
           SELECT "id" FROM "business_accounts" WHERE "ownerUserId" = ${input.userId}
+        )
+        OR p."businessAccountId" IN (
+          SELECT "businessAccountId" FROM "business_account_members"
+          WHERE "userId" = ${input.userId}
+            AND "status" = ${BusinessMemberStatus.Active}::"BusinessMemberStatus"
         )
       )
       ${paymentCreatedAtFilter(input.from, input.to)}
@@ -660,6 +733,11 @@ export async function listBusinessPaymentHistory(input: {
         p."payerUserId" = ${input.userId}
         OR p."businessAccountId" IN (
           SELECT "id" FROM "business_accounts" WHERE "ownerUserId" = ${input.userId}
+        )
+        OR p."businessAccountId" IN (
+          SELECT "businessAccountId" FROM "business_account_members"
+          WHERE "userId" = ${input.userId}
+            AND "status" = ${BusinessMemberStatus.Active}::"BusinessMemberStatus"
         )
       )
       ${paymentCreatedAtFilter(input.from, input.to)}
@@ -681,6 +759,11 @@ export async function listBusinessPaymentHistory(input: {
             p."payerUserId" = ${input.userId}
             OR p."businessAccountId" IN (
               SELECT "id" FROM "business_accounts" WHERE "ownerUserId" = ${input.userId}
+            )
+            OR p."businessAccountId" IN (
+              SELECT "businessAccountId" FROM "business_account_members"
+              WHERE "userId" = ${input.userId}
+                AND "status" = ${BusinessMemberStatus.Active}::"BusinessMemberStatus"
             )
           )
           ${paymentCreatedAtFilter(input.from, input.to)}
@@ -1028,7 +1111,7 @@ async function applyBusinessPayment(payment: PaymentRow) {
           "id", "businessAccountId", "payerUserId", "type", "sourceId",
           "sourceKey", "description", "amount", "currency", "status", "metadata"
         )
-        VALUES (
+        SELECT
           ${randomUUID()}, ${payment.businessAccountId}, ${payment.payerUserId},
           'add_on', ${row.id}, ${row.featureKey}, ${`Add-on enabled: ${row.label}`},
           ${payment.amount}, ${payment.currency || row.priceCurrency || "AED"}, 'Paid',
@@ -1040,6 +1123,10 @@ async function applyBusinessPayment(payment: PaymentRow) {
             validUntil: row.validUntil?.toISOString() ?? null,
             renewalAt: row.renewalAt?.toISOString() ?? null,
           })}::jsonb
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "business_payment_transactions"
+          WHERE "type" = 'add_on'
+            AND "metadata"->>'paymentId' = ${payment.id}
         )
       `;
     }
@@ -1234,8 +1321,11 @@ export async function markPaymentFailed(input: {
 }
 
 export async function refreshStripePaymentStatus(paymentId: string) {
-  const payment = await findPaymentByIdOrSession(paymentId.trim());
+  let payment = await findPaymentByIdOrSession(paymentId.trim());
   if (!payment) throw new Error("Payment not found");
+  if (!payment.businessAccountId && payment.purpose === "rfq_order") {
+    payment = (await backfillFleetRfqPaymentBusinessAccount(payment.id)) ?? payment;
+  }
   if (!isStripePaymentsConfigured() || !payment.stripeCheckoutSessionId || payment.status === "succeeded") {
     return payment;
   }

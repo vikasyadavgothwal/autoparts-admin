@@ -2550,7 +2550,7 @@ export async function changeBusinessAccountPlan(input: {
         ? {
             interval: billingCycle === "yearly" ? "year" : "month",
             intervalCount: 1,
-            consentText: `Customer authorized ${billingCycle} automatic renewal during Fleet plan checkout.`,
+            consentText: `Customer authorized ${billingCycle} automatic renewal during ${account.type} plan checkout.`,
           }
         : undefined,
       metadata: {

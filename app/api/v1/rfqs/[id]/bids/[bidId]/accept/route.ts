@@ -6,12 +6,20 @@ import { BusinessAccountType, OrderStatus, RfqSource } from "@/lib/generated/pri
 import { assertBusinessAction, assertBusinessPlanLimit, getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { acceptRfqBid } from "@/services/fleet/fleet-service"
 
-const readOptionalAddressId = async (request: NextRequest) => {
+const readAcceptBody = async (request: NextRequest) => {
   try {
-    const body = (await request.json()) as { addressId?: unknown } | null
-    return typeof body?.addressId === "string" ? body.addressId.trim() : ""
+    const body = (await request.json()) as {
+      addressId?: unknown
+      paymentSuccessUrl?: unknown
+      paymentCancelUrl?: unknown
+    } | null
+    return {
+      addressId: typeof body?.addressId === "string" ? body.addressId.trim() : "",
+      paymentSuccessUrl: body?.paymentSuccessUrl,
+      paymentCancelUrl: body?.paymentCancelUrl,
+    }
   } catch {
-    return ""
+    return { addressId: "", paymentSuccessUrl: undefined, paymentCancelUrl: undefined }
   }
 }
 
@@ -62,9 +70,17 @@ export async function POST(
         })
       }
     }
-    const addressId = await readOptionalAddressId(request)
-    const order = await acceptRfqBid(fleetId, id, bidId, source, addressId)
-    return NextResponse.json({ ok: true, order })
+    const body = await readAcceptBody(request)
+    const result = await acceptRfqBid(
+      fleetId,
+      id,
+      bidId,
+      source,
+      body.addressId,
+      body.paymentSuccessUrl,
+      body.paymentCancelUrl,
+    )
+    return NextResponse.json({ ok: true, ...result })
   } catch (error) {
     return NextResponse.json(
       { ok: false, message: error instanceof Error ? error.message : "Unable to accept quote" },

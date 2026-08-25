@@ -1,6 +1,7 @@
 import { db } from "@/lib/database/prisma"
 import { sendSmtpMail } from "@/lib/email/smtp"
 import {
+  BusinessAccountType,
   FleetVehicleStatus,
   OrderStatus,
   PaymentStatus,
@@ -14,6 +15,7 @@ import {
   getUserAddressForCheckout,
 } from "@/services/user-addresses/user-address-service"
 import { getUserVehicleForRfq } from "@/services/user-vehicles/user-vehicle-service"
+import { createStripeCheckoutPayment } from "@/services/payments/stripe-payment-service"
 import {
   activeAdminRecipientIds,
   activeSupplierRecipientIds,
@@ -40,6 +42,17 @@ const maxMoneyCents = 2147483647
 const rfqRankedBidLimit = 6
 const sendMailSafely = (input: Parameters<typeof sendSmtpMail>[0]) =>
   sendSmtpMail(input).catch(() => undefined)
+
+const normalizeCheckoutUrl = (value: unknown, fallback: string) => {
+  const raw = typeof value === "string" ? value.trim() : ""
+  if (!raw) return fallback
+  try {
+    const url = new URL(raw)
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : fallback
+  } catch {
+    return fallback
+  }
+}
 
 const requiredText = (value: unknown, label: string) => {
   const normalized = text(value)
@@ -1033,6 +1046,7 @@ export async function listSupplierRfqs(
   const query = search.trim()
   const where: Prisma.RfqWhereInput = {
     status: RfqStatus.open,
+    responseDeadline: { gt: new Date() },
     order: null,
     bids: { none: { status: RfqBidStatus.accepted } },
     ...(query ? {
@@ -1418,7 +1432,11 @@ export async function submitRfqBid(
   },
 ) {
   const rfq = await db.rfq.findFirst({
-    where: { id: rfqId, status: RfqStatus.open },
+    where: {
+      id: rfqId,
+      status: RfqStatus.open,
+      bids: { none: { status: RfqBidStatus.accepted } },
+    },
     select: {
       id: true,
       publicId: true,
@@ -1540,6 +1558,8 @@ export async function acceptRfqBid(
   bidId: string,
   source: RfqSource = RfqSource.fleet,
   addressId?: string,
+  paymentSuccessUrl?: unknown,
+  paymentCancelUrl?: unknown,
 ) {
   const deliveryAddress = addressId
     ? await getUserAddressForCheckout(requesterId, addressId)
@@ -1557,6 +1577,7 @@ export async function acceptRfqBid(
       if (rfq.order.bidId === bidId) {
         return {
           order: { ...rfq.order, totalAmount: rfq.order.totalAmount / 100 },
+          rawOrder: rfq.order,
           notificationContext: null,
         }
       }
@@ -1578,6 +1599,15 @@ export async function acceptRfqBid(
       throw new Error("This quote is not currently available for acceptance")
     }
     const quotedByPartId = new Map(bid.items.map((item) => [item.rfqPartId, item]))
+    const acceptedParts = rfq.parts.filter((part) => quotedByPartId.has(part.id))
+    const acceptedTotalAmount = acceptedParts.reduce((total, part) => {
+      const quotedItem = quotedByPartId.get(part.id)
+      return total + (quotedItem?.lineTotal ?? 0)
+    }, 0)
+    if (!acceptedParts.length || acceptedTotalAmount <= 0) {
+      throw new Error("This quote does not include any payable products")
+    }
+    if (!Number.isSafeInteger(acceptedTotalAmount)) throw new Error("Quote total is too large")
     if (bid.validUntil) {
       const quoteExpiry = new Date(bid.validUntil)
       // Older date-only quotes were stored at midnight; treat them as valid through that day.
@@ -1626,12 +1656,11 @@ export async function acceptRfqBid(
         deliveryCity: deliveryAddress?.city,
         deliveryState: deliveryAddress?.state,
         deliveryCountry: deliveryAddress?.country,
-        totalAmount: bid.totalAmount,
+        totalAmount: acceptedTotalAmount,
         status: OrderStatus.pending,
-        paymentStatus: PaymentStatus.succeeded,
-        paidAt: new Date(),
+        paymentStatus: PaymentStatus.pending,
         items: {
-          create: rfq.parts.filter((part) => quotedByPartId.has(part.id)).map((part) => {
+          create: acceptedParts.map((part) => {
             const quotedItem = quotedByPartId.get(part.id)!
             return {
               partName: part.partName,
@@ -1657,6 +1686,7 @@ export async function acceptRfqBid(
 
     return {
       order: { ...order, totalAmount: order.totalAmount / 100 },
+      rawOrder: order,
       notificationContext: {
         rfqId: rfq.id,
         rfqPublicId: rfq.publicId,
@@ -1675,5 +1705,57 @@ export async function acceptRfqBid(
   if (result.notificationContext) {
     await notifyRfqBidAccepted(result.notificationContext)
   }
-  return result.order
+  const defaultSuccessUrl =
+    source === RfqSource.fleet
+      ? "http://localhost:4001/payments?payment=success&session_id={CHECKOUT_SESSION_ID}"
+      : "http://localhost:3002/user_dashboard/payments?payment=success&session_id={CHECKOUT_SESSION_ID}"
+  const defaultCancelUrl =
+    source === RfqSource.fleet
+      ? "http://localhost:4001/payments?payment=cancelled"
+      : "http://localhost:3002/user_dashboard/payments?payment=cancelled"
+  const businessAccount = source === RfqSource.fleet
+    ? await db.businessAccount.findUnique({
+        where: { ownerUserId_type: { ownerUserId: requesterId, type: BusinessAccountType.Fleet } },
+        select: { id: true },
+      })
+    : null
+  const payment =
+    result.rawOrder.paymentStatus === PaymentStatus.pending
+      ? await createStripeCheckoutPayment({
+          payerUserId: requesterId,
+          businessAccountId: businessAccount?.id,
+          purpose: "rfq_order",
+          amount: result.rawOrder.totalAmount,
+          currency: "AED",
+          description: `RFQ order ${result.rawOrder.publicId}`,
+          idempotencyKey: `rfq-order:${result.rawOrder.id}`,
+          successUrl: normalizeCheckoutUrl(paymentSuccessUrl, defaultSuccessUrl),
+          cancelUrl: normalizeCheckoutUrl(paymentCancelUrl, defaultCancelUrl),
+          entities: [
+            {
+              entityType: "order",
+              entityId: result.rawOrder.id,
+              amount: result.rawOrder.totalAmount,
+            },
+          ],
+          metadata: {
+            rfqId,
+            bidId,
+            source,
+            businessAccountId: businessAccount?.id ?? null,
+            orderIds: [result.rawOrder.id],
+          },
+        })
+      : null
+  return {
+    order: result.order,
+    payment: payment
+      ? {
+          checkoutUrl: payment.checkoutUrl,
+          stripeConfigured: payment.stripeConfigured,
+          status: payment.payment.status,
+          publicId: payment.payment.publicId,
+        }
+      : null,
+  }
 }
