@@ -84,6 +84,9 @@ const accountTypeToUserRole = (type: BusinessAccountType): UserRole => {
   return UserRole.Supplier
 }
 
+const isDashboardViewPermission = (permission: { code?: string | null; menuKey?: string | null }) =>
+  permission.menuKey === "overview" || permission.code?.endsWith(".dashboard.view")
+
 const defaultPermissionTemplates: Record<
   BusinessAccountType,
   Array<{
@@ -95,27 +98,34 @@ const defaultPermissionTemplates: Record<
   }>
 > = {
   Fleet: [
-    { code: "fleet.dashboard.view", name: "View dashboard", menuKey: "overview" },
     { code: "fleet.vehicles.view", name: "View vehicles", menuKey: "vehicles", featureKey: "vehicles", actionKey: "view" },
     { code: "fleet.vehicles.manage", name: "Add and edit vehicles", menuKey: "vehicles", featureKey: "vehicles", actionKey: "manage" },
+    { code: "fleet.rfqs.view", name: "View RFQs", menuKey: "rfqs", featureKey: "rfqs", actionKey: "view" },
     { code: "fleet.rfqs.create", name: "Create RFQs", menuKey: "rfqs", featureKey: "rfqs", actionKey: "create" },
     { code: "fleet.bids.accept", name: "Accept bids", menuKey: "rfqs", featureKey: "rfqs", actionKey: "accept_bid" },
+    { code: "fleet.orders.view", name: "View orders", menuKey: "orders", featureKey: "orders", actionKey: "view" },
+    { code: "fleet.suppliers.view", name: "View suppliers", menuKey: "suppliers", featureKey: "suppliers", actionKey: "view" },
     { code: "fleet.reports.view", name: "View reports", menuKey: "reports", featureKey: "reports", actionKey: "view" },
   ],
   Garage: [
-    { code: "garage.dashboard.view", name: "View dashboard", menuKey: "overview" },
     { code: "garage.bookings.view", name: "View bookings", menuKey: "bookings", featureKey: "bookings", actionKey: "view" },
     { code: "garage.bookings.manage", name: "Manage bookings", menuKey: "bookings", featureKey: "bookings", actionKey: "manage" },
+    { code: "garage.services.view", name: "View services", menuKey: "services", featureKey: "services", actionKey: "view" },
     { code: "garage.services.manage", name: "Manage services", menuKey: "services", featureKey: "services", actionKey: "manage" },
+    { code: "garage.schedule.view", name: "View schedule", menuKey: "schedule", featureKey: "schedule", actionKey: "view" },
     { code: "garage.schedule.manage", name: "Manage schedule", menuKey: "schedule", featureKey: "schedule", actionKey: "manage" },
+    { code: "garage.reviews.view", name: "View reviews", menuKey: "reviews", featureKey: "reviews", actionKey: "view" },
     { code: "garage.reports.view", name: "View reports", menuKey: "reports", featureKey: "reports", actionKey: "view" },
   ],
   Supplier: [
-    { code: "supplier.dashboard.view", name: "View dashboard", menuKey: "overview" },
     { code: "supplier.inventory.view", name: "View inventory", menuKey: "inventory", featureKey: "inventory", actionKey: "view" },
     { code: "supplier.inventory.manage", name: "Upload and edit products", menuKey: "inventory", featureKey: "inventory", actionKey: "manage" },
+    { code: "supplier.rfqs.view", name: "View RFQ inbox", menuKey: "rfq-inbox", featureKey: "rfqs", actionKey: "view" },
     { code: "supplier.rfqs.quote", name: "Quote RFQs", menuKey: "rfq-inbox", featureKey: "rfqs", actionKey: "quote" },
+    { code: "supplier.orders.view", name: "View orders", menuKey: "orders", featureKey: "orders", actionKey: "view" },
     { code: "supplier.orders.manage", name: "Manage orders", menuKey: "orders", featureKey: "orders", actionKey: "manage" },
+    { code: "supplier.offers.view", name: "View offers", menuKey: "offers", featureKey: "offers", actionKey: "view" },
+    { code: "supplier.reviews.view", name: "View reviews", menuKey: "reviews", featureKey: "reviews", actionKey: "view" },
     { code: "supplier.reports.view", name: "View reports", menuKey: "performance", featureKey: "reports", actionKey: "view" },
   ],
 }
@@ -2484,6 +2494,8 @@ export async function changeBusinessAccountPlan(input: {
   ownerUserId: string
   businessAccountId: unknown
   planId: unknown
+  billingCycle?: unknown
+  autoRenewConsent?: unknown
   paymentSuccessUrl?: unknown
   paymentCancelUrl?: unknown
   idempotencyKey?: unknown
@@ -2506,7 +2518,15 @@ export async function changeBusinessAccountPlan(input: {
   })
   if (!nextPlan) throw new Error("Selected plan is not available for this business")
   const direction = getPlanTransition(account.plan.code, nextPlan.code)
-  if (nextPlan.priceAmount > 0) {
+  const billingCycle = input.billingCycle === "yearly" ? "yearly" : "monthly"
+  const autoRenewConsent = input.autoRenewConsent === true
+  if (billingCycle === "yearly" && direction === "downgrade") {
+    throw new Error("Annual auto-renew is only available when upgrading to a higher paid plan")
+  }
+  const paymentAmount = billingCycle === "yearly" && nextPlan.yearlyPriceAmount > 0
+    ? nextPlan.yearlyPriceAmount * 12
+    : nextPlan.priceAmount
+  if (paymentAmount > 0) {
     if (!isStripePaymentsConfigured()) {
       throw new Error("Stripe test keys are not configured on the backend")
     }
@@ -2516,22 +2536,31 @@ export async function changeBusinessAccountPlan(input: {
       payerUserId: input.ownerUserId,
       businessAccountId: account.id,
       purpose: "business_plan",
-      amount: nextPlan.priceAmount,
+      amount: paymentAmount,
       currency: nextPlan.priceCurrency,
-      description: `${direction === "downgrade" ? "Downgrade" : "Upgrade"} to ${nextPlan.name}`,
+      description: `${direction === "downgrade" ? "Downgrade" : `${billingCycle === "yearly" ? "Annual" : "Monthly"}${autoRenewConsent ? " auto-renew" : ""}`} to ${nextPlan.name}`,
       idempotencyKey:
         typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
           ? input.idempotencyKey.trim()
-          : `business-plan:${account.id}:${nextPlan.id}:${direction}:${createHash("sha256").update(account.updatedAt.toISOString()).digest("hex").slice(0, 16)}`,
+          : `business-plan:${account.id}:${nextPlan.id}:${direction}:${billingCycle}:${autoRenewConsent ? "auto" : "once"}:${createHash("sha256").update(account.updatedAt.toISOString()).digest("hex").slice(0, 16)}`,
       successUrl: checkoutUrl(input.paymentSuccessUrl, defaultSuccessUrl),
       cancelUrl: checkoutUrl(input.paymentCancelUrl, defaultCancelUrl),
-      entities: [{ entityType: "business_plan", entityId: nextPlan.id, amount: nextPlan.priceAmount }],
+      entities: [{ entityType: "business_plan", entityId: nextPlan.id, amount: paymentAmount }],
+      subscription: direction !== "downgrade" && autoRenewConsent
+        ? {
+            interval: billingCycle === "yearly" ? "year" : "month",
+            intervalCount: 1,
+            consentText: `Customer authorized ${billingCycle} automatic renewal during Fleet plan checkout.`,
+          }
+        : undefined,
       metadata: {
         businessAccountId: account.id,
         fromPlanId: account.plan.id,
         fromPlanName: account.plan.name,
         toPlanId: nextPlan.id,
         toPlanName: nextPlan.name,
+        billingCycle,
+        autoRenewConsent,
       },
     })
     return {
@@ -3786,12 +3815,9 @@ export async function createBusinessSupportTicket(input: {
   if (textLength(input.message) < 10 || textLength(input.message) > 2000) {
     throw new Error("Message must be between 10 and 2000 characters")
   }
-  const allowedCategories =
-    account.plan.supportTier === "Premium"
-      ? new Set(["booking_completion", "account_assistance", "onboarding_training"])
-      : account.plan.supportTier === "Standard"
-        ? new Set(["booking_completion", "account_assistance"])
-        : new Set(["booking_completion"])
+  const allowedCategories = new Set(
+    supportTicketCategoriesFor(account.type, account.plan.supportTier).map((item) => item.value),
+  )
   if (category && !allowedCategories.has(category)) throw new Error("This support option is not included in your current plan")
 
   const row = await db.businessSupportTicket.create({
@@ -3989,6 +4015,22 @@ export async function listAdminBusinessSupportContent() {
   }
 }
 
+const supportTicketCategoriesFor = (accountType: BusinessAccountType, supportTier: string) => {
+  const categories =
+    supportTier === "Premium"
+      ? [
+          { value: "account_assistance", label: "Account assistance" },
+          { value: "onboarding_training", label: "Onboarding / training support" },
+        ]
+      : supportTier === "Standard"
+        ? [{ value: "account_assistance", label: "Account assistance" }]
+        : []
+
+  return accountType === BusinessAccountType.Garage
+    ? [{ value: "booking_completion", label: "Booking completion / close request" }, ...categories]
+    : categories
+}
+
 export async function listBusinessSupportContent(input: { userId: string; businessAccountId: unknown }) {
   const account = await findWritableBusinessAccount(input.userId, input.businessAccountId)
   const [videos, faqs] = await Promise.all([
@@ -4003,19 +4045,7 @@ export async function listBusinessSupportContent(input: { userId: string; busine
         : account.plan.supportTier === "Standard"
           ? "Help videos, FAQ, support request, faster response, and basic account assistance."
           : "Help videos, FAQ, and standard support request.",
-    ticketCategories:
-      account.plan.supportTier === "Premium"
-        ? [
-            { value: "booking_completion", label: "Booking completion / close request" },
-            { value: "account_assistance", label: "Account assistance" },
-            { value: "onboarding_training", label: "Onboarding / training support" },
-          ]
-        : account.plan.supportTier === "Standard"
-          ? [
-              { value: "booking_completion", label: "Booking completion / close request" },
-              { value: "account_assistance", label: "Account assistance" },
-            ]
-          : [{ value: "booking_completion", label: "Booking completion / close request" }],
+    ticketCategories: supportTicketCategoriesFor(account.type, account.plan.supportTier),
     videos: await Promise.all(videos.map(mapSupportVideo)),
     faqs: faqs.map(mapSupportFaq),
   }
@@ -4648,7 +4678,7 @@ export async function getMyBusinessAccess(userId: string) {
     const roles = membership.businessAccount.roles.filter((role) => roleIds.has(role.id))
     const permissionIds = new Set(roles.flatMap((role) => role.permissionIds))
     const permissions = membership.businessAccount.permissions.filter((permission) =>
-      permissionIds.has(permission.id),
+      permissionIds.has(permission.id) && !isDashboardViewPermission(permission),
     )
     const account = membership.businessAccount
     const isOwner = account.ownerUserId === userId
@@ -4681,10 +4711,15 @@ export async function getMyBusinessAccess(userId: string) {
       : Object.fromEntries(
           Object.entries(entitlements.actions).map(([action, result]) => {
             const rule = actionRules[action]
+            const hasAssignedReportPermission =
+              action.startsWith("reports.") &&
+              (permissionFeatures.has("reports") ||
+                permissionCodes.has(`${account.type.toLowerCase()}.reports.view`))
             const hasPermission =
               !rule?.feature ||
               permissionCodes.has(rule.feature) ||
-              permissionFeatures.has(rule.feature)
+              permissionFeatures.has(rule.feature) ||
+              hasAssignedReportPermission
             return [
               action,
               hasPermission
@@ -4696,6 +4731,14 @@ export async function getMyBusinessAccess(userId: string) {
             ]
           }),
         )
+    const visibleMenuSet = new Set(isOwner ? [...entitlements.enabledMenus, ...roleMenuKeys] : roleMenuKeys)
+    if (
+      actions["reports.view"]?.allowed ||
+      actions["reports.usage"]?.allowed ||
+      actions["reports.activity"]?.allowed
+    ) {
+      visibleMenuSet.add(account.type === BusinessAccountType.Supplier ? "performance" : "reports")
+    }
 
     return {
       businessAccount: {
@@ -4732,9 +4775,7 @@ export async function getMyBusinessAccess(userId: string) {
         featureKey: permission.featureKey,
         actionKey: permission.actionKey,
       })),
-      visibleMenus: Array.from(
-        new Set(isOwner ? [...entitlements.enabledMenus, ...roleMenuKeys] : roleMenuKeys),
-      ),
+      visibleMenus: Array.from(visibleMenuSet),
       enabledFeatures: entitlements.enabledFeatures,
       lockedFeatures: entitlements.lockedFeatures,
       requestableFeatures: entitlements.requestableFeatures,
@@ -4759,6 +4800,22 @@ export async function assertBusinessAction(input: {
   if (!access) throw new Error("Business account access is required")
   const result = access.actions[input.action]
   if (!result?.allowed) throw new Error(result?.reason ?? "This action is not allowed")
+  return access.businessAccount
+}
+
+export async function assertBusinessMenuAccess(input: {
+  userId: string
+  accountType: BusinessAccountType
+  menuKey: string | string[]
+}) {
+  const access = (await getMyBusinessAccess(input.userId)).find(
+    (item) => item.businessAccount.type === input.accountType,
+  )
+  if (!access) throw new Error("Business account access is required")
+  const menuKeys = Array.isArray(input.menuKey) ? input.menuKey : [input.menuKey]
+  if (!menuKeys.some((menuKey) => access.visibleMenus.includes(menuKey))) {
+    throw new Error("You do not have permission to view this section")
+  }
   return access.businessAccount
 }
 
@@ -4816,7 +4873,11 @@ export async function createBusinessRole(input: {
     throw new Error("Role limit reached for this plan")
   }
 
-  const validPermissionIds = new Set(account.permissions.map((permission) => permission.id))
+  const validPermissionIds = new Set(
+    account.permissions
+      .filter((permission) => !isDashboardViewPermission(permission))
+      .map((permission) => permission.id),
+  )
   const permissionIds = cleanTextArray(input.permissionIds).filter((id) => validPermissionIds.has(id))
   const roleInput = validateBusinessRoleInput({ name: input.name, description: input.description, permissionIds })
   const duplicateRole = account.roles.find(
@@ -5013,11 +5074,16 @@ export async function listBusinessRoles(input: {
   businessAccountId: unknown
 }) {
   const account = await assertBusinessAccountOwnership(input)
+  const visiblePermissionIds = new Set(
+    account.permissions
+      .filter((permission) => !isDashboardViewPermission(permission))
+      .map((permission) => permission.id),
+  )
   return account.roles.map((role) => ({
     id: role.id,
     name: role.name,
     description: role.description,
-    permissionIds: role.permissionIds,
+    permissionIds: role.permissionIds.filter((permissionId) => visiblePermissionIds.has(permissionId)),
     isOwnerRole: role.isOwnerRole,
   }))
 }
@@ -5027,16 +5093,18 @@ export async function listBusinessPermissions(input: {
   businessAccountId: unknown
 }) {
   const account = await assertBusinessAccountOwnership(input)
-  return account.permissions.map((permission) => ({
-    id: permission.id,
-    code: permission.code,
-    name: permission.name,
-    description: permission.description,
-    menuKey: permission.menuKey,
-    featureKey: permission.featureKey,
-    actionKey: permission.actionKey,
-    isSystem: permission.isSystem,
-  }))
+  return account.permissions
+    .filter((permission) => !isDashboardViewPermission(permission))
+    .map((permission) => ({
+      id: permission.id,
+      code: permission.code,
+      name: permission.name,
+      description: permission.description,
+      menuKey: permission.menuKey,
+      featureKey: permission.featureKey,
+      actionKey: permission.actionKey,
+      isSystem: permission.isSystem,
+    }))
 }
 
 export async function listBusinessMembers(input: {
@@ -5502,7 +5570,11 @@ export async function updateBusinessRole(input: {
   if (!role) throw new Error("Business role was not found")
   if (role.isOwnerRole) throw new Error("Owner role cannot be updated")
 
-  const validPermissionIds = new Set(account.permissions.map((permission) => permission.id))
+  const validPermissionIds = new Set(
+    account.permissions
+      .filter((permission) => !isDashboardViewPermission(permission))
+      .map((permission) => permission.id),
+  )
   const permissionIds = input.permissionIds === undefined
     ? role.permissionIds
     : cleanTextArray(input.permissionIds).filter((id) => validPermissionIds.has(id))

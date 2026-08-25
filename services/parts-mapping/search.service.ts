@@ -1,6 +1,7 @@
 import { normalizePartNumber } from "@/lib/vin-17-api-client"
 import { db } from "@/lib/database/prisma"
 import { SupplierPartMappingStatus } from "@/lib/generated/prisma/client"
+import { getS3ImageDisplayUrl } from "@/lib/storage/s3"
 import type { PartSearchResponse } from "@/types/parts-mapping/parts-mapping"
 import { mapSupplierPart, normalizeText } from "./internal-helpers"
 
@@ -91,7 +92,7 @@ export async function searchPartsFromLocalDb(input: {
         brandName: part.brandName,
         category: part.category,
         source: part.source,
-        imageUrls: part.imageUrls,
+        imageUrls: part.imageUrls.map(getS3ImageDisplayUrl),
         imageKeys: part.imageKeys,
         badgeText: part.badgeText,
         heading: part.heading,

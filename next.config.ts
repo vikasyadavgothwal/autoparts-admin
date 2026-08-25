@@ -21,6 +21,14 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "d138jhvnngk7dx.cloudfront.net",
+      },
+    ],
+  },
   experimental: {
     proxyClientMaxBodySize: "260mb",
     serverActions: {

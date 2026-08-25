@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
-import { createSignedS3ObjectUrl } from "@/lib/storage/s3"
+import { getS3ImageDisplayUrlFromKey } from "@/lib/storage/s3"
 import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { supplierOwnsCatalogProductImage } from "@/services/parts/product-image-service"
 
@@ -35,8 +35,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const signedUrl = await createSignedS3ObjectUrl(key, 5 * 60)
-    return NextResponse.redirect(signedUrl)
+    return NextResponse.redirect(getS3ImageDisplayUrlFromKey(key))
   } catch (error) {
     return NextResponse.json(
       {

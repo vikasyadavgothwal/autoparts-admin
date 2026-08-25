@@ -9,7 +9,7 @@ import {
   createDirectOrders,
   listUserOrders,
 } from "@/services/orders/order-service";
-import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service";
+import { assertBusinessMenuAccess, getBusinessAccountOwnerId } from "@/services/business/business-platform-service";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +33,20 @@ export async function GET(request: NextRequest) {
   const status = Object.values(OrderStatus).includes(statusParam as OrderStatus)
     ? (statusParam as OrderStatus)
     : null;
+  if (auth.user.activeRole === UserRole.Supplier) {
+    try {
+      await assertBusinessMenuAccess({ userId: auth.user.id, accountType: BusinessAccountType.Supplier, menuKey: "orders" });
+    } catch (error) {
+      return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "You do not have permission to view orders" }, { status: 403 });
+    }
+  }
+  if (auth.user.activeRole === UserRole.Fleet) {
+    try {
+      await assertBusinessMenuAccess({ userId: auth.user.id, accountType: BusinessAccountType.Fleet, menuKey: "orders" });
+    } catch (error) {
+      return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "You do not have permission to view orders" }, { status: 403 });
+    }
+  }
   const dataOwnerId = auth.user.activeRole === UserRole.Supplier
     ? await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
     : auth.user.activeRole === UserRole.Fleet

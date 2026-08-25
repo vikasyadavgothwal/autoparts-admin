@@ -3,7 +3,6 @@ import {
   Bell,
   ChevronDown,
   LogOut,
-  Search,
   User,
 } from "lucide-react"
 import { useState } from "react"
@@ -22,7 +21,6 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { NotificationLiveListener } from "@/components/notification-live-listener"
 import { NotificationPopup } from "@/components/notification-popup"
@@ -42,16 +40,7 @@ export function DashboardHeader({
       <div className="flex h-16 items-center justify-between gap-4 px-4 lg:px-8">
         <SidebarTrigger className="text-brand-muted hover:bg-transparent hover:text-foreground lg:hidden" />
 
-        <div className="max-w-xl flex-1">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-muted" />
-            <Input
-              type="text"
-              placeholder="Search..."
-              className="h-10 w-full rounded-sm border border-border bg-brand-surface pl-10 pr-4 text-foreground placeholder:text-brand-muted focus-visible:border-primary focus-visible:ring-0"
-            />
-          </div>
-        </div>
+        <div className="flex-1" />
 
         <div className="flex items-center gap-2">
           <DropdownMenu>

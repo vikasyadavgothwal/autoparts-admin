@@ -14,6 +14,8 @@ export async function PATCH(request: NextRequest) {
     const body = await readJsonBody<{
       businessAccountId?: unknown
       planId?: unknown
+      billingCycle?: unknown
+      autoRenewConsent?: unknown
       paymentSuccessUrl?: unknown
       paymentCancelUrl?: unknown
     }>(request)
@@ -24,6 +26,8 @@ export async function PATCH(request: NextRequest) {
         ownerUserId: auth.user.id,
         businessAccountId: body.body.businessAccountId,
         planId: body.body.planId,
+        billingCycle: body.body.billingCycle,
+        autoRenewConsent: body.body.autoRenewConsent,
         idempotencyKey: request.headers.get("idempotency-key") ?? undefined,
         paymentSuccessUrl: body.body.paymentSuccessUrl,
         paymentCancelUrl: body.body.paymentCancelUrl,

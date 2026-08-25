@@ -45,6 +45,11 @@ type CreateCheckoutPaymentInput = {
   cancelUrl: string;
   entities: PaymentEntityInput[];
   metadata?: Prisma.InputJsonValue;
+  subscription?: {
+    interval: "month" | "year";
+    intervalCount?: number;
+    consentText?: string;
+  };
 };
 
 type PaymentRow = {
@@ -97,6 +102,7 @@ type StripeCheckoutSession = {
   id: string;
   url?: string | null;
   payment_intent?: string | { id?: string } | null;
+  subscription?: string | { id?: string } | null;
   customer?: string | { id?: string } | null;
   payment_status?: string;
   status?: string | null;
@@ -317,6 +323,8 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
       const settled = await settlePaymentSucceeded({
         sessionId: session.id,
         paymentIntentId: stripeObjectId(session.payment_intent),
+        subscriptionId: stripeObjectId(session.subscription),
+        customerId: stripeObjectId(session.customer),
       });
       return { payment: settled ?? payment, checkoutUrl: null, stripeConfigured: isStripePaymentsConfigured() };
     }
@@ -336,50 +344,79 @@ export async function createStripeCheckoutPayment(input: CreateCheckoutPaymentIn
     return { payment, checkoutUrl: null, stripeConfigured: false };
   }
 
+  const stripeMetadata = {
+    paymentId: payment.id,
+    purpose: input.purpose,
+    ...(input.payerUserId ? { payerUserId: input.payerUserId } : {}),
+    ...(input.businessAccountId ? { businessAccountId: input.businessAccountId } : {}),
+    ...(input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata)
+      ? input.metadata as Record<string, unknown>
+      : {}),
+  };
+  const sessionBody: Record<string, unknown> = {
+    mode: input.subscription ? "subscription" : "payment",
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    adaptive_pricing: {
+      enabled: false,
+    },
+    // Stripe renders Apple Pay, Google Pay, and Link from the card method when eligible.
+    payment_method_types: ["card"],
+    client_reference_id: payment.id,
+    metadata: stripeMetadata,
+    line_items: [
+      {
+        quantity: 1,
+        price_data: {
+          currency: currency.toLowerCase(),
+          unit_amount: input.amount,
+          product_data: { name: input.description.slice(0, 120) },
+          ...(input.subscription
+            ? {
+                recurring: {
+                  interval: input.subscription.interval,
+                  interval_count: input.subscription.intervalCount ?? 1,
+                },
+              }
+            : {}),
+        },
+      },
+    ],
+  };
+  if (input.subscription) {
+    sessionBody.subscription_data = {
+      description: input.description.slice(0, 500),
+      metadata: {
+        ...stripeMetadata,
+        autoRenewConsent: "true",
+        consentText: input.subscription.consentText ?? "Customer authorized automatic renewal.",
+      },
+    };
+  } else {
+    sessionBody.payment_intent_data = {
+      metadata: stripeMetadata,
+    };
+  }
+
   const session = await stripeRequest<StripeCheckoutSession>("/checkout/sessions", {
     method: "POST",
     idempotencyKey: checkoutIdempotencyKey,
-    body: {
-      mode: "payment",
-      success_url: input.successUrl,
-      cancel_url: input.cancelUrl,
-      adaptive_pricing: {
-        enabled: false,
-      },
-      // Stripe renders Apple Pay, Google Pay, and Link from the card method when eligible.
-      payment_method_types: ["card"],
-      client_reference_id: payment.id,
-      metadata: {
-        paymentId: payment.id,
-        purpose: input.purpose,
-      },
-      payment_intent_data: {
-        metadata: {
-          paymentId: payment.id,
-          purpose: input.purpose,
-        },
-      },
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: currency.toLowerCase(),
-            unit_amount: input.amount,
-            product_data: { name: input.description.slice(0, 120) },
-          },
-        },
-      ],
-    },
+    body: sessionBody,
   });
 
   const paymentIntentId = stripeObjectId(session.payment_intent);
   const customerId = stripeObjectId(session.customer);
+  const subscriptionId = stripeObjectId(session.subscription);
   if (!session.url) throw new Error("Stripe did not return a Checkout URL");
   await db.$executeRaw`
     UPDATE "payments"
     SET "stripeCheckoutSessionId" = ${session.id},
         "stripePaymentIntentId" = COALESCE(${paymentIntentId}, "stripePaymentIntentId"),
         "stripeCustomerId" = COALESCE(${customerId}, "stripeCustomerId"),
+        "metadata" = COALESCE("metadata", '{}'::jsonb) || ${JSON.stringify({
+          stripeSubscriptionId: subscriptionId,
+          autoRenew: Boolean(input.subscription),
+        })}::jsonb,
         "updatedAt" = CURRENT_TIMESTAMP
     WHERE "id" = ${payment.id}
   `;
@@ -901,6 +938,9 @@ async function applyBusinessPayment(payment: PaymentRow) {
         await schedulePaidPlanDowngrade({ payment, account, nextPlan });
         return;
       }
+      const transition = account && currentTier && nextTier ? getPlanTransition(currentTier, nextTier) : "upgrade";
+      const paymentMeta = paymentMetadata(payment.metadata);
+      const isRenewal = paymentMeta.renewal === true || paymentMeta.autoRenew === true && transition === "same";
       await db.$executeRaw`
         UPDATE "business_accounts"
         SET "planId" = ${nextPlan.id}, "updatedAt" = CURRENT_TIMESTAMP
@@ -914,11 +954,16 @@ async function applyBusinessPayment(payment: PaymentRow) {
         SELECT
           ${randomUUID()}, ${payment.businessAccountId}, ${payment.payerUserId},
           'plan', ${nextPlan.id}, ${nextPlan.code},
-          ${`Plan upgraded from ${account?.planName ?? "current plan"} to ${nextPlan.name}`},
+          ${isRenewal
+            ? `Plan renewed: ${nextPlan.name}`
+            : `Plan ${transition === "same" ? "confirmed" : "upgraded"} from ${account?.planName ?? "current plan"} to ${nextPlan.name}`},
           ${payment.amount}, ${payment.currency || nextPlan.priceCurrency}, 'Paid',
           ${JSON.stringify({
             paymentId: payment.id,
             stripePaymentIntentId: payment.stripePaymentIntentId,
+            stripeSubscriptionId: paymentMeta.stripeSubscriptionId ?? null,
+            autoRenew: paymentMeta.autoRenew === true,
+            renewal: isRenewal,
             toPlanName: nextPlan.name,
           })}::jsonb
         WHERE NOT EXISTS (
@@ -1001,9 +1046,73 @@ async function applyBusinessPayment(payment: PaymentRow) {
   }
 }
 
+const recordFromUnknown = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+const invoiceSubscriptionMetadata = (invoice: Record<string, unknown>) => {
+  const parent = recordFromUnknown(invoice.parent);
+  const subscriptionDetails = recordFromUnknown(parent.subscription_details ?? invoice.subscription_details);
+  return recordFromUnknown(subscriptionDetails.metadata);
+};
+
+async function recordSubscriptionInvoicePayment(invoice: Record<string, unknown>) {
+  const invoiceId = typeof invoice.id === "string" ? invoice.id : "";
+  if (!invoiceId || invoice.billing_reason === "subscription_create") return;
+  const metadata = invoiceSubscriptionMetadata(invoice);
+  if (metadata.purpose !== "business_plan" || typeof metadata.businessAccountId !== "string" || typeof metadata.toPlanId !== "string") return;
+
+  const idempotencyKey = normalizeIdempotencyKey(`stripe-invoice:${invoiceId}`);
+  if (await findPaymentByIdempotencyKey(idempotencyKey)) return;
+
+  const amountPaid = typeof invoice.amount_paid === "number" ? Math.max(0, Math.round(invoice.amount_paid)) : 0;
+  if (amountPaid <= 0) return;
+  const paymentId = randomUUID();
+  const currency = normalizeCurrency(typeof invoice.currency === "string" ? invoice.currency : null);
+  const paymentIntentId = stripeObjectId(invoice.payment_intent);
+  const customerId = stripeObjectId(invoice.customer);
+  const subscriptionId = stripeObjectId(invoice.subscription);
+  await db.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      INSERT INTO "payments" (
+        "id", "publicId", "payerUserId", "businessAccountId", "purpose",
+        "amount", "currency", "status", "stripePaymentIntentId", "stripeCustomerId",
+        "idempotencyKey", "description", "metadata", "paidAt", "createdAt", "updatedAt"
+      )
+      VALUES (
+        ${paymentId}, ${publicPaymentId()}, ${typeof metadata.payerUserId === "string" ? metadata.payerUserId : null},
+        ${metadata.businessAccountId}, 'business_plan', ${amountPaid}, ${currency}, 'succeeded',
+        ${paymentIntentId}, ${customerId}, ${idempotencyKey},
+        ${`Annual renewal for ${typeof metadata.toPlanName === "string" ? metadata.toPlanName : "business plan"}`},
+        ${JSON.stringify({
+          ...metadata,
+          stripeInvoiceId: invoiceId,
+          stripeSubscriptionId: subscriptionId,
+          stripePaymentIntentId: paymentIntentId,
+          autoRenew: true,
+          renewal: true,
+        })}::jsonb,
+        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+    `;
+    await tx.$executeRaw`
+      INSERT INTO "payment_items" (
+        "id", "paymentId", "entityType", "entityId", "amount", "currency"
+      )
+      VALUES (
+        ${randomUUID()}, ${paymentId}, 'business_plan', ${metadata.toPlanId},
+        ${amountPaid}, ${currency}
+      )
+    `;
+  });
+  const payment = await findPaymentById(paymentId);
+  if (payment) await applyBusinessPayment(payment);
+}
+
 export async function settlePaymentSucceeded(input: {
   sessionId?: string | null;
   paymentIntentId?: string | null;
+  subscriptionId?: string | null;
+  customerId?: string | null;
 }) {
   const payment = await findPaymentForStripeObject(input);
   if (!payment) return null;
@@ -1017,6 +1126,10 @@ export async function settlePaymentSucceeded(input: {
       UPDATE "payments"
       SET "status" = 'succeeded',
           "stripePaymentIntentId" = COALESCE(${input.paymentIntentId ?? null}, "stripePaymentIntentId"),
+          "stripeCustomerId" = COALESCE(${input.customerId ?? null}, "stripeCustomerId"),
+          "metadata" = COALESCE("metadata", '{}'::jsonb) || ${JSON.stringify({
+            stripeSubscriptionId: input.subscriptionId ?? null,
+          })}::jsonb,
           "paidAt" = COALESCE("paidAt", CURRENT_TIMESTAMP),
           "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${payment.id} AND "status" <> 'succeeded'
@@ -1138,7 +1251,12 @@ export async function refreshStripePaymentStatus(paymentId: string) {
     `;
   }
   if (session.payment_status === "paid") {
-    return settlePaymentSucceeded({ sessionId: session.id, paymentIntentId });
+    return settlePaymentSucceeded({
+      sessionId: session.id,
+      paymentIntentId,
+      subscriptionId: stripeObjectId(session.subscription),
+      customerId: stripeObjectId(session.customer),
+    });
   }
   if (session.status === "expired") {
     return markPaymentFailed({
@@ -1202,9 +1320,16 @@ export async function processStripeWebhook(rawBody: string, signatureHeader: str
     if (event.type === "checkout.session.completed") {
       const sessionId = objectId;
       const paymentIntentId = stripeObjectId(object.payment_intent);
-      await settlePaymentSucceeded({ sessionId, paymentIntentId });
+      await settlePaymentSucceeded({
+        sessionId,
+        paymentIntentId,
+        subscriptionId: stripeObjectId(object.subscription),
+        customerId: stripeObjectId(object.customer),
+      });
     } else if (event.type === "payment_intent.succeeded") {
       await settlePaymentSucceeded({ paymentIntentId: objectId });
+    } else if (event.type === "invoice.payment_succeeded") {
+      await recordSubscriptionInvoicePayment(object);
     } else if (event.type === "payment_intent.payment_failed") {
       const lastError =
         object.last_payment_error && typeof object.last_payment_error === "object"

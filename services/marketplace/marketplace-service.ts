@@ -6,8 +6,7 @@ import {
   normalizeVinSearchResult,
 } from "@/lib/vin-search"
 import {
-  createSignedS3ObjectUrl,
-  getS3ObjectKeyFromUrl,
+  getS3ImageDisplayUrl,
 } from "@/lib/storage/s3"
 import {
   BusinessAccountType,
@@ -818,8 +817,7 @@ const tokenizedSupplierPartFilter = (
 
 const getDisplayImageUrl = async (imageUrl: string): Promise<string> => {
   try {
-    const key = getS3ObjectKeyFromUrl(imageUrl)
-    return key ? await createSignedS3ObjectUrl(key, 60 * 60) : imageUrl
+    return getS3ImageDisplayUrl(imageUrl)
   } catch {
     return imageUrl
   }

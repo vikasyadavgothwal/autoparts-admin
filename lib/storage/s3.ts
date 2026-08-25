@@ -40,6 +40,20 @@ type S3PutObjectResult = {
 const DEFAULT_CACHE_CONTROL = "public, max-age=31536000, immutable"
 const DEFAULT_SIGNED_URL_EXPIRES_IN = 60 * 60
 const AWS_REGION_CODE_PATTERN = /[a-z]{2}(?:-gov)?-[a-z]+-\d/
+const S3_IMAGE_CLOUDFRONT_BASE_URL = "https://d138jhvnngk7dx.cloudfront.net"
+const S3_IMAGE_KEY_PREFIXES = [
+  "home/banner/",
+  "site-settings/logo/",
+  "site-settings/favicon/",
+  "product-images/",
+  "supplier-products/",
+  "supplier-profiles/",
+  "garage-profiles/",
+  "order-delivery-proofs/",
+  "rfq-attachments/",
+  "public-pages/seo/",
+]
+const S3_IMAGE_EXTENSION_PATTERN = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i
 
 let cachedConfig: S3StorageConfig | null = null
 let cachedClient: S3Client | null = null
@@ -208,6 +222,13 @@ const buildS3ObjectUrl = (key: string, config: S3StorageConfig): string => {
   return `https://${config.bucket}.s3.${config.region}.amazonaws.com/${encodedKey}`
 }
 
+export const createCloudFrontS3ObjectUrl = (key: string): string =>
+  `${S3_IMAGE_CLOUDFRONT_BASE_URL}/${encodeS3Path(key)}`
+
+const isS3ImageObjectKey = (key: string): boolean =>
+  S3_IMAGE_EXTENSION_PATTERN.test(key) ||
+  S3_IMAGE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))
+
 export const uploadObjectToS3 = async (
   input: S3PutObjectInput,
 ): Promise<S3PutObjectResult> => {
@@ -260,6 +281,9 @@ export const createSignedS3ObjectUrl = async (
   })
 }
 
+export const getS3ImageDisplayUrlFromKey = (key: string): string =>
+  createCloudFrontS3ObjectUrl(key)
+
 export const s3ObjectExists = async (key: string): Promise<boolean> => {
   const config = getS3StorageConfig()
   try {
@@ -302,6 +326,10 @@ export const getS3ObjectKeyFromUrl = (value: string): string | null => {
       return null
     }
 
+    if (url.origin === S3_IMAGE_CLOUDFRONT_BASE_URL) {
+      return pathKey
+    }
+
     if (config.publicBaseUrl) {
       const publicBase = new URL(config.publicBaseUrl)
 
@@ -336,4 +364,9 @@ export const getS3ObjectKeyFromUrl = (value: string): string | null => {
   }
 
   return null
+}
+
+export const getS3ImageDisplayUrl = (value: string): string => {
+  const key = getS3ObjectKeyFromUrl(value)
+  return key && isS3ImageObjectKey(key) ? getS3ImageDisplayUrlFromKey(key) : value
 }

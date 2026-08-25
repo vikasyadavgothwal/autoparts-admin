@@ -12,8 +12,8 @@ import {
 import { sendSmtpMail } from "@/lib/email/smtp"
 import { logError } from "@/lib/logger"
 import {
-  createSignedS3ObjectUrl,
   deleteObjectFromS3,
+  getS3ImageDisplayUrl,
   getS3ObjectKeyFromUrl,
   uploadObjectToS3,
 } from "@/lib/storage/s3"
@@ -156,8 +156,7 @@ async function getMobileVerifiedAt(userId: string, phone: string | null) {
 async function publicImageUrl(imageUrl: string | null) {
   if (!imageUrl) return null;
   try {
-    const key = getS3ObjectKeyFromUrl(imageUrl);
-    return key ? await createSignedS3ObjectUrl(key, 60 * 60) : imageUrl;
+    return getS3ImageDisplayUrl(imageUrl);
   } catch {
     return imageUrl;
   }

@@ -8,7 +8,7 @@ import {
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, RfqSource, RfqStatus } from "@/lib/generated/prisma/client"
 import { deleteObjectFromS3, uploadObjectToS3 } from "@/lib/storage/s3"
-import { assertBusinessAction, assertBusinessPlanLimit, getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
+import { assertBusinessAction, assertBusinessMenuAccess, assertBusinessPlanLimit, getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { createRfq, listFleetRfqs, listSupplierRfqs, listUserRfqs, sendDueRfqQuoteSummaryEmails } from "@/services/fleet/fleet-service"
 import type { CreateRfqInput, RfqAttachment } from "@/types/rfq/rfq"
 
@@ -29,6 +29,11 @@ export async function GET(request: NextRequest) {
   const pageSize = Number.parseInt(request.nextUrl.searchParams.get("pageSize") ?? "20", 10)
   const search = request.nextUrl.searchParams.get("search") ?? ""
   if (auth.user.activeRole === "Fleet" && auth.user.roles.includes("Fleet")) {
+    try {
+      await assertBusinessMenuAccess({ userId: auth.user.id, accountType: BusinessAccountType.Fleet, menuKey: "rfqs" })
+    } catch (error) {
+      return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "You do not have permission to view RFQs" }, { status: 403 })
+    }
     const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
     return NextResponse.json({ ok: true, ...(await listFleetRfqs(fleetId, page, pageSize, search)) })
   }
@@ -36,6 +41,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: true, ...(await listUserRfqs(auth.user.id, page, pageSize, search)) })
   }
   if (auth.user.activeRole === "Supplier" && auth.user.roles.includes("Supplier")) {
+    try {
+      await assertBusinessMenuAccess({ userId: auth.user.id, accountType: BusinessAccountType.Supplier, menuKey: "rfq-inbox" })
+    } catch (error) {
+      return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "You do not have permission to view RFQs" }, { status: 403 })
+    }
     const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
     return NextResponse.json({ ok: true, ...(await listSupplierRfqs(supplierId, page, pageSize, search)) })
   }

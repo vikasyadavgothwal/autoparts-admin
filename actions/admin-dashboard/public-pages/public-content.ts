@@ -540,7 +540,7 @@ export async function uploadPublicPageSeoOgImage(
 
   return {
     ok: true,
-    imageUrl: saveResult.data.ogImage,
+    imageUrl: uploadResult.imageUrl,
     imageKey: saveResult.data.ogImageKey,
     previousImageKey: uploadResult.previousImageKey,
     seo: saveResult.data,

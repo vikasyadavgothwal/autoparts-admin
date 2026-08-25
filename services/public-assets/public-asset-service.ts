@@ -1,4 +1,4 @@
-import { createSignedS3ObjectUrl } from "@/lib/storage/s3"
+import { getS3ImageDisplayUrlFromKey } from "@/lib/storage/s3"
 
 const PUBLIC_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
 
@@ -20,8 +20,7 @@ export async function fetchPublicAssetByKey(key: string) {
     return { ok: false as const, status: 404, message: "Asset not found." }
   }
 
-  const signedUrl = await createSignedS3ObjectUrl(normalizedKey)
-  const response = await fetch(signedUrl, { cache: "no-store" })
+  const response = await fetch(getS3ImageDisplayUrlFromKey(normalizedKey), { cache: "no-store" })
 
   if (!response.ok || !response.body) {
     return { ok: false as const, status: 404, message: "Asset not found." }

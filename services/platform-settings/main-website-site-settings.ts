@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer"
 import { randomUUID } from "node:crypto"
 import { db } from "@/lib/database/prisma"
 import {
-  createSignedS3ObjectUrl,
+  getS3ImageDisplayUrlFromKey,
   deleteObjectFromS3,
   uploadObjectToS3,
 } from "@/lib/storage/s3"
@@ -128,7 +128,7 @@ export async function getMainWebsiteSiteSettings() {
 async function resolveStoredAssetUrl(key: string, fallback: string) {
   if (!key) return fallback
   try {
-    return await createSignedS3ObjectUrl(key)
+    return getS3ImageDisplayUrlFromKey(key)
   } catch {
     return fallback
   }
@@ -169,11 +169,11 @@ export async function uploadMainWebsiteAsset(file: File, kind: MainWebsiteAssetK
     contentType: file.type,
     cacheControl: "public, max-age=31536000, immutable",
   })
-  const signedUrl = await createSignedS3ObjectUrl(uploaded.key)
+  const displayUrl = getS3ImageDisplayUrlFromKey(uploaded.key)
   const saved = await setMainWebsiteSiteSettings({
     ...current,
     [keyField]: uploaded.key,
-    [urlField]: signedUrl,
+    [urlField]: uploaded.objectUrl,
   })
 
   const previousKey = current[keyField]
@@ -185,7 +185,7 @@ export async function uploadMainWebsiteAsset(file: File, kind: MainWebsiteAssetK
     }
   }
 
-  return { settings: { ...saved, [urlField]: signedUrl, [keyField]: uploaded.key } }
+  return { settings: { ...saved, [urlField]: displayUrl, [keyField]: uploaded.key } }
 }
 
 export async function removeMainWebsiteAsset(kind: MainWebsiteAssetKind) {

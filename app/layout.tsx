@@ -22,11 +22,15 @@ export async function generateMetadata(): Promise<Metadata> {
   const settings = await getMainWebsiteSiteSettings().catch(
     () => DEFAULT_MAIN_WEBSITE_SITE_SETTINGS,
   );
+  const faviconUrl = settings.faviconKey
+    ? `/api/v1/user/public-asset?key=${encodeURIComponent(settings.faviconKey)}`
+    : settings.faviconUrl || "/favicon.ico";
+
   return {
     title: "Admin Dashboard",
     description: "The best way to manage your Admin Dashboard.",
     icons: {
-      icon: settings.faviconUrl || "/favicon.ico",
+      icon: faviconUrl,
     },
   };
 }

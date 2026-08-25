@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { UserRole } from "@/lib/generated/prisma/client"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import { getOptionalUserFromRequest } from "@/lib/auth/api-guards"
-import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
+import { assertBusinessMenuAccess, getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { listSupplierProductReviews } from "@/services/supplier-product-reviews/supplier-product-review-service"
 
 export const dynamic = "force-dynamic"
@@ -24,6 +24,12 @@ export async function GET(request: NextRequest) {
       { ok: false, message: "Supplier role is required" },
       { status: 403 },
     )
+  }
+
+  try {
+    await assertBusinessMenuAccess({ userId: auth.user.id, accountType: BusinessAccountType.Supplier, menuKey: "reviews" })
+  } catch (error) {
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "You do not have permission to view reviews" }, { status: 403 })
   }
 
   const page = Number.parseInt(

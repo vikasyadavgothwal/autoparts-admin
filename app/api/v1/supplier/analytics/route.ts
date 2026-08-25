@@ -17,7 +17,10 @@ export async function GET(request: NextRequest) {
     )
     if (!access) return apiError("Supplier business access is required", 403)
     if (scope === "dashboard") {
-      if (!access.businessAccount.isOwner && !access.visibleMenus.includes("overview")) {
+      const hasOperationalMenu = ["inventory", "rfq-inbox", "orders", "offers", "reviews", "performance"].some((menu) =>
+        access.visibleMenus.includes(menu),
+      )
+      if (!access.businessAccount.isOwner && !hasOperationalMenu) {
         return apiError("You do not have permission to view the supplier dashboard", 403)
       }
     } else {

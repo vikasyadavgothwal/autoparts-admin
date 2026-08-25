@@ -2,8 +2,8 @@ import { Buffer } from "node:buffer"
 import { randomUUID } from "node:crypto"
 import { logError } from "@/lib/logger"
 import {
-  createSignedS3ObjectUrl,
   deleteObjectFromS3,
+  getS3ImageDisplayUrlFromKey,
   getS3ObjectKeyFromUrl,
   uploadObjectToS3,
 } from "@/lib/storage/s3"
@@ -184,7 +184,7 @@ export const resolveHomePageBannerSignedUrl = async (
     return normalizedContent
   }
 
-  const signedUrl = await createSignedS3ObjectUrl(backgroundImageKey)
+  const signedUrl = getS3ImageDisplayUrlFromKey(backgroundImageKey)
 
   return {
     ...normalizedContent,
@@ -209,7 +209,7 @@ export const createHomeBannerImageSignedUrl = async (
   }
 
   try {
-    const url = await createSignedS3ObjectUrl(normalizedKey)
+    const url = getS3ImageDisplayUrlFromKey(normalizedKey)
 
     return {
       ok: true,
@@ -250,7 +250,7 @@ export const uploadHomeBannerImageToS3 = async (
       contentType: input.file.type,
       cacheControl: HOME_BANNER_CACHE_CONTROL,
     })
-    const imageUrl = await createSignedS3ObjectUrl(uploadedImage.key)
+    const imageUrl = getS3ImageDisplayUrlFromKey(uploadedImage.key)
 
     return {
       ok: true,
@@ -259,7 +259,7 @@ export const uploadHomeBannerImageToS3 = async (
       previousImageKey,
       data: withHomeBannerImageUrl(
         input.currentContent,
-        imageUrl,
+        uploadedImage.objectUrl,
         uploadedImage.key,
       ),
     }

@@ -6,7 +6,7 @@ import { request as httpsRequest } from "node:https"
 import { BlockList, isIP } from "node:net"
 
 import { db } from "@/lib/database/prisma"
-import { uploadObjectToS3 } from "@/lib/storage/s3"
+import { getS3ImageDisplayUrl, uploadObjectToS3 } from "@/lib/storage/s3"
 import {
   get17VinApplicableModels,
   get17VinInterchanges,
@@ -345,7 +345,7 @@ export const mapSupplierPart = (part: {
   competitorPartNumber: part.competitorPartNumber,
   competitorBrandName: part.competitorBrandName,
   hsCode: part.hsCode,
-  supplierImageUrls: part.supplierImageUrls,
+  supplierImageUrls: part.supplierImageUrls.map(getS3ImageDisplayUrl),
   mappingStatus: part.mappingStatus,
   mappingSource: part.mappingSource,
   mappingError: part.mappingError,
@@ -363,7 +363,7 @@ export const mapSupplierPart = (part: {
         brandName: part.part.brandName,
         category: part.part.category,
         source: part.part.source,
-        imageUrls: part.part.imageUrls,
+        imageUrls: part.part.imageUrls.map(getS3ImageDisplayUrl),
         imageKeys: part.part.imageKeys,
         badgeText: part.part.badgeText,
         heading: part.part.heading,
@@ -787,7 +787,7 @@ export const partMasterSummary = (part: {
   brandName: part.brandName,
   category: part.category,
   source: part.source,
-  imageUrls: part.imageUrls,
+  imageUrls: part.imageUrls.map(getS3ImageDisplayUrl),
   imageKeys: part.imageKeys,
   badgeText: part.badgeText,
   heading: part.heading,
@@ -1616,7 +1616,7 @@ export const mapMappedCatalogPart = (part: {
     brandName: part.brandName,
     category: part.category,
     source: part.source,
-    imageUrls: part.imageUrls,
+    imageUrls: part.imageUrls.map(getS3ImageDisplayUrl),
     imageKeys: part.imageKeys,
     badgeText: part.badgeText,
     heading: part.heading,

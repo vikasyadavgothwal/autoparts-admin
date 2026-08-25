@@ -2,8 +2,8 @@ import { Buffer } from "node:buffer"
 import { randomUUID } from "node:crypto"
 import { logError } from "@/lib/logger"
 import {
-  createSignedS3ObjectUrl,
   deleteObjectFromS3,
+  getS3ImageDisplayUrlFromKey,
   getS3ObjectKeyFromUrl,
   uploadObjectToS3,
 } from "@/lib/storage/s3"
@@ -204,7 +204,7 @@ export const resolvePublicPageSeoForResponse = async (
   try {
     return {
       ...seo,
-      ogImage: await createSignedS3ObjectUrl(ogImageKey),
+      ogImage: getS3ImageDisplayUrlFromKey(ogImageKey),
       ogImageKey,
     }
   } catch (error) {
@@ -266,7 +266,7 @@ export const uploadPublicPageSeoImageToS3 = async (
       contentType: input.file.type,
       cacheControl: SEO_IMAGE_CACHE_CONTROL,
     })
-    const imageUrl = await createSignedS3ObjectUrl(uploadedImage.key)
+    const imageUrl = getS3ImageDisplayUrlFromKey(uploadedImage.key)
 
     return {
       ok: true,
@@ -275,7 +275,7 @@ export const uploadPublicPageSeoImageToS3 = async (
       previousImageKey,
       seo: {
         ...currentSeo,
-        ogImage: imageUrl,
+        ogImage: uploadedImage.objectUrl,
         ogImageKey: uploadedImage.key,
       },
     }

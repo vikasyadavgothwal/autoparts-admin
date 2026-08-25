@@ -13,6 +13,7 @@ import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import {
   assertBusinessAction,
+  assertBusinessMenuAccess,
   assertBusinessPlanLimit,
   getBusinessAccountOwnerId,
   logBusinessActivity,
@@ -24,6 +25,11 @@ export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
   return withFleetApiRoute(request, async (user) => {
+    try {
+      await assertBusinessMenuAccess({ userId: user.id, accountType: BusinessAccountType.Fleet, menuKey: "vehicles" })
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "You do not have permission to view vehicles"), 403)
+    }
     const fleetId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Fleet)
     const page = Number.parseInt(request.nextUrl.searchParams.get("page") ?? "1", 10)
     const pageSize = Number.parseInt(request.nextUrl.searchParams.get("pageSize") ?? "10", 10)

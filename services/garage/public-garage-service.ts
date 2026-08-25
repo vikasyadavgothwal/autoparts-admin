@@ -1,6 +1,6 @@
 import { db } from "@/lib/database/prisma"
 import { Prisma } from "@/lib/generated/prisma/client"
-import { createSignedS3ObjectUrl } from "@/lib/storage/s3"
+import { getS3ImageDisplayUrlFromKey } from "@/lib/storage/s3"
 import type {
   PublicGarageDetail,
   PublicGarageListResponse,
@@ -72,7 +72,7 @@ const publicImageUrl = async (key?: string | null, fallback?: string | null) => 
   if (!key) return fallback ?? null
 
   try {
-    return await createSignedS3ObjectUrl(key, 5 * 60)
+    return getS3ImageDisplayUrlFromKey(key)
   } catch {
     return fallback ?? null
   }

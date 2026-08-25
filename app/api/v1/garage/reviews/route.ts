@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server"
 
-import { apiOk, withGarageApiRoute } from "@/lib/auth/api-guards"
+import { apiError, apiErrorMessage, apiOk, withGarageApiRoute } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { assertBusinessMenuAccess } from "@/services/business/business-platform-service"
 import {
   listGarageServiceReviews,
   listGarageServiceReviewsPage,
@@ -10,6 +12,11 @@ export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
   return withGarageApiRoute(request, async (user) => {
+    try {
+      await assertBusinessMenuAccess({ userId: user.id, accountType: BusinessAccountType.Garage, menuKey: "reviews" })
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "You do not have permission to view reviews"), 403)
+    }
     if (request.nextUrl.searchParams.get("all") === "1") {
       return apiOk({ reviews: await listGarageServiceReviews(user.id) })
     }

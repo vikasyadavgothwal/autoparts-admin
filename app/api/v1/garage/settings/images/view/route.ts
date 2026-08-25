@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireGarageFromRequest } from "@/lib/auth/api-guards"
-import { createSignedS3ObjectUrl } from "@/lib/storage/s3"
+import { getS3ImageDisplayUrlFromKey } from "@/lib/storage/s3"
 
 export const dynamic = "force-dynamic"
 
@@ -18,8 +18,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const signedUrl = await createSignedS3ObjectUrl(key, 5 * 60)
-    return NextResponse.redirect(signedUrl)
+    return NextResponse.redirect(getS3ImageDisplayUrlFromKey(key))
   } catch (error) {
     return NextResponse.json(
       {

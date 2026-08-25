@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getOptionalUserFromRequest } from "@/lib/auth/api-guards";
 import { BusinessAccountType, UserRole } from "@/lib/generated/prisma/client";
-import { createSignedS3ObjectUrl } from "@/lib/storage/s3";
+import { getS3ImageDisplayUrlFromKey } from "@/lib/storage/s3";
 import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service";
 import { findOrderProofKeyForUser } from "@/services/order/order-proof-service";
 
@@ -25,5 +25,5 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if (!proofOfDeliveryKey) {
     return NextResponse.json({ ok: false, message: "Proof of delivery not found" }, { status: 404 });
   }
-  return NextResponse.redirect(await createSignedS3ObjectUrl(proofOfDeliveryKey, 300));
+  return NextResponse.redirect(getS3ImageDisplayUrlFromKey(proofOfDeliveryKey));
 }

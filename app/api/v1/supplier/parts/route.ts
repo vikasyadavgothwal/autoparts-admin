@@ -9,6 +9,7 @@ import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import {
   assertBusinessAction,
+  assertBusinessMenuAccess,
   assertBusinessPlanLimit,
   assertSupplierCatalogPlanLimits,
   getBusinessAccountOwnerId,
@@ -25,6 +26,11 @@ export async function GET(request: NextRequest) {
   const auth = await requireSupplierFromRequest(request)
   if (!auth.ok) {
     return auth.response
+  }
+  try {
+    await assertBusinessMenuAccess({ userId: auth.user.id, accountType: BusinessAccountType.Supplier, menuKey: "inventory" })
+  } catch (error) {
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "You do not have permission to view inventory" }, { status: 403 })
   }
   const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
 

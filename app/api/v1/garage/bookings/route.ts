@@ -5,6 +5,7 @@ import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import {
   assertBusinessPlanLimit,
+  assertBusinessMenuAccess,
   getMyBusinessAccess,
   logBusinessActivity,
 } from "@/services/business/business-platform-service"
@@ -20,6 +21,11 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   const auth = await requireGarageFromRequest(request)
   if (!auth.ok) return auth.response
+  try {
+    await assertBusinessMenuAccess({ userId: auth.user.id, accountType: BusinessAccountType.Garage, menuKey: ["bookings", "schedule"] })
+  } catch (error) {
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "You do not have permission to view bookings" }, { status: 403 })
+  }
 
   if (request.nextUrl.searchParams.get("all") === "1") {
     return NextResponse.json({

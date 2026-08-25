@@ -12,6 +12,7 @@ import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import {
   assertBusinessPlanLimit,
+  assertBusinessMenuAccess,
   getMyBusinessAccess,
   logBusinessActivity,
   reconcileGarageServicePlan,
@@ -43,6 +44,11 @@ async function getGarageBusinessAccount(userId: string) {
 
 export async function GET(request: NextRequest) {
   return withGarageApiRoute(request, async (user) => {
+    try {
+      await assertBusinessMenuAccess({ userId: user.id, accountType: BusinessAccountType.Garage, menuKey: ["services", "schedule"] })
+    } catch (error) {
+      return apiError(apiErrorMessage(error, "You do not have permission to view services"), 403)
+    }
     const account = await getGarageBusinessAccount(user.id)
     await reconcileGarageServicePlan(account?.ownerUserId ?? user.id)
     const garageId = account?.ownerUserId ?? user.id
