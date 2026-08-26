@@ -1,7 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { PageHeading } from "@/components/admin-dashboard/shared/page-heading"
 import {
-  GARAGE_ACTIVITIES,
   GARAGE_FILTERS,
   GARAGE_LOCATIONS,
   GARAGE_TABLE_COLUMNS,

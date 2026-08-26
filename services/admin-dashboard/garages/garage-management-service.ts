@@ -598,6 +598,16 @@ export async function completeGarageBookingByAdmin(
 
 export function buildGarageKpis(rows: readonly GarageRecord[]): GarageKpi[] {
   const activeCount = rows.filter((row) => row.status === "Active").length
+  const reviewedRows = rows
+    .map((row) => ({
+      rating: Number(row.rating),
+      reviewsCount: row.reviewsCount ?? 0,
+    }))
+    .filter((row) => Number.isFinite(row.rating) && row.reviewsCount > 0)
+  const totalReviews = reviewedRows.reduce((total, row) => total + row.reviewsCount, 0)
+  const averageRating = totalReviews
+    ? reviewedRows.reduce((total, row) => total + row.rating * row.reviewsCount, 0) / totalReviews
+    : 0
   const revenue = rows.reduce((total, row) => {
     const amount = Number(row.revenue.replace(/[^0-9.]/g, ""))
     return total + (Number.isFinite(amount) ? amount : 0)
@@ -621,7 +631,7 @@ export function buildGarageKpis(rows: readonly GarageRecord[]): GarageKpi[] {
     {
       id: "avg-rating",
       title: "Avg Rating",
-      value: "Static",
+      value: totalReviews ? averageRating.toFixed(1) : "No reviews",
       icon: Star,
       iconTone: "warning",
     },
