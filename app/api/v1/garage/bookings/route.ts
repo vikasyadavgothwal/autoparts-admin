@@ -21,8 +21,10 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   const auth = await requireGarageFromRequest(request)
   if (!auth.ok) return auth.response
+  let garageId = auth.user.id
   try {
-    await assertBusinessMenuAccess({ userId: auth.user.id, accountType: BusinessAccountType.Garage, menuKey: ["bookings", "schedule"] })
+    const account = await assertBusinessMenuAccess({ userId: auth.user.id, accountType: BusinessAccountType.Garage, menuKey: ["bookings", "schedule"] })
+    garageId = account.ownerUserId
   } catch (error) {
     return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "You do not have permission to view bookings" }, { status: 403 })
   }
@@ -30,11 +32,11 @@ export async function GET(request: NextRequest) {
   if (request.nextUrl.searchParams.get("all") === "1") {
     return NextResponse.json({
       ok: true,
-      bookings: await listGarageBookings(auth.user.id),
+      bookings: await listGarageBookings(garageId),
     })
   }
 
-  const result = await listGarageBookingsPage(auth.user.id, {
+  const result = await listGarageBookingsPage(garageId, {
     page: request.nextUrl.searchParams.get("page"),
     pageSize: request.nextUrl.searchParams.get("pageSize"),
   })

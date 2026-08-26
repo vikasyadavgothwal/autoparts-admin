@@ -2,6 +2,8 @@ import { Buffer } from "node:buffer";
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards";
+import { BusinessAccountType } from "@/lib/generated/prisma/client";
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service";
 import { uploadSupplierAvatar } from "@/services/supplier/supplier-settings-service";
 
 export const dynamic = "force-dynamic";
@@ -18,10 +20,11 @@ export async function POST(request: NextRequest) {
     );
   }
   try {
+    const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier);
     return NextResponse.json(
       {
         ok: true,
-        profile: await uploadSupplierAvatar(auth.user.id, {
+        profile: await uploadSupplierAvatar(supplierId, {
           contentType: avatar.type,
           body: Buffer.from(await avatar.arrayBuffer()),
         }),

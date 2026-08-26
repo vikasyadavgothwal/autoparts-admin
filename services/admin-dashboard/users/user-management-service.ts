@@ -2,7 +2,7 @@ import { Building, FileText, ShoppingCart, Users as UsersIcon } from "lucide-rea
 
 import { db } from "@/lib/database/prisma"
 import { getFirebaseAuth } from "@/lib/firebase/admin"
-import { UserRole, type Prisma } from "@/lib/generated/prisma/client"
+import { BusinessAccountType, BusinessMemberStatus, UserRole, type Prisma } from "@/lib/generated/prisma/client"
 import { logError } from "@/lib/logger"
 import type {
   UserActivity,
@@ -14,6 +14,22 @@ import type {
 } from "@/types/admin-dashboard/users/users-types"
 
 const userInclude = {
+  ownedBusinessAccounts: {
+    select: {
+      type: true,
+    },
+  },
+  businessMemberships: {
+    where: { status: BusinessMemberStatus.Active },
+    select: {
+      businessAccount: {
+        select: {
+          type: true,
+          ownerUserId: true,
+        },
+      },
+    },
+  },
   _count: {
     select: {
       buyerOrders: true,
@@ -37,9 +53,21 @@ type ListAdminUsersResult = {
 
 const roleLabels: Record<UserRole, UserRoleLabel> = {
   [UserRole.User]: "Buyer",
-  [UserRole.Fleet]: "Fleet Manager",
+  [UserRole.Fleet]: "Fleet Owner",
   [UserRole.Garage]: "Garage Owner",
-  [UserRole.Supplier]: "Supplier",
+  [UserRole.Supplier]: "Supplier Owner",
+}
+
+const businessRoleLabels: Record<BusinessAccountType, { owner: UserRoleLabel; staff: UserRoleLabel }> = {
+  [BusinessAccountType.Fleet]: { owner: "Fleet Owner", staff: "Fleet Staff" },
+  [BusinessAccountType.Garage]: { owner: "Garage Owner", staff: "Garage Staff" },
+  [BusinessAccountType.Supplier]: { owner: "Supplier Owner", staff: "Supplier Staff" },
+}
+
+const businessTypeForRole: Partial<Record<UserRole, BusinessAccountType>> = {
+  [UserRole.Fleet]: BusinessAccountType.Fleet,
+  [UserRole.Garage]: BusinessAccountType.Garage,
+  [UserRole.Supplier]: BusinessAccountType.Supplier,
 }
 
 const formatDate = (value: Date | null) =>
@@ -58,8 +86,17 @@ const fullName = (user: UserAccount) =>
   user.phone ||
   "Not added"
 
+const roleLabelForUser = (user: UserAccount, role: UserRole): UserRoleLabel => {
+  const businessType = businessTypeForRole[role]
+  if (!businessType) return roleLabels[role]
+  const labels = businessRoleLabels[businessType]
+  if (user.ownedBusinessAccounts.some((account) => account.type === businessType)) return labels.owner
+  if (user.businessMemberships.some((membership) => membership.businessAccount.type === businessType && membership.businessAccount.ownerUserId !== user.id)) return labels.staff
+  return roleLabels[role]
+}
+
 const mapUser = (user: UserAccount): UserRecord => {
-  const roles = user.roles.map((role) => roleLabels[role])
+  const roles = user.roles.map((role) => roleLabelForUser(user, role))
 
   return {
     internalId: user.id,

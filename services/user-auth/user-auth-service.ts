@@ -24,6 +24,7 @@ CreateUserInput,
 const VERIFIED_ACCOUNT_ROLE_REQUIRED_MESSAGE =
   "Choose an account type to finish creating your account"
 const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/
+const USER_ACCOUNT_SUSPENDED_MESSAGE = "Your account is suspended"
 
 type BusinessUserRole = Extract<UserRole, "Fleet" | "Garage" | "Supplier">
 
@@ -255,7 +256,7 @@ export async function changeUserPassword(input: {
       isActive: true,
     },
   })
-  if (!user || !user.isActive) throw new Error("User account is inactive")
+  if (!user || !user.isActive) throw new Error(USER_ACCOUNT_SUSPENDED_MESSAGE)
   if (user.passwordHash && !verifyPassword(input.currentPassword, user.passwordHash)) {
     throw new Error("Current password is incorrect")
   }
@@ -298,7 +299,7 @@ export async function getCurrentUserAccount(userId: string) {
       isActive: true,
     },
   })
-  if (!user || !user.isActive) throw new Error("User account is inactive")
+  if (!user || !user.isActive) throw new Error(USER_ACCOUNT_SUSPENDED_MESSAGE)
   return {
     id: user.id,
     email: user.email,
@@ -336,7 +337,7 @@ export async function updateCurrentUserAccount(input: {
       isActive: true,
     },
   })
-  if (!currentUser || !currentUser.isActive) throw new Error("User account is inactive")
+  if (!currentUser || !currentUser.isActive) throw new Error(USER_ACCOUNT_SUSPENDED_MESSAGE)
 
   const email = hasEmailUpdate ? requestedEmail : currentUser.email
 
@@ -410,7 +411,7 @@ export async function loginUser(
   }
 
   if (!user.isActive) {
-    throw new Error("User account is inactive")
+    throw new Error(USER_ACCOUNT_SUSPENDED_MESSAGE)
   }
   await ensureBusinessStaffCanLogin(user, "password")
 
@@ -511,7 +512,7 @@ export async function loginUserWithFirebase(
   }
 
   if (existingUser && !existingUser.isActive) {
-    throw new Error("User account is inactive")
+    throw new Error(USER_ACCOUNT_SUSPENDED_MESSAGE)
   }
   if (existingUser) {
     await ensureBusinessStaffCanLogin(existingUser, firebaseProvider(identity.signInProvider))

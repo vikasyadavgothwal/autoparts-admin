@@ -8,6 +8,7 @@ import {
 } from "@/services/featured-vendor/featured-vendor-category-service"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 
 export const dynamic = "force-dynamic"
 
@@ -19,13 +20,14 @@ const listPlanAllowedCategoryIds = (planId: string) =>
 export async function GET(request: NextRequest) {
   return withSupplierApiRoute(request, async (user) => {
     try {
+      const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier)
       const account = await db.businessAccount.findFirst({
-        where: { ownerUserId: user.id, type: BusinessAccountType.Supplier, isActive: true },
+        where: { ownerUserId: supplierId, type: BusinessAccountType.Supplier, isActive: true },
         include: { plan: true },
       })
       const usePlanAllowedCategories = request.nextUrl.searchParams.get("scope") !== "add-on"
       const allowedRows = account && usePlanAllowedCategories ? await listPlanAllowedCategoryIds(account.plan.id) : []
-      return apiOk(await listSupplierFeaturedCategoryOptions(user.id, {
+      return apiOk(await listSupplierFeaturedCategoryOptions(supplierId, {
         allowedCategoryIds: account && usePlanAllowedCategories ? allowedRows.map((row) => row.categoryId) : undefined,
         excludeActiveCategories: !usePlanAllowedCategories,
         planFeatured: Boolean(account?.plan.featuredVendor),
@@ -42,15 +44,16 @@ export async function PUT(request: NextRequest) {
     if (!body.ok) return apiError(body.message)
 
     try {
+      const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier)
       const account = await db.businessAccount.findFirst({
-        where: { ownerUserId: user.id, type: BusinessAccountType.Supplier, isActive: true },
+        where: { ownerUserId: supplierId, type: BusinessAccountType.Supplier, isActive: true },
         include: { plan: true },
       })
       if (!account?.plan.featuredVendor) throw new Error("Featured Vendor is not included in your current plan")
       const allowedRows = await listPlanAllowedCategoryIds(account.plan.id)
 
       return apiOk(await setSupplierFeaturedCategories({
-        supplierId: user.id,
+        supplierId,
         categoryIds: body.body.categoryIds,
         source: featuredCategorySource.plan,
         businessAccountId: account.id,

@@ -3,7 +3,9 @@ import { Buffer } from "node:buffer"
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireGarageFromRequest } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
 import { uploadObjectToS3 } from "@/lib/storage/s3"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 
 export const dynamic = "force-dynamic"
 
@@ -64,12 +66,13 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const garageId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Garage)
     const uploadedGarageImage =
       garageImage instanceof File
-        ? await uploadGarageImage(garageImage, auth.user.id, "main")
+        ? await uploadGarageImage(garageImage, garageId, "main")
         : null
     const uploadedGalleryImages = await Promise.all(
-      galleryImages.map((file) => uploadGarageImage(file, auth.user.id, "gallery")),
+      galleryImages.map((file) => uploadGarageImage(file, garageId, "gallery")),
     )
     return NextResponse.json(
       {

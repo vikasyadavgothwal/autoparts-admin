@@ -116,9 +116,14 @@ const supportCopy: Record<SupportTier, string> = {
 }
 
 const securityCopy: Record<SecurityTier, string> = {
-  Basic: "Password login, staff permissions, and standard backup.",
-  Standard: "MFA, permissions, backups, and basic audit logs.",
-  Premium: "MFA, SSO-ready controls, advanced permissions, detailed audit logs, and enhanced backup/recovery.",
+  Basic: "Password login.",
+  Standard: "Password login with email OTP verification.",
+  Premium: "Password login with email OTP, SSO-ready controls, audit logs, and enhanced backup/recovery.",
+}
+
+const loginSecurityCopy: Record<LoginSecurityMode, string> = {
+  password: "Password only",
+  otp: "Password + email OTP",
 }
 
 const reportCopy: Record<ReportLevel, string> = {
@@ -238,7 +243,6 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
       onboarding: supportTier === "Premium",
       training: supportTier === "Premium",
       emailNotifications: formData.get("emailNotifications") === "on",
-      mobileNotifications: formData.get("mobileNotifications") === "on",
       whatsappNotifications: formData.get("whatsappNotifications") === "on",
       customRolesEnabled: securityTier !== "Basic",
       approvalWorkflowEnabled: securityTier === "Premium",
@@ -399,35 +403,24 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
               <section className="rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Login security<RequiredMark /></p>
                 <div className="grid gap-2">
-                  <select name="securityTier" defaultValue={securityTier} className="h-9 w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-2.5 text-sm text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626]">
-                    <option value="Basic">Basic</option>
-                    <option value="Standard">Standard</option>
-                    <option value="Premium">Premium</option>
-                  </select>
+                  <input type="hidden" name="securityTier" value={securityTier} />
                   <select name="loginSecurityMode" defaultValue={loginSecurityMode} className="h-9 w-full rounded-md border border-[#2A2A2A] bg-[#050505] px-2.5 text-sm text-[#D1D5DB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626]">
-                    <option value="password">Password only</option>
-                    <option value="otp">Password + email OTP</option>
+                    <option value="password">{loginSecurityCopy.password}</option>
+                    <option value="otp">{loginSecurityCopy.otp}</option>
                   </select>
                 </div>
-                <p className="mt-2 text-xs leading-5 text-[#9CA3AF]">{securityCopy[securityTier]}</p>
+                <p className="mt-2 text-xs leading-5 text-[#9CA3AF]">{loginSecurityCopy[loginSecurityMode]}</p>
               </section>
             </div>
 
             <section className="mt-4 rounded-lg border border-[#2A2A2A] bg-[#050505] p-3">
               <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">Notifications</p>
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-2">
                 <label className="flex items-start gap-2 text-sm font-medium text-[#D1D5DB]">
                   <Checkbox name="emailNotifications" defaultChecked={plan.notifications?.email ?? true} />
                   <span>
                     Email
                     <span className="block text-xs font-normal text-[#9CA3AF]">Send plan-allowed operational emails.</span>
-                  </span>
-                </label>
-                <label className="flex items-start gap-2 text-sm font-medium text-[#D1D5DB]">
-                  <Checkbox name="mobileNotifications" defaultChecked={plan.notifications?.mobile ?? true} />
-                  <span>
-                    Mobile push
-                    <span className="block text-xs font-normal text-[#9CA3AF]">Use Firebase Cloud Messaging where devices are registered.</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 text-sm font-medium text-[#D1D5DB]">
@@ -575,7 +568,7 @@ export function BusinessPlanEditor({ plans }: { plans: BusinessPlan[] }) {
             <div className="mt-4 rounded-lg border border-dashed border-[#374151] p-3 text-xs text-[#9CA3AF]">
               <div className="mb-2 flex items-center gap-2 font-semibold text-white"><Eye className="h-4 w-4" /> Preview</div>
               <p>{plan.name} appears for {plan.accountType} accounts at {money(plan)}.</p>
-              <p className="mt-1">{reportCopy[reportLevel]} / {supportTier} support / {securityTier} security.</p>
+              <p className="mt-1">{reportCopy[reportLevel]} / {supportTier} support / {loginSecurityCopy[loginSecurityMode]}.</p>
             </div>
 
             <div className="mt-4 grid gap-2 sm:grid-cols-2">

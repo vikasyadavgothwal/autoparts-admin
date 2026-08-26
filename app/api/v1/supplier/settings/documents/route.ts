@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { requireSupplierFromRequest } from "@/lib/auth/api-guards";
 import { db } from "@/lib/database/prisma"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { uploadSupplierDocument } from "@/services/supplier/supplier-settings-service";
 import {
   createSignedS3ObjectUrl,
@@ -50,8 +52,9 @@ export async function GET(request: NextRequest) {
     )
   }
 
+  const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
   const supplier = await db.user.findUnique({
-    where: { id: auth.user.id },
+    where: { id: supplierId },
     select: {
       tradeLicenseImageUrl: true,
       vatTrnImageUrl: true,
@@ -110,10 +113,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier)
     return NextResponse.json(
       {
         ok: true,
-        ...(await uploadSupplierDocument(auth.user.id, {
+        ...(await uploadSupplierDocument(supplierId, {
           kind,
           contentType: document.type,
           body: Buffer.from(await document.arrayBuffer()),

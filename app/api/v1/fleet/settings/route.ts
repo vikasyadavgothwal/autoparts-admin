@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireFleetFromRequest, readJsonBody } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import {
   getFleetProfile,
   updateFleetProfile,
@@ -12,10 +14,11 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   const auth = await requireFleetFromRequest(request)
   if (!auth.ok) return auth.response
+  const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
 
   return NextResponse.json({
     ok: true,
-    profile: await getFleetProfile(auth.user.id),
+    profile: await getFleetProfile(fleetId),
   })
 }
 
@@ -32,9 +35,10 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
+    const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
     return NextResponse.json({
       ok: true,
-      profile: await updateFleetProfile(auth.user.id, parsed.body),
+      profile: await updateFleetProfile(fleetId, parsed.body),
     })
   } catch (error) {
     return NextResponse.json(

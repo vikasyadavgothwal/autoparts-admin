@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { readJsonBody, requireGarageFromRequest } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { assertMobileNumberAvailable } from "@/services/user-auth/mobile-availability-service"
 
 type CheckBody = { phone?: unknown }
@@ -17,8 +19,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const garageId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Garage)
     await assertMobileNumberAvailable(
-      auth.user.id,
+      garageId,
       typeof parsed.body.phone === "string" ? parsed.body.phone : "",
     )
     return NextResponse.json({ ok: true, message: "Mobile number is available" })

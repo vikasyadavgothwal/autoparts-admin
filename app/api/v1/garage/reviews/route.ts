@@ -12,15 +12,17 @@ export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
   return withGarageApiRoute(request, async (user) => {
+    let garageId = user.id
     try {
-      await assertBusinessMenuAccess({ userId: user.id, accountType: BusinessAccountType.Garage, menuKey: "reviews" })
+      const account = await assertBusinessMenuAccess({ userId: user.id, accountType: BusinessAccountType.Garage, menuKey: "reviews" })
+      garageId = account.ownerUserId
     } catch (error) {
       return apiError(apiErrorMessage(error, "You do not have permission to view reviews"), 403)
     }
     if (request.nextUrl.searchParams.get("all") === "1") {
-      return apiOk({ reviews: await listGarageServiceReviews(user.id) })
+      return apiOk({ reviews: await listGarageServiceReviews(garageId) })
     }
-    const result = await listGarageServiceReviewsPage(user.id, {
+    const result = await listGarageServiceReviewsPage(garageId, {
       page: request.nextUrl.searchParams.get("page"),
       pageSize: request.nextUrl.searchParams.get("pageSize"),
     })

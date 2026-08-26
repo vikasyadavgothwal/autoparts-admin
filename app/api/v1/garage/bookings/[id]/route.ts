@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { readJsonBody, requireGarageFromRequest } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { updateGarageBookingStatus } from "@/services/garage/garage-booking-service"
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -24,8 +26,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   try {
+    const garageId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Garage)
     const booking = await updateGarageBookingStatus(
-      auth.user.id,
+      garageId,
       (await context.params).id,
       parsed.body.status,
       {

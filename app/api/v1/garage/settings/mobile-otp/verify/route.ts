@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireGarageFromRequest, readJsonBody } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import {
   verifyGarageMobileOtp,
   verifyGarageMobileWithFirebase,
@@ -30,12 +32,13 @@ export async function POST(request: NextRequest) {
       typeof parsed.body.firebaseIdToken === "string"
         ? parsed.body.firebaseIdToken
         : ""
+    const garageId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Garage)
     return NextResponse.json({
       ok: true,
       profile: firebaseIdToken
-        ? await verifyGarageMobileWithFirebase(auth.user.id, firebaseIdToken)
+        ? await verifyGarageMobileWithFirebase(garageId, firebaseIdToken)
         : await verifyGarageMobileOtp(
-            auth.user.id,
+            garageId,
             typeof parsed.body.otp === "string" ? parsed.body.otp : "",
           ),
     })

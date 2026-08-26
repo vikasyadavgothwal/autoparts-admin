@@ -75,8 +75,6 @@ const reviewSelect = Prisma.sql`
     COALESCE(gs."name", gb."serviceName", 'Service') AS "serviceName",
     COALESCE(
       NULLIF(CONCAT_WS(' ', u."firstName", u."lastName"), ''),
-      u."email",
-      u."phone",
       gb."customerName",
       'Customer'
     ) AS "customerName",

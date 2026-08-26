@@ -124,7 +124,7 @@ const serviceSelect = Prisma.sql`
         FROM (
           SELECT jsonb_build_object(
             'id', gsr."id",
-            'customerName', COALESCE(NULLIF(CONCAT_WS(' ', cu."firstName", cu."lastName"), ''), cu."email", cu."phone", 'Customer'),
+            'customerName', COALESCE(NULLIF(CONCAT_WS(' ', cu."firstName", cu."lastName"), ''), 'Customer'),
             'rating', gsr."rating",
             'comment', gsr."comment",
             'garageReply', gsr."garageReply",

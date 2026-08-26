@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireFleetFromRequest, readJsonBody } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { verifyFleetMobileWithFirebase } from "@/services/fleet/fleet-settings-service"
 
 type VerifyOtpBody = {
@@ -33,9 +35,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
     return NextResponse.json({
       ok: true,
-      profile: await verifyFleetMobileWithFirebase(auth.user.id, firebaseIdToken),
+      profile: await verifyFleetMobileWithFirebase(fleetId, firebaseIdToken),
     })
   } catch (error) {
     return NextResponse.json(

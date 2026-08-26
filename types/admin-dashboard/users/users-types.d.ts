@@ -3,9 +3,12 @@ import type { LucideProps } from "lucide-react"
 
 export type UserRoleLabel =
   | "Buyer"
-  | "Fleet Manager"
+  | "Fleet Owner"
+  | "Fleet Staff"
   | "Garage Owner"
-  | "Supplier"
+  | "Garage Staff"
+  | "Supplier Owner"
+  | "Supplier Staff"
 
 type UserStatus = "Active" | "Suspended"
 

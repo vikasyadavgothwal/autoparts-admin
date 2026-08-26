@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireGarageFromRequest, readJsonBody } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import {
   getGarageProfile,
   updateGarageProfile,
@@ -12,10 +14,11 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   const auth = await requireGarageFromRequest(request)
   if (!auth.ok) return auth.response
+  const garageId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Garage)
 
   return NextResponse.json({
     ok: true,
-    profile: await getGarageProfile(auth.user.id),
+    profile: await getGarageProfile(garageId),
   })
 }
 
@@ -32,9 +35,10 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
+    const garageId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Garage)
     return NextResponse.json({
       ok: true,
-      profile: await updateGarageProfile(auth.user.id, parsed.body),
+      profile: await updateGarageProfile(garageId, parsed.body),
     })
   } catch (error) {
     return NextResponse.json(

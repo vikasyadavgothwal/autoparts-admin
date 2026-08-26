@@ -81,6 +81,45 @@ type PaymentHistoryRow = PaymentRow & {
   itemCount: number;
 };
 
+type GarageBookingNotificationRow = {
+  id: string;
+  publicId: string;
+  garageId: string;
+  customerId: string | null;
+  customerName: string;
+  serviceName: string;
+  bookingDate: Date | string | null;
+};
+
+const formatNotificationDate = (value: Date | string | null) => {
+  if (!value) return "the selected date";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return value.slice(0, 10);
+};
+
+async function notifyGarageBookingAdvanceSucceeded(paymentId: string) {
+  const bookings = await db.$queryRaw<GarageBookingNotificationRow[]>`
+    SELECT gb."id", gb."publicId", gb."garageId", gb."customerId", gb."customerName", gb."serviceName", gb."bookingDate"
+    FROM "garage_bookings" gb
+    JOIN "payment_items" pi ON pi."entityId" = gb."id" AND pi."entityType" = 'garage_booking'
+    WHERE pi."paymentId" = ${paymentId}
+  `;
+  if (!bookings.length) return;
+
+  const notifications: CreateNotificationInput[] = bookings.map((booking) => ({
+    recipientUserId: booking.garageId,
+    actorUserId: booking.customerId,
+    type: "booking.created",
+    title: "New service booking",
+    body: `${booking.customerName} booked ${booking.serviceName} for ${formatNotificationDate(booking.bookingDate)}.`,
+    linkUrl: "/bookings",
+    entityType: "garage_booking",
+    entityId: booking.id,
+  }));
+
+  await createNotificationsSafely(notifications);
+}
+
 type PaymentHistoryFilters = {
   page?: number;
   pageSize?: number;
@@ -1263,6 +1302,9 @@ export async function settlePaymentSucceeded(input: {
 
   const settled = (await findPaymentById(payment.id)) ?? payment;
   await applyBusinessPayment(settled);
+  await notifyGarageBookingAdvanceSucceeded(settled.id).catch((error) =>
+    logError("Unable to notify garage about paid booking", error),
+  );
   await notifySettledPayment(settled).catch((error) =>
     logError("Unable to send payment settlement notifications", error),
   );
@@ -1325,6 +1367,17 @@ export async function markPaymentFailed(input: {
         WHERE "paymentId" = ${payment.id} AND "entityType" = 'garage_booking'
       )
     `;
+    await tx.$executeRaw`
+      UPDATE "business_add_on_requests"
+      SET "status" = 'Rejected'::"BusinessAddOnRequestStatus",
+          "decidedAt" = CURRENT_TIMESTAMP,
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "status" = 'Requested'::"BusinessAddOnRequestStatus"
+        AND "id" IN (
+          SELECT "entityId" FROM "payment_items"
+          WHERE "paymentId" = ${payment.id} AND "entityType" = 'business_add_on'
+        )
+    `;
   });
   const failed = await findPaymentById(payment.id);
   if (failed) {
@@ -1333,6 +1386,24 @@ export async function markPaymentFailed(input: {
     );
   }
   return failed;
+}
+
+export async function getStripeCheckoutResume(input: string) {
+  const payment = await refreshStripePaymentStatus(input);
+  if (
+    !payment ||
+    !isStripePaymentsConfigured() ||
+    !payment.stripeCheckoutSessionId ||
+    payment.status === "succeeded" ||
+    payment.status === "failed"
+  ) {
+    return { payment, checkoutUrl: null };
+  }
+  const session = await retrieveCheckoutSession(payment.stripeCheckoutSessionId);
+  if (session?.status === "open" && session.url) {
+    return { payment, checkoutUrl: session.url };
+  }
+  return { payment, checkoutUrl: null };
 }
 
 export async function refreshStripePaymentStatus(paymentId: string) {

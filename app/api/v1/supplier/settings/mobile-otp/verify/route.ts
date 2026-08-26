@@ -7,6 +7,8 @@ import {
   readJsonBody,
   withSupplierApiRoute,
 } from "@/lib/auth/api-guards";
+import { BusinessAccountType } from "@/lib/generated/prisma/client";
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service";
 import {
   verifySupplierContactPhoneWithFirebase,
   verifySupplierMobileWithFirebase,
@@ -34,16 +36,17 @@ export async function POST(request: NextRequest) {
         parsed.body.target === "supplierContactPhone"
           ? "supplierContactPhone"
           : "authorizedPhone";
+      const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier);
 
       return apiOk({
         profile:
           target === "supplierContactPhone"
             ? await verifySupplierContactPhoneWithFirebase(
-                user.id,
+                supplierId,
                 firebaseIdToken,
               )
             : await verifySupplierMobileWithFirebase(
-                user.id,
+                supplierId,
                 firebaseIdToken,
               ),
       });

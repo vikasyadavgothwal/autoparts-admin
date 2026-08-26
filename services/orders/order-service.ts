@@ -7,6 +7,7 @@ import {
   OrderStatus,
   PaymentStatus,
   Prisma,
+  BusinessAccountType,
   SupplierApprovalStatus,
   SupplierPartMappingStatus,
   UserRole,
@@ -28,6 +29,7 @@ import {
   createStripeCheckoutPayment,
   isStripePaymentsConfigured,
 } from "@/services/payments/stripe-payment-service";
+import { getEffectiveBusinessLimits } from "@/services/business/business-platform-service";
 
 const normalizePaging = (page: number, pageSize: number) => ({
   page: Math.max(1, Number.isFinite(page) ? page : 1),
@@ -968,6 +970,36 @@ export async function createDirectOrders(
   const paymentCancelUrl = normalizeCheckoutUrl(input.paymentCancelUrl, defaultCancelUrl);
   const deliveryAddress = await getUserAddressForCheckout(buyerId, addressId);
   const supplierPartIds = lines.map((line) => line.supplierPartId);
+  const precheckSupplierParts = await db.supplierPart.findMany({
+    where: {
+      id: { in: supplierPartIds },
+      mappingStatus: SupplierPartMappingStatus.mapped,
+      supplier: { is: { isActive: true, supplierApprovalStatus: SupplierApprovalStatus.Approved } },
+    },
+    select: { supplierId: true },
+  });
+  for (const supplierId of new Set(precheckSupplierParts.map((part) => part.supplierId))) {
+    const { limits } = await getEffectiveBusinessLimits({ userId: supplierId, accountType: BusinessAccountType.Supplier });
+    if (limits.orders === null) continue;
+    const currentOrders = await db.order.count({ where: { supplierId, status: { not: OrderStatus.cancelled } } });
+    if (currentOrders >= limits.orders) {
+      throw new Error("This supplier is not accepting new orders right now. Please remove their item from your cart or choose another supplier.");
+    }
+  }
+  for (const garageId of new Set(serviceBookings.map((booking) => booking.garageId))) {
+    const requestedBookings = serviceBookings
+      .filter((booking) => booking.garageId === garageId)
+      .reduce((total, booking) => total + booking.quantity, 0);
+    const { limits } = await getEffectiveBusinessLimits({ userId: garageId, accountType: BusinessAccountType.Garage });
+    if (limits.appointments === null) continue;
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+    const currentAppointments = await db.garageBooking.count({ where: { garageId, createdAt: { gte: monthStart }, status: { not: "cancelled" } } });
+    if (currentAppointments + requestedBookings > limits.appointments) {
+      throw new Error("This garage is not accepting new bookings right now. Please remove their service from your cart or choose another garage.");
+    }
+  }
 
   const checkout = await db.$transaction(async (transaction) => {
     const supplierParts = await transaction.supplierPart.findMany({

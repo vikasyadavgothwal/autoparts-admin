@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireFleetFromRequest, readJsonBody } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { requestFleetEmailVerification } from "@/services/fleet/fleet-settings-service"
 
 type EmailVerificationBody = {
@@ -24,9 +26,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const origin = new URL(request.url).origin
+    const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
     return NextResponse.json(
       await requestFleetEmailVerification(
-        auth.user.id,
+        fleetId,
         parsed.body.email,
         origin,
         typeof parsed.body.verificationBaseUrl === "string"

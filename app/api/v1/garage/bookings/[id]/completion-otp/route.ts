@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireGarageFromRequest } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { requestGarageBookingCompletionOtp } from "@/services/garage/garage-booking-service"
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -12,8 +14,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!auth.ok) return auth.response
 
   try {
+    const garageId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Garage)
     const result = await requestGarageBookingCompletionOtp(
-      auth.user.id,
+      garageId,
       (await context.params).id,
     )
     return NextResponse.json(result)

@@ -11,7 +11,6 @@ import {
   buildGarageKpis,
   listAdminGarages,
 } from "@/services/admin-dashboard/garages/garage-management-service"
-import { GaragesActivity } from "./garages-section"
 import { GaragesFilters } from "./garages-filters"
 import { GaragesStatCards } from "./garages-stat-cards"
 import { GaragesTable } from "./garages-table"
@@ -42,7 +41,6 @@ export async function GaragesPage() {
 
       <GaragesTable rows={garages} columns={GARAGE_TABLE_COLUMNS} />
 
-      <GaragesActivity items={GARAGE_ACTIVITIES} />
     </div>
   )
 }

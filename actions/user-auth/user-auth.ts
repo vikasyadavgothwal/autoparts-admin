@@ -105,7 +105,7 @@ const mapError = (error: unknown): UserAuthActionResult => {
     return { ok: false, success: false, message, statusCode: 409 }
   }
 
-  if (message === "User account is inactive") {
+  if (message === "User account is inactive" || message === "Your account is suspended") {
     return { ok: false, success: false, message, statusCode: 403 }
   }
 

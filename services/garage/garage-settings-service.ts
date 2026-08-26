@@ -34,7 +34,6 @@ type VerificationRow = {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const MOBILE_PATTERN = /^\+\d{8,18}$/
 const PLACE_PATTERN = /^[A-Za-z][A-Za-z\s'.-]*$/
 const DAYS = [
   "Monday",
@@ -398,16 +397,12 @@ export async function updateGarageProfile(
   const existing = await getGarageProfile(garageId)
   const user = await db.user.findUnique({
     where: { id: garageId },
-    select: { email: true, phone: true, firebaseUid: true, emailVerifiedAt: true },
+    select: { email: true, phone: true, emailVerifiedAt: true },
   })
   const garageName = nullableText(input.garageName, 160)
   const contactEmail = nullableText(input.contactEmail, 254)?.toLowerCase() ?? null
   if (contactEmail && !EMAIL_PATTERN.test(contactEmail)) {
     throw new Error("Enter a valid email address")
-  }
-  const mobile = nullableText(input.mobile, 40)
-  if (mobile && !MOBILE_PATTERN.test(mobile)) {
-    throw new Error("Enter a valid mobile number")
   }
   const country = nullableText(input.country, 80)
   const state = nullableText(input.state, 80)
@@ -423,10 +418,6 @@ export async function updateGarageProfile(
   }
 
   const emailChanged = (existing.contactEmail ?? "") !== (contactEmail ?? "")
-  const mobileChanged = (existing.mobile ?? "") !== (mobile ?? "")
-  if (mobileChanged && mobile !== user?.phone) {
-    throw new Error("Verify the mobile number with OTP before saving")
-  }
   const hoursByDay = workingHoursByDay(input.workingHoursByDay)
   const days = Object.entries(hoursByDay)
     .filter(([, hours]) => hours.enabled)
@@ -453,12 +444,6 @@ export async function updateGarageProfile(
     user.emailVerifiedAt
       ? user.emailVerifiedAt
       : null
-  const mobileVerifiedAt =
-    mobile &&
-    mobile === user?.phone &&
-    user.firebaseUid
-      ? new Date()
-      : null
   await db.user.update({
     where: { id: garageId },
     data: { companyName: garageName },
@@ -470,11 +455,6 @@ export async function updateGarageProfile(
       "contactEmailVerifiedAt" = CASE
         WHEN ${emailChanged} THEN ${emailVerifiedAt}
         ELSE "contactEmailVerifiedAt"
-      END,
-      "mobile" = ${mobile},
-      "mobileVerifiedAt" = CASE
-        WHEN ${mobileChanged} THEN ${mobileVerifiedAt}
-        ELSE "mobileVerifiedAt"
       END,
       "workingDays" = ${legacyDays},
       "workingHours" = ${nullableText(input.workingHours, 120)},

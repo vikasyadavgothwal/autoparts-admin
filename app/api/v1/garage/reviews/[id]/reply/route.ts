@@ -7,6 +7,8 @@ import {
   readJsonBody,
   withGarageApiRoute,
 } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { updateGarageServiceReviewReply } from "@/services/garage/garage-review-service"
 import type { GarageReviewReplyInput } from "@/types/garage/reviews"
 
@@ -20,8 +22,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (!parsed.ok) return apiError(parsed.message)
 
     try {
+      const garageId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Garage)
       const review = await updateGarageServiceReviewReply(
-        user.id,
+        garageId,
         (await context.params).id,
         parsed.body,
       )

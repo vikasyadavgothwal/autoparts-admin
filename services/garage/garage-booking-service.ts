@@ -33,6 +33,50 @@ import type {
 const sendMailSafely = (input: Parameters<typeof sendSmtpMail>[0]) =>
   sendSmtpMail(input).catch(() => undefined)
 
+export async function ensureGarageBookingCompletionOtpTable() {
+  await db.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "garage_booking_completion_otps" (
+      "id" TEXT NOT NULL,
+      "bookingId" TEXT NOT NULL,
+      "garageId" TEXT NOT NULL,
+      "customerEmail" TEXT NOT NULL,
+      "otpHash" TEXT NOT NULL,
+      "expiresAt" TIMESTAMP(3) NOT NULL,
+      "consumedAt" TIMESTAMP(3),
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "garage_booking_completion_otps_pkey" PRIMARY KEY ("id")
+    )
+  `
+  await db.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "garage_booking_completion_otps_bookingId_idx"
+    ON "garage_booking_completion_otps"("bookingId")
+  `
+  await db.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "garage_booking_completion_otps_garageId_idx"
+    ON "garage_booking_completion_otps"("garageId")
+  `
+  await db.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "garage_booking_completion_otps_expiresAt_idx"
+    ON "garage_booking_completion_otps"("expiresAt")
+  `
+  await db.$executeRaw`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'garage_booking_completion_otps_bookingId_fkey'
+          AND conrelid = 'garage_booking_completion_otps'::regclass
+      ) THEN
+        ALTER TABLE "garage_booking_completion_otps"
+          ADD CONSTRAINT "garage_booking_completion_otps_bookingId_fkey"
+          FOREIGN KEY ("bookingId") REFERENCES "garage_bookings"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `
+}
+
 const checkoutUrl = (value: unknown, fallback: string) => {
   const raw = typeof value === "string" ? value.trim() : ""
   if (!raw) return fallback
@@ -113,6 +157,14 @@ type BookingCustomer = {
 
 const GARAGE_NOT_ACCEPTING_BOOKINGS_MESSAGE =
   "This garage is not accepting new bookings right now."
+
+const APPOINTMENT_LIMIT_ADD_ON_PATTERN = /^limit\.appointments\.(\d+)$/
+
+const appointmentLimitFromAddOns = (addOns: Array<{ featureKey: string }>) =>
+  addOns.reduce((total, addOn) => {
+    const match = APPOINTMENT_LIMIT_ADD_ON_PATTERN.exec(addOn.featureKey)
+    return match ? total + Number(match[1]) : total
+  }, 0)
 
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
@@ -328,8 +380,8 @@ async function garageMonthlyBookingLimitState(
   garageId: string,
   date: string,
 ) {
-  const [plan] = await client.$queryRaw<Array<{ appointmentLimit: number | null }>>`
-    SELECT bp."appointmentLimit"
+  const [plan] = await client.$queryRaw<Array<{ businessAccountId: string; appointmentLimit: number | null }>>`
+    SELECT ba."id" AS "businessAccountId", bp."appointmentLimit"
     FROM "business_accounts" ba
     JOIN "business_plans" bp ON bp."id" = ba."planId"
     WHERE ba."ownerUserId" = ${garageId}
@@ -339,6 +391,17 @@ async function garageMonthlyBookingLimitState(
   `
   const limit = plan?.appointmentLimit ?? null
   if (limit === null) return { limit, used: 0, reached: false }
+
+  const activeAppointmentAddOns = await client.$queryRaw<Array<{ featureKey: string }>>`
+    SELECT "featureKey"
+    FROM "business_add_on_requests"
+    WHERE "businessAccountId" = ${plan.businessAccountId}
+      AND "status" IN ('Approved'::"BusinessAddOnRequestStatus", 'Enabled'::"BusinessAddOnRequestStatus")
+      AND ("validFrom" IS NULL OR "validFrom" <= CURRENT_TIMESTAMP)
+      AND ("validUntil" IS NULL OR "validUntil" > CURRENT_TIMESTAMP)
+      AND "featureKey" LIKE 'limit.appointments.%'
+  `
+  const effectiveLimit = limit + appointmentLimitFromAddOns(activeAppointmentAddOns)
 
   const { start, end } = monthBoundsFor(date)
   const [usage] = await client.$queryRaw<Array<{ count: bigint | number }>>`
@@ -350,7 +413,7 @@ async function garageMonthlyBookingLimitState(
       AND "status" <> 'cancelled'::"GarageBookingStatus"
   `
   const used = Number(usage?.count ?? 0)
-  return { limit, used, reached: used >= limit }
+  return { limit: effectiveLimit, used, reached: used >= effectiveLimit }
 }
 
 async function assertGarageMonthlyBookingLimitAvailable(
@@ -1284,6 +1347,7 @@ export async function requestGarageBookingCompletionOtp(
   garageId: string,
   bookingId: string,
 ) {
+  await ensureGarageBookingCompletionOtpTable()
   const trimmedBookingId = requiredText(bookingId, "Booking")
   const [booking] = await db.$queryRaw<Array<{
     id: string
@@ -1371,6 +1435,7 @@ async function verifyGarageBookingCompletionOtp(
   bookingId: string,
   otp: unknown,
 ) {
+  await ensureGarageBookingCompletionOtpTable()
   const normalizedOtp = otpText(otp)
   const trimmedBookingId = requiredText(bookingId, "Booking")
   const [request] = await db.$queryRaw<Array<{ id: string }>>`

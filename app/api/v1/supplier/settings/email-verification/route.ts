@@ -6,6 +6,8 @@ import {
   readJsonBody,
   withSupplierApiRoute,
 } from "@/lib/auth/api-guards";
+import { BusinessAccountType } from "@/lib/generated/prisma/client";
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service";
 import { requestSupplierEmailVerification } from "@/services/supplier/supplier-settings-service";
 
 type EmailVerificationBody = {
@@ -22,9 +24,10 @@ export async function POST(request: NextRequest) {
 
     try {
       const origin = new URL(request.url).origin;
+      const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier);
       return Response.json(
         await requestSupplierEmailVerification(
-          user.id,
+          supplierId,
           parsed.body.email,
           origin,
           typeof parsed.body.verificationBaseUrl === "string"

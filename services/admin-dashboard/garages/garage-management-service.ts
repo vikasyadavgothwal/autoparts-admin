@@ -5,6 +5,7 @@ import { Star, TrendingUp, Users, Wrench } from "lucide-react"
 import { db } from "@/lib/database/prisma"
 import { BusinessAccountType, Prisma } from "@/lib/generated/prisma/client"
 import { logBusinessActivity } from "@/services/business/business-platform-service"
+import { ensureGarageBookingCompletionOtpTable } from "@/services/garage/garage-booking-service"
 import { createNotificationsSafely } from "@/services/notifications/notification-service"
 import type {
   AdminGarageBookingRecord,
@@ -533,6 +534,8 @@ export async function completeGarageBookingByAdmin(
   if (!existing.bookingDate || !existing.bookingTime) {
     throw new Error("Booking must have a scheduled date and time before completion")
   }
+
+  await ensureGarageBookingCompletionOtpTable()
 
   await db.$transaction(async (tx) => {
     await tx.$executeRaw`

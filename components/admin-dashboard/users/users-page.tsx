@@ -38,7 +38,7 @@ export async function UsersPage({ page, search }: UsersPageProps) {
         search={normalizedSearch}
       />
 
-      <UsersSection items={buildUserActivity(users)} />
+      {/* <UsersSection items={buildUserActivity(users)} /> */}
     </div>
   )
 }

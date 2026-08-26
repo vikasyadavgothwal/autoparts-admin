@@ -7,6 +7,8 @@ import {
   readJsonBody,
   withSupplierApiRoute,
 } from "@/lib/auth/api-guards"
+import { BusinessAccountType } from "@/lib/generated/prisma/client"
+import { getBusinessAccountOwnerId } from "@/services/business/business-platform-service"
 import { assertMobileNumberAvailable } from "@/services/user-auth/mobile-availability-service"
 import { assertSupplierContactPhoneAvailable } from "@/services/supplier/supplier-settings-service";
 
@@ -21,10 +23,11 @@ export async function POST(request: NextRequest) {
 
     try {
       const phone = typeof parsed.body.phone === "string" ? parsed.body.phone : "";
+      const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier);
       if (parsed.body.target === "supplierContactPhone") {
-        await assertSupplierContactPhoneAvailable(user.id, phone);
+        await assertSupplierContactPhoneAvailable(supplierId, phone);
       } else {
-        await assertMobileNumberAvailable(user.id, phone);
+        await assertMobileNumberAvailable(supplierId, phone);
       }
       return apiOk({ message: "Mobile number is available" })
     } catch (error) {

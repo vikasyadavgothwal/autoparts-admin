@@ -1326,7 +1326,7 @@ const usageForAccount = async (account: {
     db.businessAccountMember.count({
       where: { businessAccountId: account.id, status: BusinessMemberStatus.Active },
     }),
-    db.businessRole.count({ where: { businessAccountId: account.id } }),
+    db.businessRole.count({ where: { businessAccountId: account.id, isOwnerRole: false } }),
     db.businessPermission.count({ where: { businessAccountId: account.id, isSystem: false } }),
     account.type === BusinessAccountType.Fleet
       ? db.fleetVehicle.count({ where: { fleetId: account.ownerUserId, status: { not: "plan_suspended" } } })
@@ -1631,6 +1631,7 @@ const calculateAddOnPrice = (input: {
 const addOnFeatureSet = (addOnKeys: string[], accountType: BusinessAccountType) => {
   const features = new Set(addOnKeys.filter((key) => !isRetiredBusinessFeatureKey(key)))
   if (features.has("api.enterprise")) features.add("api.standard")
+  if (features.has("roles.manage")) features.add("permissions.manage")
   for (const key of addOnKeys) {
     const parsed = parseLimitAddOnKey(key)
     if (!parsed) continue
@@ -1644,6 +1645,8 @@ const addOnFeatureSet = (addOnKeys: string[], accountType: BusinessAccountType) 
 const applyLimitAddOns = (limits: BusinessLimits, addOnKeys: string[]) => {
   const next = { ...limits }
   for (const key of addOnKeys) {
+    if (key === "staff.manage" && next.staff !== null) next.staff += 1
+    if (key === "roles.manage" && next.roles !== null) next.roles += 1
     const parsed = parseLimitAddOnKey(key)
     if (!parsed) continue
     const current = next[parsed.metric]
@@ -1689,7 +1692,7 @@ const limitAddOnOptions = (
         .map((key) => parseLimitAddOnKey(key))
         .filter((item): item is ParsedLimitAddOn => item !== null && item.metric === metric)
         .reduce((total, item) => total + item.extraUnits, 0)
-      const suggestedExtraUnits = Math.max(5, currentUsage + 1 - (currentLimit ?? 0))
+      const suggestedExtraUnits = Math.max(metric === "staff" || metric === "roles" ? 1 : 5, currentUsage + 1 - (currentLimit ?? 0))
       return {
         key: limitAddOnKey(metric, suggestedExtraUnits),
         metric,
@@ -1866,6 +1869,7 @@ const menuKeysForFeatureSet = (accountType: BusinessAccountType, featureSet: Set
 
   add("staff.manage", "staff")
   add("roles.manage", "roles")
+  add("permissions.manage", "roles")
   add("integrations.manage", "integrations")
   add("api.standard", "api-keys")
   add("api.enterprise", "api-keys")
@@ -4869,7 +4873,8 @@ export async function createBusinessRole(input: {
   if (!account.plan.customRolesEnabled && !addOnFeatures.has("roles.manage")) {
     throw new Error("Custom roles are not enabled for this plan")
   }
-  if (limits.roles !== null && account.roles.length >= limits.roles) {
+  const customRoleCount = account.roles.filter((role) => !role.isOwnerRole).length
+  if (limits.roles !== null && customRoleCount >= limits.roles) {
     throw new Error("Role limit reached for this plan")
   }
 
@@ -4886,13 +4891,6 @@ export async function createBusinessRole(input: {
   if (duplicateRole) {
     throw new Error("A role with this name already exists")
   }
-  if (
-    limits.permissions !== null &&
-    permissionIds.length > limits.permissions
-  ) {
-    throw new Error("Permission limit reached for this plan")
-  }
-
   const role = await db.businessRole.create({
     data: {
       businessAccountId: account.id,
@@ -5558,7 +5556,6 @@ export async function updateBusinessRole(input: {
     businessAccountId: input.businessAccountId,
   })
   const addOnFeatures = addOnFeatureSet(account.addOnRequests.map((request) => request.featureKey), account.type)
-  const limits = effectiveLimitsForAccount(account)
   if (!account.plan.customRolesEnabled && !addOnFeatures.has("roles.manage")) {
     throw new Error("Custom roles are not enabled for this plan")
   }
@@ -5591,13 +5588,6 @@ export async function updateBusinessRole(input: {
   if (duplicateRole) {
     throw new Error("A role with this name already exists")
   }
-  if (
-    limits.permissions !== null &&
-    permissionIds.length > limits.permissions
-  ) {
-    throw new Error("Permission limit reached for this plan")
-  }
-
   const nextRole = await db.businessRole.update({
     where: { id: role.id },
     data: {
