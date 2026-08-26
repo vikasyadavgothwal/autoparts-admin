@@ -1358,7 +1358,7 @@ export async function markPaymentFailed(input: {
       UPDATE "garage_bookings"
       SET "advancePaymentStatus" = 'failed',
           "status" = CASE
-            WHEN "status" = 'pending'::"GarageBookingStatus" THEN 'cancelled'::"GarageBookingStatus"
+            WHEN "status" IN ('pending'::"GarageBookingStatus", 'pending_slot_selection'::"GarageBookingStatus") THEN 'cancelled'::"GarageBookingStatus"
             ELSE "status"
           END,
           "updatedAt" = CURRENT_TIMESTAMP

@@ -24,6 +24,9 @@ export async function POST(request: NextRequest) {
     try {
       const phone = typeof parsed.body.phone === "string" ? parsed.body.phone : "";
       const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier);
+      if (supplierId !== user.id) {
+        return apiError("Only the supplier owner can update workspace settings", 403);
+      }
       if (parsed.body.target === "supplierContactPhone") {
         await assertSupplierContactPhoneAvailable(supplierId, phone);
       } else {

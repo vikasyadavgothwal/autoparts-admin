@@ -31,6 +31,9 @@ export async function PATCH(request: NextRequest) {
 
     try {
       const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier);
+      if (supplierId !== user.id) {
+        return apiError("Only the supplier owner can update workspace settings", 403);
+      }
       return apiOk({
         profile: await updateSupplierProfile(supplierId, parsed.body),
       });

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ShieldCheck, UserRound, KeyRound, Settings2 } from "lucide-react"
+import { Eye, EyeOff, ShieldCheck, UserRound, KeyRound, Settings2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -26,6 +26,11 @@ export function AdminSettingsPage({ admin }: { admin: AdminProfile }) {
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [visiblePassword, setVisiblePassword] = useState({
+    currentPassword: false,
+    newPassword: false,
+    confirmPassword: false,
+  })
   const [savingPassword, setSavingPassword] = useState(false)
   const [supportEmails, setSupportEmails] = useState("")
   const [loadingSupportEmails, setLoadingSupportEmails] = useState(true)
@@ -250,15 +255,30 @@ export function AdminSettingsPage({ admin }: { admin: AdminProfile }) {
             <form className="space-y-4" onSubmit={changePassword}>
               <div className="space-y-2">
                 <Label htmlFor="current-password">Current Password<RequiredMark /></Label>
-                <Input id="current-password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value.slice(0, PASSWORD_MAX_LENGTH))} maxLength={PASSWORD_MAX_LENGTH} className="border-[#2A2A2A] bg-[#0A0A0A]" required />
+                <div className="relative">
+                  <Input id="current-password" type={visiblePassword.currentPassword ? "text" : "password"} value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value.slice(0, PASSWORD_MAX_LENGTH))} maxLength={PASSWORD_MAX_LENGTH} className="border-[#2A2A2A] bg-[#0A0A0A] pr-10" required />
+                  <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2 text-[#9CA3AF] hover:bg-transparent hover:text-white" onClick={() => setVisiblePassword((current) => ({ ...current, currentPassword: !current.currentPassword }))} aria-label={visiblePassword.currentPassword ? "Hide current password" : "Show current password"}>
+                    {visiblePassword.currentPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </Button>
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="new-password">New Password<RequiredMark /></Label>
-                <Input id="new-password" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={newPassword} onChange={(event) => setNewPassword(event.target.value.slice(0, PASSWORD_MAX_LENGTH))} className="border-[#2A2A2A] bg-[#0A0A0A]" required />
+                <div className="relative">
+                  <Input id="new-password" type={visiblePassword.newPassword ? "text" : "password"} minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={newPassword} onChange={(event) => setNewPassword(event.target.value.slice(0, PASSWORD_MAX_LENGTH))} className="border-[#2A2A2A] bg-[#0A0A0A] pr-10" required />
+                  <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2 text-[#9CA3AF] hover:bg-transparent hover:text-white" onClick={() => setVisiblePassword((current) => ({ ...current, newPassword: !current.newPassword }))} aria-label={visiblePassword.newPassword ? "Hide new password" : "Show new password"}>
+                    {visiblePassword.newPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </Button>
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="confirm-password">Confirm New Password<RequiredMark /></Label>
-                <Input id="confirm-password" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value.slice(0, PASSWORD_MAX_LENGTH))} className="border-[#2A2A2A] bg-[#0A0A0A]" required />
+                <div className="relative">
+                  <Input id="confirm-password" type={visiblePassword.confirmPassword ? "text" : "password"} minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value.slice(0, PASSWORD_MAX_LENGTH))} className="border-[#2A2A2A] bg-[#0A0A0A] pr-10" required />
+                  <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2 text-[#9CA3AF] hover:bg-transparent hover:text-white" onClick={() => setVisiblePassword((current) => ({ ...current, confirmPassword: !current.confirmPassword }))} aria-label={visiblePassword.confirmPassword ? "Hide confirm password" : "Show confirm password"}>
+                    {visiblePassword.confirmPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </Button>
+                </div>
               </div>
               {message ? <p className="rounded-md border border-[#2A2A2A] bg-[#0A0A0A] px-3 py-2 text-sm text-[#E5E7EB]">{message}</p> : null}
               <Button type="submit" disabled={savingPassword} className="w-full bg-[#DC2626] text-white hover:bg-[#B91C1C]">

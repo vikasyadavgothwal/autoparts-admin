@@ -37,6 +37,9 @@ export async function POST(request: NextRequest) {
           ? "supplierContactPhone"
           : "authorizedPhone";
       const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier);
+      if (supplierId !== user.id) {
+        return apiError("Only the supplier owner can update workspace settings", 403);
+      }
 
       return apiOk({
         profile:

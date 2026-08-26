@@ -20,6 +20,12 @@ export async function POST(request: NextRequest) {
 
   try {
     const garageId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Garage)
+    if (garageId !== auth.user.id) {
+      return NextResponse.json(
+        { ok: false, message: "Only the garage owner can update workspace settings" },
+        { status: 403 },
+      )
+    }
     await assertMobileNumberAvailable(
       garageId,
       typeof parsed.body.phone === "string" ? parsed.body.phone : "",

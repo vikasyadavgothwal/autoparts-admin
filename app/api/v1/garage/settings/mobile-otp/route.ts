@@ -13,6 +13,12 @@ export async function POST(request: NextRequest) {
 
   try {
     const garageId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Garage)
+    if (garageId !== auth.user.id) {
+      return NextResponse.json(
+        { ok: false, message: "Only the garage owner can update workspace settings" },
+        { status: 403 },
+      )
+    }
     return NextResponse.json(await requestGarageMobileOtp(garageId))
   } catch (error) {
     return NextResponse.json(

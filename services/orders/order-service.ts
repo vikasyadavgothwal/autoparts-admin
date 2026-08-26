@@ -435,6 +435,51 @@ const normalizeCheckoutUrl = (value: unknown, fallback: string) => {
 const checkoutFingerprint = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 32);
 
+const failCreatedDirectCheckout = async (orderIds: string[]) => {
+  if (!orderIds.length) return;
+  await db.$transaction(async (transaction) => {
+    await transaction.$executeRaw`
+      UPDATE "supplier_parts" sp
+      SET "stock" = sp."stock" + oi."quantity",
+          "updatedAt" = CURRENT_TIMESTAMP
+      FROM "order_items" oi
+      WHERE oi."supplierPartId" = sp."id"
+        AND oi."orderId" IN (${Prisma.join(orderIds)})
+    `;
+    await transaction.order.updateMany({
+      where: {
+        id: { in: orderIds },
+        paymentStatus: PaymentStatus.pending,
+      },
+      data: { paymentStatus: PaymentStatus.failed },
+    });
+    await transaction.$executeRaw`
+      UPDATE "payments"
+      SET "status" = 'failed',
+          "failureCode" = COALESCE("failureCode", 'checkout_session_unavailable'),
+          "failureMessage" = COALESCE("failureMessage", 'Stripe Checkout could not be started.'),
+          "failedAt" = COALESCE("failedAt", CURRENT_TIMESTAMP),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "status" <> 'succeeded'
+        AND "id" IN (
+          SELECT "paymentId" FROM "payment_items"
+          WHERE "entityType" = 'order'
+            AND "entityId" IN (${Prisma.join(orderIds)})
+        )
+    `;
+    await transaction.garageBooking.updateMany({
+      where: {
+        linkedOrderId: { in: orderIds },
+        advancePaymentStatus: "pending",
+      },
+      data: {
+        advancePaymentStatus: "failed",
+        status: "cancelled",
+      },
+    });
+  });
+};
+
 const mapOrder = <
   T extends {
     totalAmount: number;
@@ -1230,37 +1275,51 @@ export async function createDirectOrders(
       })
     : [];
 
-  const payment = await createStripeCheckoutPayment({
-    payerUserId: buyerId,
-    purpose: "direct_order",
-    amount:
-      checkout.rawOrders.reduce((total, order) => total + order.totalAmount, 0) +
-      garageBookings.reduce((total, booking) => total + (booking.advanceAmount ?? 0), 0),
-    currency: "AED",
-    description: `AutoParts Pro checkout (${checkout.summary.itemCount} product${checkout.summary.itemCount === 1 ? "" : "s"})`,
-    idempotencyKey:
-      typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
-        ? input.idempotencyKey.trim()
-        : `direct-order:${buyerId}:${checkoutFingerprint({ lines, serviceBookings, addressId })}`,
-    successUrl: paymentSuccessUrl,
-    cancelUrl: paymentCancelUrl,
-    entities: [
-      ...checkout.rawOrders.map((order) => ({
-        entityType: "order" as const,
-        entityId: order.id,
-        amount: order.totalAmount,
-      })),
-      ...garageBookings.map((booking) => ({
-        entityType: "garage_booking" as const,
-        entityId: booking.id,
-        amount: booking.advanceAmount ?? 0,
-      })),
-    ].filter((entity) => entity.amount > 0),
-    metadata: {
-      orderIds: checkout.rawOrders.map((order) => order.id),
-      garageBookingIds: garageBookings.map((booking) => booking.id),
-    },
-  });
+  let payment: Awaited<ReturnType<typeof createStripeCheckoutPayment>>;
+  try {
+    payment = await createStripeCheckoutPayment({
+      payerUserId: buyerId,
+      purpose: "direct_order",
+      amount:
+        checkout.rawOrders.reduce((total, order) => total + order.totalAmount, 0) +
+        garageBookings.reduce((total, booking) => total + (booking.advanceAmount ?? 0), 0),
+      currency: "AED",
+      description: `AutoParts Pro checkout (${checkout.summary.itemCount} product${checkout.summary.itemCount === 1 ? "" : "s"})`,
+      idempotencyKey:
+        typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
+          ? input.idempotencyKey.trim()
+          : `direct-order:${buyerId}:${checkoutFingerprint({ lines, serviceBookings, addressId })}`,
+      successUrl: paymentSuccessUrl,
+      cancelUrl: paymentCancelUrl,
+      entities: [
+        ...checkout.rawOrders.map((order) => ({
+          entityType: "order" as const,
+          entityId: order.id,
+          amount: order.totalAmount,
+        })),
+        ...garageBookings.map((booking) => ({
+          entityType: "garage_booking" as const,
+          entityId: booking.id,
+          amount: booking.advanceAmount ?? 0,
+        })),
+      ].filter((entity) => entity.amount > 0),
+      metadata: {
+        orderIds: checkout.rawOrders.map((order) => order.id),
+        garageBookingIds: garageBookings.map((booking) => booking.id),
+      },
+    });
+  } catch (error) {
+    await failCreatedDirectCheckout(checkout.rawOrders.map((order) => order.id));
+    throw error;
+  }
+  if (!payment.checkoutUrl) {
+    await failCreatedDirectCheckout(checkout.rawOrders.map((order) => order.id));
+    throw new Error(
+      payment.stripeConfigured === false
+        ? "Stripe test keys are not configured on the backend"
+        : "Stripe did not return a Checkout URL",
+    );
+  }
 
   for (const order of checkout.orders) {
     notifications.push({

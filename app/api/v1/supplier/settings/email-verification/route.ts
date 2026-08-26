@@ -25,6 +25,9 @@ export async function POST(request: NextRequest) {
     try {
       const origin = new URL(request.url).origin;
       const supplierId = await getBusinessAccountOwnerId(user.id, BusinessAccountType.Supplier);
+      if (supplierId !== user.id) {
+        return apiError("Only the supplier owner can update workspace settings", 403);
+      }
       return Response.json(
         await requestSupplierEmailVerification(
           supplierId,

@@ -36,6 +36,12 @@ export async function POST(request: NextRequest) {
     }
 
     const fleetId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Fleet)
+    if (fleetId !== auth.user.id) {
+      return NextResponse.json(
+        { ok: false, message: "Only the fleet owner can update workspace settings" },
+        { status: 403 },
+      )
+    }
     return NextResponse.json({
       ok: true,
       profile: await verifyFleetMobileWithFirebase(fleetId, firebaseIdToken),

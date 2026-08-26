@@ -21,6 +21,12 @@ export async function POST(request: NextRequest) {
   }
   try {
     const supplierId = await getBusinessAccountOwnerId(auth.user.id, BusinessAccountType.Supplier);
+    if (supplierId !== auth.user.id) {
+      return NextResponse.json(
+        { ok: false, message: "Only the supplier owner can update workspace settings" },
+        { status: 403 },
+      );
+    }
     return NextResponse.json(
       {
         ok: true,
