@@ -993,12 +993,9 @@ export async function createRfq(
       responseDeadline: deadline,
       deliveryRequirement: requiredText(input.deliveryRequirement, "Delivery requirement"),
       paymentTerms: requiredText(input.paymentTerms, "Payment terms"),
-      companyName: requiredText(
-        source === RfqSource.fleet
-          ? requester?.companyName || input.companyName
-          : input.companyName,
-        "Company name",
-      ),
+      companyName:
+        text(source === RfqSource.fleet ? requester?.companyName || input.companyName : input.companyName) ||
+        requiredText(input.contactName || input.email, "Contact name"),
       contactName: requiredText(
         source === RfqSource.fleet
           ? [requester?.firstName, requester?.lastName].filter(Boolean).join(" ") || input.contactName

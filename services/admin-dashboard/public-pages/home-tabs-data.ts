@@ -99,7 +99,7 @@ export const HOME_PAGE_DEFAULT_CONFIG: HomePageConfig = {
         subheading:
           "Run consolidated procurement planning with reporting built for scale.",
         buttonText: "Request Demo",
-        buttonLink: "/rfqs-page",
+        buttonLink: "/rfq",
       },
     ],
   },
@@ -108,9 +108,9 @@ export const HOME_PAGE_DEFAULT_CONFIG: HomePageConfig = {
     subheading:
       "Launch faster sourcing workflows with one consolidated dashboard and guided process.",
     primaryButtonText: "Get Started",
-    primaryButtonLink: "/rfqs-page",
+    primaryButtonLink: "/rfq",
     secondaryButtonText: "Talk to Support",
-    secondaryButtonLink: "/services-page",
+    secondaryButtonLink: "/services",
   },
 }
 

@@ -31,7 +31,7 @@ export type CreateRfqInput = {
   responseDeadline: string
   deliveryRequirement: string
   paymentTerms: string
-  companyName: string
+  companyName?: string | null
   contactName: string
   email: string
   phone: string

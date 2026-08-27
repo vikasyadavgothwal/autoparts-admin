@@ -22,8 +22,8 @@ export const FOR_BUSINESS_PAGE_DEFAULT_CONFIG: ForBusinessPageConfig = {
       "Configure the headline and actions that introduce your business-focused page to workshop owners.",
     primaryButtonText: "Book a Demo",
     primaryButtonLink: "/business",
-    secondaryButtonText: "Talk to Sales",
-    secondaryButtonLink: "/services-page",
+    secondaryButtonText: "View Pricing",
+    secondaryButtonLink: "/business#pricing",
   },
   businessSolutions: {
     heading: "Business Solutions",
@@ -113,9 +113,9 @@ export const FOR_BUSINESS_PAGE_DEFAULT_CONFIG: ForBusinessPageConfig = {
     heading: "Ready to modernize procurement?",
     subheading: "Launch your business page with consistent, high-performing messaging.",
     primaryButtonText: "Get Started",
-    primaryButtonLink: "/rfqs",
+    primaryButtonLink: "/rfq",
     secondaryButtonText: "Explore Services",
-    secondaryButtonLink: "/services-page",
+    secondaryButtonLink: "/services",
   },
 }
 
